@@ -27,3 +27,5 @@ jobs:
       # Link even when one store failed: the others' new listings still need it.
       - if: ${{ !cancelled() }}
         run: uv run pricewatch link
+      - if: ${{ !cancelled() }}
+        run: uv run pricewatch train
