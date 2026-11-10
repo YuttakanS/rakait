@@ -11,7 +11,7 @@ full specification.
 | Database schema + migration runner | done (`migrations/`, `pricewatch.db`) |
 | Scraping framework (rate limit, backoff, failure isolation) | done |
 | Store scrapers | JIB (GPU, CPU, RAM, SSD) |
-| Scheduled scraping (GitHub Actions, 09:00 / 21:00 ICT) + `scrape_runs` log | done; needs `DATABASE_URL` secret |
+| Scheduled scraping (GitHub Actions, every 3 h) + `scrape_runs` log | live on Supabase since 2026-11-11 |
 | Record linkage, ML pipeline, API, frontend | not started |
 
 ## Setup

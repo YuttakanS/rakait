@@ -2,8 +2,10 @@ name: scrape
 
 on:
   schedule:
-    # 09:00 and 21:00 Asia/Bangkok (UTC+7).
-    - cron: "0 2,14 * * *"
+    # Every 3 hours (00:17, 03:17, ... UTC = 07:17, 10:17, ... ICT). One JIB
+    # run is ~10 requests over ~25 s. Minute 17 avoids GitHub's top-of-hour
+    # scheduling backlog.
+    - cron: "17 */3 * * *"
   workflow_dispatch:
 
 concurrency:
