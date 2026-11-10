@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f7f5;
+  --surface: #ffffff;
+  --foreground: #1c1c1a;
+  --muted: #6b6b66;
+  --border: #e4e4df;
+  --accent: #1f6feb;
+  --good: #1a7f37;
+  --good-bg: #e6f4ea;
+  --bad: #b42318;
+  --bad-bg: #fdecea;
+  --neutral-bg: #efefeb;
+  --warn: #9a6700;
+  --warn-bg: #fff4d6;
+  --store-jib: #2c3d92;
+  --store-ihavecpu: #d9480f;
+  --store-banana: #c99700;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #121211;
+    --surface: #1b1b19;
+    --foreground: #ececea;
+    --muted: #a0a09a;
+    --border: #2e2e2b;
+    --accent: #58a6ff;
+    --good: #56d364;
+    --good-bg: #12261a;
+    --bad: #ff7b72;
+    --bad-bg: #2d1414;
+    --neutral-bg: #262624;
+    --warn: #e3b341;
+    --warn-bg: #2b2210;
+    --store-jib: #8c9eff;
+    --store-ihavecpu: #ff8a50;
+    --store-banana: #f2cc4d;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-thai), ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
