@@ -10,7 +10,8 @@ full specification.
 |---|---|
 | Database schema + migration runner | done (`migrations/`, `pricewatch.db`) |
 | Scraping framework (rate limit, backoff, failure isolation) | done |
-| Store scrapers | JIB (GPU, CPU) |
+| Store scrapers | JIB (GPU, CPU, RAM, SSD) |
+| Scheduled scraping (GitHub Actions, 09:00 / 21:00 ICT) + `scrape_runs` log | done; needs `DATABASE_URL` secret |
 | Record linkage, ML pipeline, API, frontend | not started |
 
 ## Setup
@@ -33,8 +34,9 @@ uv run pricewatch migrate
 uv run pricewatch scrape
 ```
 
-Each `scrape` run upserts `merchant_listings` and appends one row per listing
-to `price_history`. Run it on a schedule to build the time series the ML layer
+Each `scrape` run upserts `merchant_listings`, appends one row per listing
+to `price_history`, and logs one `scrape_runs` row per store and category
+(listing count and error, if any). Run it on a schedule to build the time series the ML layer
 needs; sales velocity is derived from the change in `sold_count` between runs.
 
 ## Development

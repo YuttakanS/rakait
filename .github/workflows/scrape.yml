@@ -1,0 +1,24 @@
+name: scrape
+
+on:
+  schedule:
+    # 09:00 and 21:00 Asia/Bangkok (UTC+7).
+    - cron: "0 2,14 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --no-dev
+      - run: uv run pricewatch -v migrate
+      - run: uv run pricewatch -v scrape

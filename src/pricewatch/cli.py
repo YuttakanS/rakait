@@ -57,17 +57,19 @@ async def _scrape(
                 )
 
     listings = [item for result in results for item in result.listings]
-    if database_url is not None and listings:
+    runs = [run for result in results for run in result.runs]
+    if database_url is not None:
         import asyncpg
 
-        from pricewatch.db.repository import save_listings
+        from pricewatch.db.repository import record_scrape_runs, save_listings
 
         conn = await asyncpg.connect(database_url)
         try:
-            written = await save_listings(conn, listings)
+            written = await save_listings(conn, listings) if listings else 0
+            logged = await record_scrape_runs(conn, runs)
         finally:
             await conn.close()
-        print(f"wrote {written} price-history rows")
+        print(f"wrote {written} price-history rows, {logged} scrape-run records")
 
     return 1 if any(result.errors for result in results) else 0
 

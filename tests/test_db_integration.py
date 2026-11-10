@@ -52,7 +52,7 @@ def _listing(sku: str, price: str | None, sold: int, at: datetime, merchant: str
 
 
 async def test_migrations_apply_once(conn) -> None:
-    assert await apply_migrations(conn) == ["0001"]
+    assert await apply_migrations(conn) == ["0001", "0002"]
     assert await apply_migrations(conn) == []
     assert await conn.fetchval("SELECT count(*) FROM merchants") == 5
 
@@ -124,3 +124,23 @@ async def test_unknown_merchant_is_rejected(conn) -> None:
     with pytest.raises(UnknownMerchantError, match="nope"):
         await save_listings(conn, [_listing("1", "100", 1, T0, merchant="nope")])
     assert await conn.fetchval("SELECT count(*) FROM merchant_listings") == 0
+
+
+async def test_record_scrape_runs(conn) -> None:
+    from pricewatch.db.repository import record_scrape_runs
+    from pricewatch.pipeline import ScrapeRun
+
+    await apply_migrations(conn)
+    runs = [
+        ScrapeRun("jib", Category.GPU, T0, T0 + timedelta(seconds=5), 202),
+        ScrapeRun("jib", Category.CPU, T0, T0 + timedelta(seconds=1), 0, "FetchError: HTTP 503"),
+        ScrapeRun("jib", None, T0, T0, 0, "RuntimeError: crashed"),
+        ScrapeRun("nope", Category.GPU, T0, T0, 1),  # unknown merchant: dropped, not fatal
+    ]
+    assert await record_scrape_runs(conn, runs) == 3
+    rows = await conn.fetch("SELECT category, listing_count, error FROM scrape_runs ORDER BY id")
+    assert [tuple(row) for row in rows] == [
+        ("gpu", 202, None),
+        ("cpu", 0, "FetchError: HTTP 503"),
+        (None, 0, "RuntimeError: crashed"),
+    ]

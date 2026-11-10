@@ -7,6 +7,7 @@ from collections.abc import Sequence
 import asyncpg
 
 from pricewatch.models import ScrapedListing
+from pricewatch.pipeline import ScrapeRun
 
 _STAGE_COLUMNS: tuple[str, ...] = (
     "merchant",
@@ -133,4 +134,40 @@ async def save_listings(conn: asyncpg.Connection, listings: Sequence[ScrapedList
         status: str = await conn.execute(_MERGE)
 
     # asyncpg returns the command tag, e.g. "INSERT 0 42".
+    return int(status.rsplit(" ", 1)[-1])
+
+
+async def record_scrape_runs(conn: asyncpg.Connection, runs: Sequence[ScrapeRun]) -> int:
+    """Append scrape-run log rows in one multi-row insert.
+
+    Runs whose merchant slug is not registered are dropped by the join rather
+    than failing the batch: the log must never be the reason a scrape fails.
+
+    Args:
+        conn: Open database connection.
+        runs: Run records to store.
+
+    Returns:
+        Number of rows written.
+    """
+    if not runs:
+        return 0
+    status: str = await conn.execute(
+        """
+        INSERT INTO scrape_runs
+            (merchant_id, category, started_at, finished_at, listing_count, error)
+        SELECT m.id, r.category, r.started_at, r.finished_at, r.listing_count, r.error
+        FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::timestamptz[],
+                    $5::int[], $6::text[]) WITH ORDINALITY
+             AS r (merchant, category, started_at, finished_at, listing_count, error, ord)
+        JOIN merchants AS m ON m.slug = r.merchant
+        ORDER BY r.ord  -- identity ids follow input order
+        """,
+        [run.store for run in runs],
+        [run.category.value if run.category is not None else None for run in runs],
+        [run.started_at for run in runs],
+        [run.finished_at for run in runs],
+        [run.listing_count for run in runs],
+        [run.error for run in runs],
+    )
     return int(status.rsplit(" ", 1)[-1])

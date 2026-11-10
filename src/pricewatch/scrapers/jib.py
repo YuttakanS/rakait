@@ -24,10 +24,15 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.jib.co.th/web/product/product_list"
 
-# Category -> "<menu level>/<category id>" path segment on jib.co.th.
-CATEGORY_PATHS: dict[Category, str] = {
-    Category.GPU: "2/51",
-    Category.CPU: "2/43",
+# Category -> "<menu level>/<category id>" path segments on jib.co.th. A
+# category maps to several paths when JIB has no single page for it.
+CATEGORY_PATHS: dict[Category, tuple[str, ...]] = {
+    Category.GPU: ("2/51",),
+    Category.CPU: ("2/43",),
+    Category.RAM: ("2/53",),  # Desktop RAM; notebook (2/30) and NAS RAM are excluded.
+    # Internal SSDs only: 2.5" SATA and M.2. The parent page (2/52) mixes in
+    # hard disks, and portable SSDs (3/1358) are a different product class.
+    Category.SSD: ("3/1028", "3/1471"),
 }
 
 _SKU_RE = re.compile(r"/readProduct/(\d+)")
@@ -164,7 +169,8 @@ class JibScraper(StoreScraper):
 
         Args:
             category: Hardware category to crawl.
-            max_pages: Optional cap on listing pages fetched.
+            max_pages: Optional cap on listing pages fetched per JIB category
+                path (a category may span several paths).
 
         Returns:
             All listings found, de-duplicated by merchant SKU (first seen wins).
@@ -177,27 +183,33 @@ class JibScraper(StoreScraper):
         if category not in CATEGORY_PATHS:
             raise ValueError(f"JIB scraper does not support category {category.value!r}")
 
-        url: str | None = f"{BASE_URL}/{CATEGORY_PATHS[category]}"
         visited: set[str] = set()
         by_sku: dict[str, ScrapedListing] = {}
-        pages = 0
 
-        while url is not None and url not in visited:
-            if max_pages is not None and pages >= max_pages:
-                break
-            visited.add(url)
-            html = await self._fetcher.get_text(url)
-            listings, url = parse_listing_page(html, category, datetime.now(timezone.utc))
-            pages += 1
-            new = 0
-            for listing in listings:
-                if listing.merchant_sku not in by_sku:
-                    by_sku[listing.merchant_sku] = listing
-                    new += 1
-            logger.info(
-                "jib %s page %d: %d cards, %d new", category.value, pages, len(listings), new
-            )
-            if new == 0:
-                break  # Empty or repeated page: the site ran out of products.
+        for path in CATEGORY_PATHS[category]:
+            url: str | None = f"{BASE_URL}/{path}"
+            pages = 0
+            while url is not None and url not in visited:
+                if max_pages is not None and pages >= max_pages:
+                    break
+                visited.add(url)
+                html = await self._fetcher.get_text(url)
+                listings, url = parse_listing_page(html, category, datetime.now(timezone.utc))
+                pages += 1
+                new = 0
+                for listing in listings:
+                    if listing.merchant_sku not in by_sku:
+                        by_sku[listing.merchant_sku] = listing
+                        new += 1
+                logger.info(
+                    "jib %s %s page %d: %d cards, %d new",
+                    category.value,
+                    path,
+                    pages,
+                    len(listings),
+                    new,
+                )
+                if new == 0:
+                    break  # Empty or repeated page: the site ran out of products.
 
         return list(by_sku.values())

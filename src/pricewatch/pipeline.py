@@ -6,11 +6,34 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from pricewatch.models import Category, ScrapedListing
 from pricewatch.scrapers import SCRAPERS, PoliteFetcher
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ScrapeRun:
+    """One attempt at scraping a single category of a single store.
+
+    Attributes:
+        store: Merchant slug.
+        category: Category attempted, or ``None`` if the store failed before
+            any category was attempted.
+        started_at: When the attempt began (UTC).
+        finished_at: When the attempt ended (UTC).
+        listing_count: Listings obtained; 0 on failure.
+        error: Failure description, or ``None`` on success.
+    """
+
+    store: str
+    category: Category | None
+    started_at: datetime
+    finished_at: datetime
+    listing_count: int
+    error: str | None = None
 
 
 @dataclass
@@ -20,12 +43,26 @@ class StoreResult:
     Attributes:
         store: Merchant slug.
         listings: Listings gathered from every category that succeeded.
-        errors: One message per category (or the whole store) that failed.
+        runs: One record per category attempted, in order.
     """
 
     store: str
     listings: list[ScrapedListing] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
+    runs: list[ScrapeRun] = field(default_factory=list)
+
+    @property
+    def errors(self) -> list[str]:
+        """Return one message per failed run, prefixed by its category if any."""
+        return [
+            f"{run.category.value}: {run.error}" if run.category is not None else run.error
+            for run in self.runs
+            if run.error is not None
+        ]
+
+
+def _now() -> datetime:
+    """Return the current UTC time."""
+    return datetime.now(timezone.utc)
 
 
 async def _scrape_store(
@@ -41,11 +78,25 @@ async def _scrape_store(
             if category not in supported:
                 logger.info("%s: category %s not supported, skipping", store, category.value)
                 continue
+            started_at = _now()
+            error: str | None = None
+            listings: list[ScrapedListing] = []
             try:
-                result.listings.extend(await scraper.scrape_category(category, max_pages=max_pages))
+                listings = await scraper.scrape_category(category, max_pages=max_pages)
             except Exception as exc:  # noqa: BLE001 - one category must not sink the rest
                 logger.exception("%s: scraping %s failed", store, category.value)
-                result.errors.append(f"{category.value}: {type(exc).__name__}: {exc}")
+                error = f"{type(exc).__name__}: {exc}"
+            result.listings.extend(listings)
+            result.runs.append(
+                ScrapeRun(
+                    store=store,
+                    category=category,
+                    started_at=started_at,
+                    finished_at=_now(),
+                    listing_count=len(listings),
+                    error=error,
+                )
+            )
     return result
 
 
@@ -73,6 +124,7 @@ async def run_scrape(
     if unknown:
         raise ValueError(f"no scraper registered for: {unknown}")
 
+    started_at = _now()
     outcomes = await asyncio.gather(
         *(_scrape_store(store, categories, max_pages) for store in stores),
         return_exceptions=True,
@@ -81,9 +133,15 @@ async def run_scrape(
     for store, outcome in zip(stores, outcomes, strict=True):
         if isinstance(outcome, BaseException):
             logger.error("%s: store scrape crashed: %r", store, outcome)
-            results.append(
-                StoreResult(store=store, errors=[f"{type(outcome).__name__}: {outcome}"])
+            crash = ScrapeRun(
+                store=store,
+                category=None,
+                started_at=started_at,
+                finished_at=_now(),
+                listing_count=0,
+                error=f"{type(outcome).__name__}: {outcome}",
             )
+            results.append(StoreResult(store=store, runs=[crash]))
         else:
             results.append(outcome)
     return results

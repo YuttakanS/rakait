@@ -67,6 +67,15 @@ async def test_one_store_failing_does_not_block_others() -> None:
     assert by_store["half"].errors == ["gpu: RuntimeError: gpu page exploded"]
     assert len(by_store["good"].listings) == 2
     assert by_store["good"].errors == []
+    # Every attempted category leaves a run record, failed or not.
+    half_runs = {run.category: run for run in by_store["half"].runs}
+    assert half_runs[Category.GPU].listing_count == 0
+    assert half_runs[Category.GPU].error == "RuntimeError: gpu page exploded"
+    assert half_runs[Category.CPU].listing_count == 1
+    assert half_runs[Category.CPU].error is None
+    (crash_run,) = by_store["crash"].runs
+    assert crash_run.category is None
+    assert crash_run.finished_at >= crash_run.started_at
 
 
 async def test_unsupported_categories_are_skipped() -> None:

@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from pricewatch.models import Category
+from pricewatch.scrapers import jib
 from pricewatch.scrapers.fetcher import PoliteFetcher
 from pricewatch.scrapers.jib import JibParseError, JibScraper, parse_listing_page
 
@@ -132,7 +133,23 @@ async def test_scraper_honours_max_pages() -> None:
     assert len(listings) == 1
 
 
-async def test_scraper_rejects_unsupported_category() -> None:
+async def test_scraper_rejects_unsupported_category(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delitem(jib.CATEGORY_PATHS, Category.SSD)
     async with _fetcher({}, []) as fetcher:
         with pytest.raises(ValueError, match="does not support"):
             await JibScraper(fetcher).scrape_category(Category.SSD)
+
+
+async def test_scraper_crawls_every_path_of_a_category() -> None:
+    root = "https://www.jib.co.th/web/product/product_list"
+    requested: list[str] = []
+    pages = {
+        f"{root}/3/1028": _page([1, 2], None),
+        f"{root}/3/1471": _page([2, 3], None),  # SKU 2 listed under both
+    }
+    async with _fetcher(pages, requested) as fetcher:
+        listings = await JibScraper(fetcher).scrape_category(Category.SSD)
+
+    assert requested == [f"{root}/3/1028", f"{root}/3/1471"]
+    assert [item.merchant_sku for item in listings] == ["1", "2", "3"]
+    assert {item.category for item in listings} == {Category.SSD}
