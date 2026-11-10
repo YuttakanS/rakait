@@ -60,7 +60,7 @@ def _listing(
 
 
 async def test_migrations_apply_once(conn) -> None:
-    assert await apply_migrations(conn) == ["0001", "0002", "0003", "0004", "0005"]
+    assert await apply_migrations(conn) == ["0001", "0002", "0003", "0004", "0005", "0006"]
     assert await apply_migrations(conn) == []
     assert await conn.fetchval("SELECT count(*) FROM merchants") == 5
 
@@ -250,3 +250,48 @@ async def test_link_listings_groups_merchants_under_one_canonical_product(conn) 
     # Idempotent: a second pass reuses the same canonical product.
     assert (await link_listings(conn)).products == 1
     assert await conn.fetchval("SELECT count(*) FROM canonical_products") == 1
+
+
+async def test_train_persists_insights(conn, tmp_path) -> None:
+    import numpy as np
+
+    from pricewatch.db.linking import link_listings
+    from pricewatch.ml.train import train
+
+    await apply_migrations(conn)
+    rng = np.random.default_rng(1)
+    chips = {"5060": (8, 11000), "5070": (12, 20000), "5080": (16, 38000)}
+    listings = []
+    for i in range(60):
+        chip = list(chips)[i % 3]
+        vram, base = chips[chip]
+        listings.append(
+            ScrapedListing(
+                merchant=["jib", "ihavecpu", "banana"][i % 3],
+                merchant_sku=str(i),
+                category=Category.GPU,
+                title=f"VGA MSI GEFORCE RTX {chip} - {vram}GB GDDR7",
+                url=f"https://example.test/{i}",
+                price=Decimal(str(round(base * rng.uniform(0.9, 1.1)))),
+                view_count=int(rng.integers(100, 100_000)),
+                sold_count=int(rng.integers(0, 500)),
+                in_stock=True,
+                scraped_at=datetime.now(timezone.utc),
+            )
+        )
+    await save_listings(conn, listings)
+    await link_listings(conn)
+
+    report = await train(conn, figures=tmp_path)
+
+    assert await conn.fetchval("SELECT count(*) FROM listing_insights") == 60
+    assert (
+        await conn.fetchval(
+            "SELECT count(*) FROM listing_insights WHERE deal_score BETWEEN 0 AND 100"
+        )
+        == 60
+    )
+    kinds = {r[0] for r in await conn.fetch("SELECT kind FROM market_insights")}
+    assert {"simple_regression", "fair_value_mlr", "tier_tree"} <= kinds
+    assert report.market[("gpu", "simple_regression")]["slope_thb_per_unit"] > 0
+    assert (tmp_path / "gpu_simple_regression.png").exists()

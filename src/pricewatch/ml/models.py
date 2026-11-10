@@ -1,0 +1,475 @@
+"""The five academic models of the platform, as pure functions on frames.
+
+Every function takes plain pandas/NumPy inputs and returns plain results, so
+each can be unit-tested on synthetic data with a known answer.
+
+Complexities use n = rows, p = features, k = clusters, d = tree depth:
+* OLS (simple and multiple): O(n p^2) via a least-squares solve.
+* Regression / classification tree: O(p n log n) per level, depth <= 4.
+* K-Means: O(i n k p) for i Lloyd iterations; silhouette O(n^2) is the cost
+  driver when choosing k, acceptable at catalogue scale (n < 10^4).
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import confusion_matrix, silhouette_score
+from sklearn.model_selection import KFold, cross_val_predict
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor, export_text
+
+MAX_TREE_DEPTH = 4
+_RNG = 42
+
+# ------------------------------------------------- A. Simple linear regression
+
+
+@dataclass(frozen=True)
+class SimpleRegression:
+    """Result of ``price = b0 + b1 * x``.
+
+    Attributes:
+        feature: Name of the explanatory variable.
+        intercept: b0 (THB).
+        slope: b1, marginal THB per unit of ``feature``.
+        r2: Coefficient of determination on the fitted data.
+        n: Observations used.
+        residuals: ``price - fitted`` per input row (NaN where unused).
+    """
+
+    feature: str
+    intercept: float
+    slope: float
+    r2: float
+    n: int
+    residuals: pd.Series
+
+
+def simple_regression(x: pd.Series, y: pd.Series, feature: str) -> SimpleRegression:
+    """Fit simple OLS on rows where both values are present.
+
+    Closed form b1 = cov(x, y) / var(x), b0 = mean(y) - b1 mean(x): two
+    vectorised passes, O(n).
+    """
+    mask = x.notna() & y.notna()
+    xs, ys = x[mask].to_numpy(float), y[mask].to_numpy(float)
+    if len(xs) < 3 or np.ptp(xs) == 0:
+        raise ValueError(f"not enough variation in {feature} to fit a regression")
+    x_mean, y_mean = xs.mean(), ys.mean()
+    slope = float(((xs - x_mean) * (ys - y_mean)).sum() / ((xs - x_mean) ** 2).sum())
+    intercept = float(y_mean - slope * x_mean)
+    fitted = intercept + slope * xs
+    ss_res = float(((ys - fitted) ** 2).sum())
+    ss_tot = float(((ys - y_mean) ** 2).sum())
+    residuals = pd.Series(np.nan, index=x.index)
+    residuals[mask] = ys - fitted
+    return SimpleRegression(feature, intercept, slope, 1 - ss_res / ss_tot, len(xs), residuals)
+
+
+# ----------------------------------------------- B. Multiple linear regression
+
+
+@dataclass(frozen=True)
+class FairValueModel:
+    """Log-linear multiple regression of price on specs and demand.
+
+    ``log(price) = b0 + sum(b_j * x_j) + e``. Coefficients are multiplicative:
+    ``exp(b_j) - 1`` is the % price change per unit of ``x_j`` (per standard
+    deviation when ``standardized``).
+
+    Attributes:
+        features: Feature names, in coefficient order.
+        coefficients: b_j on the standardised features.
+        intercept: b0.
+        r2_cv: 5-fold cross-validated R^2 on log(price).
+        mape_cv: Cross-validated mean absolute % error of the fair price.
+        n: Rows used.
+        fair_price: Out-of-fold fair price per row (THB).
+        z_residual: Out-of-fold standardised log residual per row.
+    """
+
+    features: list[str]
+    coefficients: list[float]
+    intercept: float
+    r2_cv: float
+    mape_cv: float
+    n: int
+    fair_price: pd.Series
+    z_residual: pd.Series
+
+    def coefficient_table(self) -> list[dict[str, float | str]]:
+        """Coefficients with their % effect per standard deviation."""
+        return [
+            {"feature": f, "beta": b, "pct_effect_per_sd": math.expm1(b)}
+            for f, b in zip(self.features, self.coefficients, strict=True)
+        ]
+
+
+def _usable_columns(features: pd.DataFrame) -> list[str]:
+    """Columns at least 30% populated and not constant."""
+    return [
+        str(c) for c in features if features[c].notna().mean() >= 0.3 and features[c].nunique() > 1
+    ]
+
+
+def _impute(matrix: pd.DataFrame) -> pd.DataFrame:
+    """Median-impute each column; columns that are entirely missing become 0."""
+    return matrix.fillna(matrix.median(numeric_only=True)).fillna(0.0)
+
+
+def fit_fair_value(features: pd.DataFrame, price: pd.Series, *, folds: int = 5) -> FairValueModel:
+    """Fit the fair-value MLR and score each row out-of-fold.
+
+    Out-of-fold predictions matter here: an in-sample fit would let each
+    listing pull the regression line towards its own price and understate how
+    under- or over-priced it is.
+
+    Args:
+        features: Numeric feature columns (NaN allowed; median-imputed).
+        price: Listing price in THB, aligned with ``features``.
+        folds: Cross-validation folds.
+
+    Returns:
+        The fitted model with out-of-fold fair prices and z-scored residuals.
+    """
+    usable = _usable_columns(features)
+    if not usable:
+        raise ValueError("no usable features for the fair-value model")
+    x = StandardScaler().fit_transform(_impute(features[usable]))
+    y = np.log(price.to_numpy(float))
+    folds = max(2, min(folds, len(y) // 5))
+    cv = KFold(n_splits=folds, shuffle=True, random_state=_RNG)
+    oof_log = cross_val_predict(LinearRegression(), x, y, cv=cv)
+    model = LinearRegression().fit(x, y)
+
+    resid = y - oof_log
+    sigma = resid.std(ddof=len(usable) + 1) or 1.0
+    # Duan's smearing: exp(E[log y]) underestimates E[y] under log-normal noise.
+    smear = float(np.mean(np.exp(resid)))
+    fair = np.exp(oof_log) * smear
+    ss_res = float((resid**2).sum())
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    return FairValueModel(
+        features=usable,
+        coefficients=[float(b) for b in model.coef_],
+        intercept=float(model.intercept_),
+        r2_cv=1 - ss_res / ss_tot,
+        mape_cv=float(np.mean(np.abs(price.to_numpy(float) - fair) / fair)),
+        n=len(y),
+        fair_price=pd.Series(fair, index=features.index),
+        z_residual=pd.Series(resid / sigma, index=features.index),
+    )
+
+
+def deal_score(z_residual: pd.Series) -> pd.Series:
+    """Map standardised residuals to a 0-100 Deal Score.
+
+    ``score = 100 * (1 - Phi(z))``: 50 at fair value, about 84 one standard
+    deviation below it, about 16 one above. Vectorised via ``erf``.
+    """
+    z = z_residual.to_numpy(float)
+    phi = 0.5 * (1 + np.vectorize(math.erf)(z / math.sqrt(2)))
+    return pd.Series(np.clip(np.rint(100 * (1 - phi)), 0, 100), index=z_residual.index)
+
+
+# --------------------------------------------------------- C. Regression tree
+
+
+@dataclass(frozen=True)
+class TierTree:
+    """Depth-limited regression tree segmenting price tiers."""
+
+    rules: str
+    r2_cv: float
+    leaves: int
+    model: DecisionTreeRegressor
+    features: list[str]
+
+
+def fit_tier_tree(features: pd.DataFrame, price: pd.Series) -> TierTree:
+    """Fit a regression tree (max depth 4) and report cross-validated R^2."""
+    usable = _usable_columns(features)
+    x = _impute(features[usable])
+    y = price.to_numpy(float)
+    tree = DecisionTreeRegressor(max_depth=MAX_TREE_DEPTH, min_samples_leaf=5, random_state=_RNG)
+    folds = max(2, min(5, len(y) // 10))
+    oof = cross_val_predict(tree, x, y, cv=KFold(folds, shuffle=True, random_state=_RNG))
+    tree.fit(x, y)
+    r2 = 1 - float(((y - oof) ** 2).sum()) / float(((y - y.mean()) ** 2).sum())
+    return TierTree(
+        rules=export_text(tree, feature_names=usable, decimals=1),
+        r2_cv=r2,
+        leaves=int(tree.get_n_leaves()),
+        model=tree,
+        features=usable,
+    )
+
+
+# ---------------------------------------------------- D. K-Means segmentation
+
+SEGMENT_LABELS = {
+    (True, True): "community_favorite",
+    (True, False): "overpriced_hype",
+    (False, True): "hidden_gem",
+    (False, False): "niche",
+}
+
+
+@dataclass(frozen=True)
+class DemandSegments:
+    """K-Means over ``[log(views+1), log(sales/day+1), normalised price]``."""
+
+    k: int
+    silhouette: float
+    centroids: list[dict[str, float | str]]
+    labels: pd.Series
+    silhouette_by_k: dict[int, float] = field(default_factory=dict)
+
+
+def segment_demand(
+    views: pd.Series,
+    sales_per_day: pd.Series,
+    normalized_price: pd.Series,
+    *,
+    k_range: range = range(3, 7),
+) -> DemandSegments:
+    """Cluster listings by demand and name each cluster from its centroid.
+
+    k is chosen by silhouette score. Centroids are read in standardised units:
+    a cluster is "high" on views or sales when its centroid is above the
+    population mean (z > 0), giving the profiles of the specification
+    (community favourites, hype, hidden gems) plus low-interest "niche".
+
+    Args:
+        views: Cumulative page views.
+        sales_per_day: Sales velocity.
+        normalized_price: Price relative to the model's typical price.
+        k_range: Candidate cluster counts.
+
+    Returns:
+        The segmentation; listings with missing inputs get no label.
+    """
+    raw = pd.DataFrame(
+        {
+            "log_views": np.log1p(views.astype(float)),
+            "log_sales_per_day": np.log1p(sales_per_day.astype(float).clip(lower=0)),
+            "normalized_price": normalized_price.astype(float),
+        }
+    ).dropna()
+    if len(raw) < max(k_range.start * 5, 15):
+        raise ValueError(f"only {len(raw)} listings have demand data; too few to cluster")
+    scaler = StandardScaler()
+    x = scaler.fit_transform(raw)
+
+    scores: dict[int, float] = {}
+    fits: dict[int, KMeans] = {}
+    for k in k_range:
+        if k >= len(raw):
+            break
+        km = KMeans(n_clusters=k, n_init=10, random_state=_RNG).fit(x)
+        fits[k], scores[k] = km, float(silhouette_score(x, km.labels_))
+    best_k = max(scores, key=lambda k: scores[k])
+    km = fits[best_k]
+
+    names: dict[int, str] = {}
+    centroids: list[dict[str, float | str]] = []
+    for idx, center in enumerate(km.cluster_centers_):
+        views_z, sales_z, price_z = (float(v) for v in center)
+        names[idx] = SEGMENT_LABELS[(views_z > 0, sales_z > 0)]
+        unscaled = scaler.inverse_transform(center.reshape(1, -1))[0]
+        centroids.append(
+            {
+                "cluster": idx,
+                "label": names[idx],
+                "size": int((km.labels_ == idx).sum()),
+                "views_z": views_z,
+                "sales_z": sales_z,
+                "price_z": price_z,
+                "views": float(math.expm1(unscaled[0])),
+                "sales_per_day": float(math.expm1(unscaled[1])),
+                "normalized_price": float(unscaled[2]),
+            }
+        )
+    labels = pd.Series(None, index=views.index, dtype="object")
+    labels[raw.index] = [names[i] for i in km.labels_]
+    return DemandSegments(best_k, scores[best_k], centroids, labels, scores)
+
+
+# ------------------------------------------ E. Buy / Wait decision tree
+
+
+BUY_NOW, WAIT, FAIR = "buy_now", "wait", "fair_price"
+TIMING_FEATURES = [
+    "pct_vs_model_median",
+    "price_percentile_own",
+    "pct_change_prev",
+    "sales_per_day",
+    "days_listed",
+]
+
+
+def label_price_paths(
+    history: pd.DataFrame, *, horizon_days: float = 35.0, drop_pct: float = 0.03
+) -> pd.DataFrame:
+    """Turn observation history into supervised timing examples.
+
+    For each observation at time t that has a later observation within the
+    horizon, the outcome over (t, t + horizon] defines the label:
+
+    * ``wait``: the price later fell by at least ``drop_pct``;
+    * ``buy_now``: otherwise, the item went out of stock or its stock fell by
+      half (scarcity: waiting risks losing it);
+    * ``fair_price``: otherwise (stable).
+
+    Features use only information available at t (no look-ahead): price vs
+    the median price of the same canonical model on that day, the price's
+    percentile within the listing's own past, change since the previous
+    observation, recent sales velocity and days since first seen.
+
+    Runs per listing over its sorted observations: O(n * m) for m
+    observations inside a horizon, near-linear in practice.
+
+    Args:
+        history: Output of :func:`pricewatch.ml.dataset.load_history`.
+        horizon_days: Look-ahead window for the outcome.
+        drop_pct: Minimum relative price drop that counts as "wait".
+
+    Returns:
+        One row per labelled observation with :data:`TIMING_FEATURES`,
+        ``label`` and ``scraped_at``.
+    """
+    if history.empty:
+        return pd.DataFrame(columns=[*TIMING_FEATURES, "label", "scraped_at"])
+    hist = history.copy()
+    hist["day"] = hist["scraped_at"].dt.floor("D")
+    day_median = hist.groupby(["canonical_id", "day"])["price"].transform("median")
+    hist["pct_vs_model_median"] = (hist["price"] / day_median - 1).where(
+        hist["canonical_id"].notna()
+    )
+
+    # Naive UTC datetime64 throughout: tz-aware pandas values become object
+    # arrays in NumPy, which are slow and cannot mix with naive timestamps.
+    hist["scraped_at"] = pd.to_datetime(hist["scraped_at"], utc=True).dt.tz_localize(None)
+    hist["first_seen_at"] = pd.to_datetime(hist["first_seen_at"], utc=True).dt.tz_localize(None)
+    hist = hist.sort_values(["listing_id", "scraped_at"], kind="stable")
+
+    examples: list[dict[str, Any]] = []
+    horizon = np.timedelta64(int(horizon_days * 86400), "s")
+    for _, obs in hist.groupby("listing_id", sort=False):
+        times = obs["scraped_at"].to_numpy("datetime64[ns]")
+        first_seen = obs["first_seen_at"].to_numpy("datetime64[ns]")
+        prices = obs["price"].to_numpy(float)
+        stock_ok = obs["in_stock"].to_numpy(bool)
+        qty = obs["stock_quantity"].to_numpy(float)
+        sold = obs["sold_count"].to_numpy(float)
+        for i in range(len(obs)):
+            later = (times > times[i]) & (times <= times[i] + horizon)
+            if not later.any():
+                continue
+            future_min = prices[later].min()
+            if future_min <= prices[i] * (1 - drop_pct):
+                label = WAIT
+            elif stock_ok[i] and (
+                (~stock_ok[later]).any()
+                or (qty[i] > 0 and np.nanmin(np.where(later, qty, np.nan)) <= qty[i] / 2)
+            ):
+                label = BUY_NOW
+            else:
+                label = FAIR
+            past = prices[: i + 1]
+            days_since_prev = (
+                (times[i] - times[i - 1]) / np.timedelta64(1, "D") if i > 0 else np.nan
+            )
+            examples.append(
+                {
+                    "pct_vs_model_median": obs["pct_vs_model_median"].iloc[i],
+                    "price_percentile_own": float((past <= prices[i]).mean()),
+                    "pct_change_prev": prices[i] / prices[i - 1] - 1 if i > 0 else 0.0,
+                    "sales_per_day": (sold[i] - sold[i - 1]) / days_since_prev
+                    if i > 0 and days_since_prev > 0
+                    else np.nan,
+                    "days_listed": (times[i] - first_seen[i]) / np.timedelta64(1, "D"),
+                    "label": label,
+                    "scraped_at": times[i],
+                }
+            )
+    # Explicit columns so "no labelled examples" is an empty frame, not a shapeless one.
+    return pd.DataFrame(examples, columns=[*TIMING_FEATURES, "label", "scraped_at"])
+
+
+@dataclass(frozen=True)
+class TimingModel:
+    """Depth-limited classification tree recommending buy / wait / fair."""
+
+    model: DecisionTreeClassifier
+    features: list[str]
+    rules: str
+    accuracy_test: float
+    baseline_accuracy_test: float
+    confusion: list[list[int]]
+    classes: list[str]
+    n_train: int
+    n_test: int
+    class_counts: dict[str, int]
+    medians: dict[str, float]
+
+
+def fit_timing_tree(examples: pd.DataFrame, *, test_fraction: float = 0.25) -> TimingModel:
+    """Train the Buy/Wait tree with a chronological train/test split.
+
+    Splitting by time rather than at random prevents the model from learning
+    from the future of the very periods it is tested on.
+    """
+    if len(examples) < 40 or examples["label"].nunique() < 2:
+        raise ValueError(
+            f"{len(examples)} labelled examples with {examples['label'].nunique()} classes; "
+            "not enough history to train the timing tree"
+        )
+    ordered = examples.sort_values("scraped_at")
+    cut = int(len(ordered) * (1 - test_fraction))
+    train, test = ordered.iloc[:cut], ordered.iloc[cut:]
+    medians = {f: float(np.nan_to_num(train[f].median())) for f in TIMING_FEATURES}
+    x_train = train[TIMING_FEATURES].fillna(medians)
+    x_test = test[TIMING_FEATURES].fillna(medians)
+    tree = DecisionTreeClassifier(
+        max_depth=MAX_TREE_DEPTH, min_samples_leaf=10, class_weight="balanced", random_state=_RNG
+    ).fit(x_train, train["label"])
+    predicted = tree.predict(x_test)
+    majority = train["label"].mode()[0]
+    classes = [str(c) for c in tree.classes_]
+    return TimingModel(
+        model=tree,
+        features=TIMING_FEATURES,
+        rules=export_text(tree, feature_names=TIMING_FEATURES, decimals=3),
+        accuracy_test=float((predicted == test["label"].to_numpy()).mean()),
+        baseline_accuracy_test=float((test["label"] == majority).mean()),
+        confusion=confusion_matrix(test["label"], predicted, labels=classes).tolist(),
+        classes=classes,
+        n_train=len(train),
+        n_test=len(test),
+        class_counts={str(k): int(v) for k, v in examples["label"].value_counts().items()},
+        medians=medians,
+    )
+
+
+def explain_path(model: TimingModel, row: pd.Series) -> str:
+    """Render the decision path of one row as readable split conditions."""
+    tree = model.model.tree_
+    x = row[model.features].astype(float).fillna(pd.Series(model.medians)).to_numpy()
+    node, steps = 0, []
+    while tree.children_left[node] != tree.children_right[node]:
+        feature, threshold = model.features[tree.feature[node]], tree.threshold[node]
+        if x[tree.feature[node]] <= threshold:
+            steps.append(f"{feature} <= {threshold:.3g}")
+            node = tree.children_left[node]
+        else:
+            steps.append(f"{feature} > {threshold:.3g}")
+            node = tree.children_right[node]
+    return " AND ".join(steps)

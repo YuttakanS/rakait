@@ -8,9 +8,9 @@ import logging
 import os
 import sys
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime
 
-from pricewatch.models import Category
+from pricewatch.models import Category, ScrapedListing
 from pricewatch.pipeline import StoreResult, run_scrape
 from pricewatch.scrapers import SCRAPERS
 
@@ -73,6 +73,45 @@ async def _scrape(
     return 1 if any(result.errors for result in results) else 0
 
 
+async def _train() -> int:
+    """Fit every model on the current catalogue and persist the insights."""
+    from pricewatch.db import connect
+    from pricewatch.ml.train import FIGURES_DIR, train
+
+    conn = await connect(_database_url())
+    try:
+        report = await train(conn)
+    finally:
+        await conn.close()
+    ins = report.insights
+    print(f"insights for {len(ins)} listings; figures in {FIGURES_DIR}")
+    print(f"  fair price: {int(ins['fair_price'].notna().sum())} listings")
+    print(f"  demand cluster: {int(ins['demand_cluster'].notna().sum())} listings")
+    print(f"  recommendations: {ins['recommendation'].value_counts().to_dict()}")
+    for (category, kind), payload in sorted(report.market.items()):
+        headline = {
+            k: round(v, 3) if isinstance(v, float) else v
+            for k, v in payload.items()
+            if k
+            in {
+                "slope_thb_per_unit",
+                "r2",
+                "r2_cv",
+                "mape_cv",
+                "n",
+                "k",
+                "silhouette",
+                "accuracy_test",
+                "baseline_accuracy_test",
+                "leaves",
+            }
+        }
+        print(f"  {category}/{kind}: {headline}")
+    for note in report.notes:
+        print(f"  note: {note}")
+    return 0
+
+
 async def _link() -> int:
     """Parse listing titles and link them to canonical products."""
     from pricewatch.db import connect
@@ -107,12 +146,19 @@ async def _backfill(categories: Sequence[Category], since: date, dry_run: bool) 
         from pricewatch.db import connect
         from pricewatch.db.repository import save_listings
 
+        # save_listings keeps one observation per SKU per call (the latest), so
+        # each archived snapshot is saved as its own batch to keep the history.
+        snapshots: dict[datetime, list[ScrapedListing]] = {}
+        for item in listings:
+            snapshots.setdefault(item.scraped_at, []).append(item)
         conn = await connect(database_url)
         try:
-            written = await save_listings(conn, listings)
+            written = 0
+            for _, batch in sorted(snapshots.items()):
+                written += await save_listings(conn, batch)
         finally:
             await conn.close()
-        print(f"wrote {written} price-history rows")
+        print(f"wrote {written} price-history rows from {len(snapshots)} snapshots")
     return 0
 
 
@@ -147,6 +193,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     commands.add_parser("link", help="match listings to canonical products")
+    commands.add_parser("train", help="fit the ML models and store listing/market insights")
 
     backfill = commands.add_parser(
         "backfill", help="import archived JIB listing pages from the Wayback Machine"
@@ -179,6 +226,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "migrate":
         return asyncio.run(_migrate())
+
+    if args.command == "train":
+        return asyncio.run(_train())
 
     if args.command == "link":
         return asyncio.run(_link())
