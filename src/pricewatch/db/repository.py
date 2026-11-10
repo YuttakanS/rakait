@@ -20,6 +20,7 @@ _STAGE_COLUMNS: tuple[str, ...] = (
     "view_count",
     "sold_count",
     "in_stock",
+    "stock_quantity",
     "scraped_at",
 )
 
@@ -35,6 +36,7 @@ CREATE TEMP TABLE listing_stage (
     view_count    BIGINT,
     sold_count    BIGINT,
     in_stock      BOOLEAN NOT NULL,
+    stock_quantity INTEGER,
     scraped_at    TIMESTAMPTZ NOT NULL
 ) ON COMMIT DROP
 """
@@ -45,10 +47,10 @@ _MERGE = """
 WITH upserted AS (
     INSERT INTO merchant_listings AS l (
         merchant_id, merchant_sku, category, title, url, spec_text,
-        current_price, view_count, sold_count, in_stock, last_scraped_at
+        current_price, view_count, sold_count, in_stock, stock_quantity, last_scraped_at
     )
     SELECT m.id, s.merchant_sku, s.category, s.title, s.url, s.spec_text,
-           s.price, s.view_count, s.sold_count, s.in_stock, s.scraped_at
+           s.price, s.view_count, s.sold_count, s.in_stock, s.stock_quantity, s.scraped_at
     FROM listing_stage AS s
     JOIN merchants AS m ON m.slug = s.merchant
     ON CONFLICT (merchant_id, merchant_sku) DO UPDATE SET
@@ -60,12 +62,16 @@ WITH upserted AS (
         view_count      = EXCLUDED.view_count,
         sold_count      = EXCLUDED.sold_count,
         in_stock        = EXCLUDED.in_stock,
+        stock_quantity  = EXCLUDED.stock_quantity,
         last_scraped_at = EXCLUDED.last_scraped_at
     WHERE l.last_scraped_at <= EXCLUDED.last_scraped_at
-    RETURNING id, last_scraped_at, current_price, view_count, sold_count, in_stock
+    RETURNING id, last_scraped_at, current_price, view_count, sold_count, in_stock,
+              stock_quantity
 )
-INSERT INTO price_history (listing_id, scraped_at, price, view_count, sold_count, in_stock)
-SELECT id, last_scraped_at, current_price, view_count, sold_count, in_stock
+INSERT INTO price_history (
+    listing_id, scraped_at, price, view_count, sold_count, in_stock, stock_quantity
+)
+SELECT id, last_scraped_at, current_price, view_count, sold_count, in_stock, stock_quantity
 FROM upserted
 ON CONFLICT (listing_id, scraped_at) DO NOTHING
 """
@@ -115,6 +121,7 @@ async def save_listings(conn: asyncpg.Connection, listings: Sequence[ScrapedList
             item.view_count,
             item.sold_count,
             item.in_stock,
+            item.stock_quantity,
             item.scraped_at,
         )
         for item in latest.values()

@@ -36,7 +36,14 @@ async def conn():
         await connection.close()
 
 
-def _listing(sku: str, price: str | None, sold: int, at: datetime, merchant: str = "jib"):
+def _listing(
+    sku: str,
+    price: str | None,
+    sold: int,
+    at: datetime,
+    merchant: str = "jib",
+    stock_quantity: int | None = None,
+):
     return ScrapedListing(
         merchant=merchant,
         merchant_sku=sku,
@@ -47,12 +54,13 @@ def _listing(sku: str, price: str | None, sold: int, at: datetime, merchant: str
         view_count=100,
         sold_count=sold,
         in_stock=price is not None,
+        stock_quantity=stock_quantity,
         scraped_at=at,
     )
 
 
 async def test_migrations_apply_once(conn) -> None:
-    assert await apply_migrations(conn) == ["0001", "0002", "0003"]
+    assert await apply_migrations(conn) == ["0001", "0002", "0003", "0004"]
     assert await apply_migrations(conn) == []
     assert await conn.fetchval("SELECT count(*) FROM merchants") == 5
 
@@ -167,3 +175,16 @@ async def test_rls_denies_non_owner_roles(conn) -> None:
         await conn.execute(f'REVOKE ALL ON price_history FROM "{role}"')
         await conn.execute(f'REVOKE ALL ON SCHEMA "{schema}" FROM "{role}"')
         await conn.execute(f'DROP ROLE "{role}"')
+
+
+async def test_stock_quantity_is_stored_in_listing_and_history(conn) -> None:
+    await apply_migrations(conn)
+    await save_listings(conn, [_listing("9", "100", 0, T0, merchant="ihavecpu", stock_quantity=52)])
+    later = T0 + timedelta(hours=3)
+    await save_listings(
+        conn, [_listing("9", "100", 0, later, merchant="ihavecpu", stock_quantity=47)]
+    )
+
+    assert await conn.fetchval("SELECT stock_quantity FROM merchant_listings") == 47
+    history = await conn.fetch("SELECT stock_quantity FROM price_history ORDER BY scraped_at")
+    assert [row[0] for row in history] == [52, 47]

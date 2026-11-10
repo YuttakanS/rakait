@@ -32,6 +32,7 @@ class ScrapedListing(BaseModel):
         view_count: Cumulative page views reported by the merchant.
         sold_count: Cumulative units sold reported by the merchant.
         in_stock: Whether the listing can currently be bought.
+        stock_quantity: Units on hand, when the merchant publishes them.
         scraped_at: Timezone-aware observation timestamp.
     """
 
@@ -47,4 +48,5 @@ class ScrapedListing(BaseModel):
     view_count: int | None = Field(default=None, ge=0)
     sold_count: int | None = Field(default=None, ge=0)
     in_stock: bool
+    stock_quantity: int | None = Field(default=None, ge=0)
     scraped_at: datetime
