@@ -52,7 +52,7 @@ def _listing(sku: str, price: str | None, sold: int, at: datetime, merchant: str
 
 
 async def test_migrations_apply_once(conn) -> None:
-    assert await apply_migrations(conn) == ["0001", "0002"]
+    assert await apply_migrations(conn) == ["0001", "0002", "0003"]
     assert await apply_migrations(conn) == []
     assert await conn.fetchval("SELECT count(*) FROM merchants") == 5
 
@@ -144,3 +144,26 @@ async def test_record_scrape_runs(conn) -> None:
         ("cpu", 0, "FetchError: HTTP 503"),
         (None, 0, "RuntimeError: crashed"),
     ]
+
+
+async def test_rls_denies_non_owner_roles(conn) -> None:
+    """A non-owner role (standing in for Supabase's anon) sees no rows even if granted."""
+
+    await apply_migrations(conn)
+    await save_listings(conn, [_listing("1", "100", 1, T0)])
+    role = f"pw_anon_{uuid.uuid4().hex[:8]}"
+    schema = await conn.fetchval("SELECT current_schema()")
+    await conn.execute(f'CREATE ROLE "{role}"')
+    try:
+        await conn.execute(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"')
+        await conn.execute(f'GRANT SELECT, DELETE ON price_history TO "{role}"')
+        async with conn.transaction():
+            await conn.execute(f'SET LOCAL ROLE "{role}"')
+            assert await conn.fetchval("SELECT count(*) FROM price_history") == 0
+            assert await conn.execute("DELETE FROM price_history") == "DELETE 0"
+        # The owner (our backend) is unaffected.
+        assert await conn.fetchval("SELECT count(*) FROM price_history") == 1
+    finally:
+        await conn.execute(f'REVOKE ALL ON price_history FROM "{role}"')
+        await conn.execute(f'REVOKE ALL ON SCHEMA "{schema}" FROM "{role}"')
+        await conn.execute(f'DROP ROLE "{role}"')

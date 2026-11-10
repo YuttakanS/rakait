@@ -24,11 +24,10 @@ def _database_url() -> str:
 
 async def _migrate() -> int:
     """Apply pending migrations."""
-    import asyncpg
-
+    from pricewatch.db import connect
     from pricewatch.db.migrate import apply_migrations
 
-    conn = await asyncpg.connect(_database_url())
+    conn = await connect(_database_url())
     try:
         applied = await apply_migrations(conn)
     finally:
@@ -59,11 +58,10 @@ async def _scrape(
     listings = [item for result in results for item in result.listings]
     runs = [run for result in results for run in result.runs]
     if database_url is not None:
-        import asyncpg
-
+        from pricewatch.db import connect
         from pricewatch.db.repository import record_scrape_runs, save_listings
 
-        conn = await asyncpg.connect(database_url)
+        conn = await connect(database_url)
         try:
             written = await save_listings(conn, listings) if listings else 0
             logged = await record_scrape_runs(conn, runs)
