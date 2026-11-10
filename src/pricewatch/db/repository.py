@@ -41,38 +41,54 @@ CREATE TEMP TABLE listing_stage (
 ) ON COMMIT DROP
 """
 
-# One statement, one round trip: upsert the latest state, then append the
-# observation to the ledger using the ids returned by the upsert.
-_MERGE = """
-WITH upserted AS (
-    INSERT INTO merchant_listings AS l (
-        merchant_id, merchant_sku, category, title, url, spec_text,
-        current_price, view_count, sold_count, in_stock, stock_quantity, last_scraped_at
-    )
-    SELECT m.id, s.merchant_sku, s.category, s.title, s.url, s.spec_text,
-           s.price, s.view_count, s.sold_count, s.in_stock, s.stock_quantity, s.scraped_at
-    FROM listing_stage AS s
-    JOIN merchants AS m ON m.slug = s.merchant
-    ON CONFLICT (merchant_id, merchant_sku) DO UPDATE SET
-        category        = EXCLUDED.category,
-        title           = EXCLUDED.title,
-        url             = EXCLUDED.url,
-        spec_text       = EXCLUDED.spec_text,
-        current_price   = EXCLUDED.current_price,
-        view_count      = EXCLUDED.view_count,
-        sold_count      = EXCLUDED.sold_count,
-        in_stock        = EXCLUDED.in_stock,
-        stock_quantity  = EXCLUDED.stock_quantity,
-        last_scraped_at = EXCLUDED.last_scraped_at
-    WHERE l.last_scraped_at <= EXCLUDED.last_scraped_at
-    RETURNING id, last_scraped_at, current_price, view_count, sold_count, in_stock,
-              stock_quantity
+# Step 1: bring each listing's current state up to date. The WHERE guard keeps
+# an older observation (e.g. an archive backfill) from overwriting a newer
+# state; first_seen_at is lowered to the earliest observation either way.
+_UPSERT_LISTINGS = """
+INSERT INTO merchant_listings AS l (
+    merchant_id, merchant_sku, category, title, url, spec_text,
+    current_price, view_count, sold_count, in_stock, stock_quantity,
+    first_seen_at, last_scraped_at
 )
+SELECT m.id, s.merchant_sku, s.category, s.title, s.url, s.spec_text,
+       s.price, s.view_count, s.sold_count, s.in_stock, s.stock_quantity,
+       s.scraped_at, s.scraped_at
+FROM listing_stage AS s
+JOIN merchants AS m ON m.slug = s.merchant
+ON CONFLICT (merchant_id, merchant_sku) DO UPDATE SET
+    first_seen_at   = LEAST(l.first_seen_at, EXCLUDED.first_seen_at),
+    category        = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.category ELSE l.category END,
+    title           = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.title ELSE l.title END,
+    url             = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.url ELSE l.url END,
+    spec_text       = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.spec_text ELSE l.spec_text END,
+    current_price   = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.current_price ELSE l.current_price END,
+    view_count      = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.view_count ELSE l.view_count END,
+    sold_count      = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.sold_count ELSE l.sold_count END,
+    in_stock        = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.in_stock ELSE l.in_stock END,
+    stock_quantity  = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN EXCLUDED.stock_quantity ELSE l.stock_quantity END,
+    last_scraped_at = GREATEST(l.last_scraped_at, EXCLUDED.last_scraped_at)
+"""
+
+# Step 2: append every observation to the ledger, old or new. Separate from
+# step 1 because a data-modifying CTE's inserts are invisible to the rest of
+# its own statement, so newly created listings could not be joined to.
+_APPEND_HISTORY = """
 INSERT INTO price_history (
     listing_id, scraped_at, price, view_count, sold_count, in_stock, stock_quantity
 )
-SELECT id, last_scraped_at, current_price, view_count, sold_count, in_stock, stock_quantity
-FROM upserted
+SELECT l.id, s.scraped_at, s.price, s.view_count, s.sold_count, s.in_stock, s.stock_quantity
+FROM listing_stage AS s
+JOIN merchants AS m ON m.slug = s.merchant
+JOIN merchant_listings AS l ON l.merchant_id = m.id AND l.merchant_sku = s.merchant_sku
 ON CONFLICT (listing_id, scraped_at) DO NOTHING
 """
 
@@ -85,8 +101,10 @@ async def save_listings(conn: asyncpg.Connection, listings: Sequence[ScrapedList
     """Upsert listings and append one price-history row for each.
 
     The batch is streamed into a temporary table with ``COPY`` and merged with
-    a single set-based statement, so cost is two round trips regardless of
-    batch size instead of O(n) row-by-row commits. Everything runs in one
+    two set-based statements, so the round-trip count is constant regardless
+    of batch size instead of O(n) row-by-row commits. Observations older than
+    a listing's current state (archive backfills) are added to the history
+    without overwriting that state. Everything runs in one
     transaction: either the whole batch lands or none of it.
 
     Args:
@@ -138,7 +156,8 @@ async def save_listings(conn: asyncpg.Connection, listings: Sequence[ScrapedList
 
         await conn.execute(_CREATE_STAGE)
         await conn.copy_records_to_table("listing_stage", records=records, columns=_STAGE_COLUMNS)
-        status: str = await conn.execute(_MERGE)
+        await conn.execute(_UPSERT_LISTINGS)
+        status: str = await conn.execute(_APPEND_HISTORY)
 
     # asyncpg returns the command tag, e.g. "INSERT 0 42".
     return int(status.rsplit(" ", 1)[-1])

@@ -104,6 +104,25 @@ class PoliteFetcher:
             FetchError: If every attempt failed or a non-retryable status was
                 returned.
         """
+        return (await self._get(url)).text
+
+    async def get_bytes(self, url: str) -> bytes:
+        """Fetch ``url`` and return the raw (transfer-decoded) response body.
+
+        Args:
+            url: Absolute URL to fetch.
+
+        Returns:
+            The response body bytes.
+
+        Raises:
+            FetchError: If every attempt failed or a non-retryable status was
+                returned.
+        """
+        return (await self._get(url)).content
+
+    async def _get(self, url: str) -> httpx.Response:
+        """GET ``url`` with throttling and retries; see :meth:`get_text`."""
         last_error = "no attempt made"
         for attempt in range(self._max_retries + 1):
             await self._throttle()
@@ -116,7 +135,7 @@ class PoliteFetcher:
                 last_error = f"{type(exc).__name__}: {exc}"
             else:
                 if response.status_code < 400:
-                    return response.text
+                    return response
                 last_error = f"HTTP {response.status_code}"
                 if response.status_code not in _RETRYABLE_STATUS:
                     raise FetchError(f"{url}: {last_error}")

@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from collections.abc import Sequence
+from datetime import date
 
 from pricewatch.models import Category
 from pricewatch.pipeline import StoreResult, run_scrape
@@ -72,6 +73,49 @@ async def _scrape(
     return 1 if any(result.errors for result in results) else 0
 
 
+async def _link() -> int:
+    """Parse listing titles and link them to canonical products."""
+    from pricewatch.db import connect
+    from pricewatch.db.linking import link_listings
+
+    conn = await connect(_database_url())
+    try:
+        summary = await link_listings(conn)
+    finally:
+        await conn.close()
+    share = summary.linked / summary.listings if summary.listings else 0.0
+    print(
+        f"linked {summary.linked}/{summary.listings} listings ({share:.0%}) "
+        f"to {summary.products} canonical products"
+    )
+    return 0
+
+
+async def _backfill(categories: Sequence[Category], since: date, dry_run: bool) -> int:
+    """Import archived JIB snapshots and persist (or summarise) them."""
+    from collections import Counter
+
+    from pricewatch.backfill import backfill_jib
+
+    database_url = None if dry_run else _database_url()
+    listings = await backfill_jib(categories, since)
+    per_month = Counter(item.scraped_at.strftime("%Y-%m") for item in listings)
+    print(f"archive: {len(listings)} observations across {len(per_month)} months")
+    for month, count in sorted(per_month.items()):
+        print(f"  {month}: {count}")
+    if database_url is not None and listings:
+        from pricewatch.db import connect
+        from pricewatch.db.repository import save_listings
+
+        conn = await connect(database_url)
+        try:
+            written = await save_listings(conn, listings)
+        finally:
+            await conn.close()
+        print(f"wrote {written} price-history rows")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse arguments and run the selected command.
 
@@ -102,6 +146,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--dry-run", action="store_true", help="print a summary instead of writing to the database"
     )
 
+    commands.add_parser("link", help="match listings to canonical products")
+
+    backfill = commands.add_parser(
+        "backfill", help="import archived JIB listing pages from the Wayback Machine"
+    )
+    backfill.add_argument(
+        "--since",
+        type=date.fromisoformat,
+        default=date(2024, 1, 1),
+        help="earliest capture date, YYYY-MM-DD (default: 2024-01-01)",
+    )
+    backfill.add_argument(
+        "--category",
+        action="append",
+        choices=[category.value for category in Category],
+        help="category to backfill (default: all)",
+    )
+    backfill.add_argument(
+        "--dry-run", action="store_true", help="print a summary instead of writing to the database"
+    )
+
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
@@ -114,6 +179,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "migrate":
         return asyncio.run(_migrate())
+
+    if args.command == "link":
+        return asyncio.run(_link())
+
+    if args.command == "backfill":
+        categories = (
+            [Category(value) for value in args.category] if args.category else list(Category)
+        )
+        return asyncio.run(_backfill(categories, args.since, args.dry_run))
 
     stores = args.store or sorted(SCRAPERS)
     categories = [Category(value) for value in args.category] if args.category else list(Category)

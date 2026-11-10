@@ -60,7 +60,7 @@ def _listing(
 
 
 async def test_migrations_apply_once(conn) -> None:
-    assert await apply_migrations(conn) == ["0001", "0002", "0003", "0004"]
+    assert await apply_migrations(conn) == ["0001", "0002", "0003", "0004", "0005"]
     assert await apply_migrations(conn) == []
     assert await conn.fetchval("SELECT count(*) FROM merchants") == 5
 
@@ -188,3 +188,65 @@ async def test_stock_quantity_is_stored_in_listing_and_history(conn) -> None:
     assert await conn.fetchval("SELECT stock_quantity FROM merchant_listings") == 47
     history = await conn.fetch("SELECT stock_quantity FROM price_history ORDER BY scraped_at")
     assert [row[0] for row in history] == [52, 47]
+
+
+async def test_backfilled_history_is_kept_without_overwriting_current_state(conn) -> None:
+    await apply_migrations(conn)
+    await save_listings(conn, [_listing("1", "9000", 50, T0)])
+    month_ago = T0 - timedelta(days=30)
+    assert await save_listings(conn, [_listing("1", "9900", 40, month_ago)]) == 1
+
+    row = await conn.fetchrow(
+        "SELECT current_price, sold_count, first_seen_at, last_scraped_at FROM merchant_listings"
+    )
+    assert (row["current_price"], row["sold_count"]) == (Decimal("9000.00"), 50)
+    assert row["first_seen_at"] == month_ago
+    assert row["last_scraped_at"] == T0
+    prices = await conn.fetch("SELECT price FROM price_history ORDER BY scraped_at")
+    assert [r[0] for r in prices] == [Decimal("9900.00"), Decimal("9000.00")]
+
+
+async def test_link_listings_groups_merchants_under_one_canonical_product(conn) -> None:
+    from pricewatch.db.linking import link_listings
+
+    await apply_migrations(conn)
+    titles = {
+        ("jib", "1"): "VGA (การ์ดแสดงผล) ASUS DUAL GEFORCE RTX 5060 8GB GDDR7 OC EDITION",
+        ("ihavecpu", "2"): "VGA(การ์ดจอ) MSI GEFORCE RTX 5060 VENTUS 2X OC 8G - 8GB GDDR7 (3Y)",
+        ("banana", "3"): "การ์ดจอ GALAX GeForce RTX 5060 1-Click OC V2 8GB GDDR7 128-bit",
+        ("banana", "4"): "การ์ดจอ LEADTEK NVIDIA Ampere RTX A1000 8GB GDDR6 128-bit",
+    }
+    await save_listings(
+        conn,
+        [
+            ScrapedListing(
+                merchant=merchant,
+                merchant_sku=sku,
+                category=Category.GPU,
+                title=title,
+                url=f"https://example.test/{sku}",
+                price=Decimal("10000"),
+                in_stock=True,
+                scraped_at=T0,
+            )
+            for (merchant, sku), title in titles.items()
+        ],
+    )
+
+    summary = await link_listings(conn)
+
+    assert (summary.listings, summary.linked, summary.products) == (4, 3, 1)
+    rows = await conn.fetch(
+        "SELECT l.merchant_sku, l.brand, c.model, c.manufacturer, c.specs->>'vram_gb' AS vram "
+        "FROM merchant_listings l LEFT JOIN canonical_products c ON c.id = l.canonical_product_id "
+        "ORDER BY l.merchant_sku"
+    )
+    assert [tuple(r) for r in rows] == [
+        ("1", "ASUS", "GeForce RTX 5060 8GB", "NVIDIA", "8"),
+        ("2", "MSI", "GeForce RTX 5060 8GB", "NVIDIA", "8"),
+        ("3", "Galax", "GeForce RTX 5060 8GB", "NVIDIA", "8"),
+        ("4", "Leadtek", None, None, None),
+    ]
+    # Idempotent: a second pass reuses the same canonical product.
+    assert (await link_listings(conn)).products == 1
+    assert await conn.fetchval("SELECT count(*) FROM canonical_products") == 1
