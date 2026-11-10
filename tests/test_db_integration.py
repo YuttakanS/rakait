@@ -1,0 +1,126 @@
+"""Integration tests against a real PostgreSQL database.
+
+Skipped unless ``TEST_DATABASE_URL`` is set. Each test runs inside a throwaway
+schema that is dropped afterwards.
+"""
+
+import os
+import uuid
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+import pytest
+
+from pricewatch.db.migrate import MigrationError, apply_migrations
+from pricewatch.db.repository import UnknownMerchantError, save_listings
+from pricewatch.models import Category, ScrapedListing
+
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+pytestmark = pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL not set")
+
+T0 = datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+async def conn():
+    import asyncpg
+
+    connection = await asyncpg.connect(TEST_DATABASE_URL)
+    schema = f"pricewatch_test_{uuid.uuid4().hex[:12]}"
+    await connection.execute(f'CREATE SCHEMA "{schema}"')
+    await connection.execute(f'SET search_path TO "{schema}"')
+    try:
+        yield connection
+    finally:
+        await connection.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        await connection.close()
+
+
+def _listing(sku: str, price: str | None, sold: int, at: datetime, merchant: str = "jib"):
+    return ScrapedListing(
+        merchant=merchant,
+        merchant_sku=sku,
+        category=Category.GPU,
+        title=f"GPU {sku}",
+        url=f"https://www.jib.co.th/web/product/readProduct/{sku}",
+        price=Decimal(price) if price is not None else None,
+        view_count=100,
+        sold_count=sold,
+        in_stock=price is not None,
+        scraped_at=at,
+    )
+
+
+async def test_migrations_apply_once(conn) -> None:
+    assert await apply_migrations(conn) == ["0001"]
+    assert await apply_migrations(conn) == []
+    assert await conn.fetchval("SELECT count(*) FROM merchants") == 5
+
+
+async def test_edited_migration_is_detected(conn, tmp_path) -> None:
+    path = tmp_path / "0001_a.sql"
+    path.write_text("CREATE TABLE a (id INT);")
+    await apply_migrations(conn, tmp_path)
+    path.write_text("CREATE TABLE a (id BIGINT);")
+    with pytest.raises(MigrationError, match="modified after being applied"):
+        await apply_migrations(conn, tmp_path)
+
+
+async def test_failed_migration_rolls_back(conn, tmp_path) -> None:
+    import asyncpg
+
+    (tmp_path / "0001_a.sql").write_text("CREATE TABLE a (id INT); SELECT * FROM missing;")
+    with pytest.raises(asyncpg.PostgresError):
+        await apply_migrations(conn, tmp_path)
+    assert await conn.fetchval("SELECT to_regclass('a')") is None
+    assert await conn.fetchval("SELECT count(*) FROM schema_migrations") == 0
+
+
+async def test_save_listings_upserts_and_appends_history(conn) -> None:
+    await apply_migrations(conn)
+
+    assert (
+        await save_listings(conn, [_listing("1", "9590", 72, T0), _listing("2", None, 5, T0)]) == 2
+    )
+    later = T0 + timedelta(hours=6)
+    assert await save_listings(conn, [_listing("1", "9290", 80, later)]) == 1
+
+    listings = await conn.fetch(
+        "SELECT merchant_sku, current_price, sold_count, in_stock FROM merchant_listings "
+        "ORDER BY merchant_sku"
+    )
+    assert [tuple(row) for row in listings] == [
+        ("1", Decimal("9290.00"), 80, True),
+        ("2", None, 5, False),
+    ]
+    history = await conn.fetch(
+        "SELECT h.price, h.sold_count FROM price_history h "
+        "JOIN merchant_listings l ON l.id = h.listing_id "
+        "WHERE l.merchant_sku = '1' ORDER BY h.scraped_at"
+    )
+    assert [tuple(row) for row in history] == [(Decimal("9590.00"), 72), (Decimal("9290.00"), 80)]
+
+
+async def test_save_listings_is_idempotent_and_ignores_stale_data(conn) -> None:
+    await apply_migrations(conn)
+    newer = T0 + timedelta(hours=1)
+    await save_listings(conn, [_listing("1", "100", 1, newer)])
+
+    assert await save_listings(conn, [_listing("1", "100", 1, newer)]) == 0
+    # An out-of-order (older) observation must not overwrite the current state.
+    await save_listings(conn, [_listing("1", "999", 0, T0)])
+    assert await conn.fetchval("SELECT current_price FROM merchant_listings") == Decimal("100.00")
+
+
+async def test_duplicate_skus_in_one_batch_keep_latest(conn) -> None:
+    await apply_migrations(conn)
+    batch = [_listing("1", "100", 1, T0), _listing("1", "90", 2, T0 + timedelta(minutes=1))]
+    assert await save_listings(conn, batch) == 1
+    assert await conn.fetchval("SELECT current_price FROM merchant_listings") == Decimal("90.00")
+
+
+async def test_unknown_merchant_is_rejected(conn) -> None:
+    await apply_migrations(conn)
+    with pytest.raises(UnknownMerchantError, match="nope"):
+        await save_listings(conn, [_listing("1", "100", 1, T0, merchant="nope")])
+    assert await conn.fetchval("SELECT count(*) FROM merchant_listings") == 0
