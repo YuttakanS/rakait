@@ -13,6 +13,7 @@ Complexities use n = rows, p = features, k = clusters, d = tree depth:
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,7 +21,7 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import confusion_matrix, silhouette_score
+from sklearn.metrics import balanced_accuracy_score, confusion_matrix, silhouette_score
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor, export_text
@@ -193,18 +194,30 @@ class TierTree:
     features: list[str]
 
 
+_LEAF_VALUE_RE = re.compile(r"value: \[(-?\d+(?:\.\d+)?)\]")
+
+
 def fit_tier_tree(features: pd.DataFrame, price: pd.Series) -> TierTree:
-    """Fit a regression tree (max depth 4) and report cross-validated R^2."""
+    """Fit a regression tree (max depth 4) on log(price); report cross-validated R^2.
+
+    The log target keeps a handful of workstation parts (10-100x the median
+    price) from dominating the squared-error splits. Leaf values in the
+    exported rules are converted back to THB for readability.
+    """
     usable = _usable_columns(features)
     x = _impute(features[usable])
-    y = price.to_numpy(float)
+    y = np.log(price.to_numpy(float))
     tree = DecisionTreeRegressor(max_depth=MAX_TREE_DEPTH, min_samples_leaf=5, random_state=_RNG)
     folds = max(2, min(5, len(y) // 10))
     oof = cross_val_predict(tree, x, y, cv=KFold(folds, shuffle=True, random_state=_RNG))
     tree.fit(x, y)
     r2 = 1 - float(((y - oof) ** 2).sum()) / float(((y - y.mean()) ** 2).sum())
+    rules = _LEAF_VALUE_RE.sub(
+        lambda m: f"price ≈ ฿{math.exp(float(m.group(1))):,.0f}",
+        export_text(tree, feature_names=usable, decimals=2),
+    )
     return TierTree(
-        rules=export_text(tree, feature_names=usable, decimals=1),
+        rules=rules,
         r2_cv=r2,
         leaves=int(tree.get_n_leaves()),
         model=tree,
@@ -214,12 +227,45 @@ def fit_tier_tree(features: pd.DataFrame, price: pd.Series) -> TierTree:
 
 # ---------------------------------------------------- D. K-Means segmentation
 
-SEGMENT_LABELS = {
-    (True, True): "community_favorite",
-    (True, False): "overpriced_hype",
-    (False, True): "hidden_gem",
-    (False, False): "niche",
-}
+HIDDEN_GEM, FAVORITE, HYPE, NICHE = "hidden_gem", "community_favorite", "overpriced_hype", "niche"
+# Minimum gap, in standard deviations, between a centroid's sales and views.
+_CONVERSION_MARGIN = 0.5
+
+
+def name_segments(centers: list[tuple[float, float]]) -> list[str]:
+    """Name clusters from their standardised (views_z, sales_z) centroids.
+
+    Views and sales are strongly correlated in practice, so the profiles are
+    read relative to each other ("sells more than its attention predicts")
+    rather than as absolute quadrants:
+
+    * hidden gem: the cluster whose sales most exceed its views, provided it
+      sells above average and the gap exceeds the margin;
+    * community favourite: other above-average sellers with above-average views;
+    * overpriced hype: below-average sellers whose views exceed sales by the margin
+      (attention that does not convert);
+    * niche: everything else (little attention, few sales).
+
+    Args:
+        centers: ``(views_z, sales_z)`` per cluster.
+
+    Returns:
+        One label per cluster, in input order.
+    """
+    names = [NICHE] * len(centers)
+    gaps = [sales - views for views, sales in centers]
+    gem_candidates = [
+        i for i, (_, sales) in enumerate(centers) if sales > 0 and gaps[i] > _CONVERSION_MARGIN
+    ]
+    gem = max(gem_candidates, key=lambda i: gaps[i]) if gem_candidates else None
+    for i, (views, sales) in enumerate(centers):
+        if i == gem:
+            names[i] = HIDDEN_GEM
+        elif sales > 0 and views > 0:
+            names[i] = FAVORITE
+        elif sales <= 0 and views - sales > _CONVERSION_MARGIN:
+            names[i] = HYPE
+    return names
 
 
 @dataclass(frozen=True)
@@ -238,14 +284,13 @@ def segment_demand(
     sales_per_day: pd.Series,
     normalized_price: pd.Series,
     *,
-    k_range: range = range(3, 7),
+    k_range: range = range(4, 7),
 ) -> DemandSegments:
     """Cluster listings by demand and name each cluster from its centroid.
 
-    k is chosen by silhouette score. Centroids are read in standardised units:
-    a cluster is "high" on views or sales when its centroid is above the
-    population mean (z > 0), giving the profiles of the specification
-    (community favourites, hype, hidden gems) plus low-interest "niche".
+    k is chosen by silhouette score within ``k_range``; the floor of 4 follows
+    the specification's three demand profiles plus a remainder segment.
+    Clusters are named by :func:`name_segments`.
 
     Args:
         views: Cumulative page views.
@@ -278,11 +323,12 @@ def segment_demand(
     best_k = max(scores, key=lambda k: scores[k])
     km = fits[best_k]
 
-    names: dict[int, str] = {}
+    names = dict(
+        enumerate(name_segments([(float(c[0]), float(c[1])) for c in km.cluster_centers_]))
+    )
     centroids: list[dict[str, float | str]] = []
     for idx, center in enumerate(km.cluster_centers_):
         views_z, sales_z, price_z = (float(v) for v in center)
-        names[idx] = SEGMENT_LABELS[(views_z > 0, sales_z > 0)]
         unscaled = scaler.inverse_transform(center.reshape(1, -1))[0]
         centroids.append(
             {
@@ -316,12 +362,19 @@ TIMING_FEATURES = [
 
 
 def label_price_paths(
-    history: pd.DataFrame, *, horizon_days: float = 35.0, drop_pct: float = 0.03
+    history: pd.DataFrame,
+    *,
+    horizon_days: float = 35.0,
+    min_lookahead_days: float = 14.0,
+    drop_pct: float = 0.03,
 ) -> pd.DataFrame:
     """Turn observation history into supervised timing examples.
 
-    For each observation at time t that has a later observation within the
-    horizon, the outcome over (t, t + horizon] defines the label:
+    For each observation at time t whose future is observed for at least
+    ``min_lookahead_days`` within the horizon, the outcome over
+    (t, t + horizon] defines the label. Observations followed only by a few
+    hours of data are skipped: the price has had no chance to move, and
+    labelling them "fair" would swamp the classes with uninformative examples.
 
     * ``wait``: the price later fell by at least ``drop_pct``;
     * ``buy_now``: otherwise, the item went out of stock or its stock fell by
@@ -339,6 +392,7 @@ def label_price_paths(
     Args:
         history: Output of :func:`pricewatch.ml.dataset.load_history`.
         horizon_days: Look-ahead window for the outcome.
+        min_lookahead_days: Minimum observed future needed to label a point.
         drop_pct: Minimum relative price drop that counts as "wait".
 
     Returns:
@@ -362,6 +416,7 @@ def label_price_paths(
 
     examples: list[dict[str, Any]] = []
     horizon = np.timedelta64(int(horizon_days * 86400), "s")
+    min_lookahead = np.timedelta64(int(min_lookahead_days * 86400), "s")
     for _, obs in hist.groupby("listing_id", sort=False):
         times = obs["scraped_at"].to_numpy("datetime64[ns]")
         first_seen = obs["first_seen_at"].to_numpy("datetime64[ns]")
@@ -371,7 +426,7 @@ def label_price_paths(
         sold = obs["sold_count"].to_numpy(float)
         for i in range(len(obs)):
             later = (times > times[i]) & (times <= times[i] + horizon)
-            if not later.any():
+            if not later.any() or times[later].max() - times[i] < min_lookahead:
                 continue
             future_min = prices[later].min()
             if future_min <= prices[i] * (1 - drop_pct):
@@ -413,6 +468,9 @@ class TimingModel:
     rules: str
     accuracy_test: float
     baseline_accuracy_test: float
+    balanced_accuracy_test: float
+    baseline_balanced_accuracy: float
+    usable: bool
     confusion: list[list[int]]
     classes: list[str]
     n_train: int
@@ -421,11 +479,18 @@ class TimingModel:
     medians: dict[str, float]
 
 
-def fit_timing_tree(examples: pd.DataFrame, *, test_fraction: float = 0.25) -> TimingModel:
+def fit_timing_tree(
+    examples: pd.DataFrame, *, test_fraction: float = 0.25, min_balanced_accuracy: float = 0.6
+) -> TimingModel:
     """Train the Buy/Wait tree with a chronological train/test split.
 
     Splitting by time rather than at random prevents the model from learning
-    from the future of the very periods it is tested on.
+    from the future of the very periods it is tested on. Classes are heavily
+    imbalanced (most prices are stable), so the tree is judged on balanced
+    accuracy, the mean per-class recall, whose chance level is 1 / classes.
+    It is marked ``usable`` (allowed to drive user-facing advice) only at
+    ``min_balanced_accuracy`` or better, well clear of chance;
+    plain accuracy is reported too but is dominated by the majority class.
     """
     if len(examples) < 40 or examples["label"].nunique() < 2:
         raise ValueError(
@@ -444,12 +509,18 @@ def fit_timing_tree(examples: pd.DataFrame, *, test_fraction: float = 0.25) -> T
     predicted = tree.predict(x_test)
     majority = train["label"].mode()[0]
     classes = [str(c) for c in tree.classes_]
+    present = sorted(set(test["label"]))
+    balanced = float(balanced_accuracy_score(test["label"], predicted)) if present else 0.0
+    chance = 1 / max(len(present), 1)
     return TimingModel(
         model=tree,
         features=TIMING_FEATURES,
         rules=export_text(tree, feature_names=TIMING_FEATURES, decimals=3),
         accuracy_test=float((predicted == test["label"].to_numpy()).mean()),
         baseline_accuracy_test=float((test["label"] == majority).mean()),
+        balanced_accuracy_test=balanced,
+        baseline_balanced_accuracy=chance,
+        usable=len(present) >= 2 and balanced >= min_balanced_accuracy,
         confusion=confusion_matrix(test["label"], predicted, labels=classes).tolist(),
         classes=classes,
         n_train=len(train),

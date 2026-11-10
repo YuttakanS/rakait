@@ -80,7 +80,7 @@ async def test_requests_are_spaced_by_min_interval() -> None:
             await fetcher.get_text("https://example.test/")
 
     gaps = [later - earlier for earlier, later in zip(starts, starts[1:], strict=False)]
-    assert all(gap >= 0.14 for gap in gaps), gaps
+    assert all(gap >= 0.15 for gap in gaps), gaps
 
 
 def test_retry_after_floors_backoff() -> None:

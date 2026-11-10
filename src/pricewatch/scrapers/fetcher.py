@@ -160,8 +160,9 @@ class PoliteFetcher:
         """Sleep until this instance's next request slot, then reserve the following one."""
         async with self._lock:
             now = time.monotonic()
-            wait = self._next_allowed - now
-            if wait > 0:
+            # Loop: the event loop's timer can wake a sleep up to one clock
+            # tick (~15 ms on Windows) early, which would undercut the limit.
+            while (wait := self._next_allowed - now) > 0:
                 await asyncio.sleep(wait)
                 now = time.monotonic()
             self._next_allowed = now + self._min_interval + random.uniform(0.0, self._jitter)

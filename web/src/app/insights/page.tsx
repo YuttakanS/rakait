@@ -179,9 +179,16 @@ export default async function InsightsPage() {
         {timing ? (
           <>
             <p className="tabular text-sm">
-              Accuracy (test, แบ่งตามเวลา) {fixed(num(timing.accuracy_test) * 100, 1)}% เทียบกับ baseline{" "}
-              {fixed(num(timing.baseline_accuracy_test) * 100, 1)}% · train {String(timing.n_train)} / test{" "}
+              Balanced accuracy (test, แบ่งตามเวลา) {fixed(num(timing.balanced_accuracy_test) * 100, 1)}% เทียบกับ
+              สุ่มทาย {fixed(num(timing.baseline_balanced_accuracy) * 100, 1)}% · train {String(timing.n_train)} / test{" "}
               {String(timing.n_test)}
+            </p>
+            <p className="text-xs text-muted">
+              Label ส่วนใหญ่คือ “ราคาเหมาะสม” (ราคาส่วนใหญ่นิ่ง) accuracy ธรรมดาจึงหลอกตา ระบบจึงวัดด้วย balanced
+              accuracy และจะใช้ต้นไม้ทำคำแนะนำบนเว็บเมื่อได้อย่างน้อย 60% ·{" "}
+              {timing.used_for_recommendations
+                ? "ตอนนี้คำแนะนำมาจากต้นไม้นี้"
+                : "ตอนนี้ยังไม่ถึงเกณฑ์ คำแนะนำจึงใช้กฎจาก Deal Score และสต็อกแทน (ต้นไม้ train ใหม่ทุก 3 ชั่วโมงเมื่อมีประวัติเพิ่ม)"}
             </p>
             <pre className="max-h-72 overflow-auto text-[11px] leading-tight text-muted">{String(timing.rules)}</pre>
           </>

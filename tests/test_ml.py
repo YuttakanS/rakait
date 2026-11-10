@@ -110,10 +110,11 @@ def _history(paths: dict[int, list[tuple[int, float, bool]]]) -> pd.DataFrame:
 def test_label_price_paths_uses_only_the_future_for_labels() -> None:
     history = _history(
         {
-            1: [(0, 1000, True), (10, 900, True)],  # price falls -> wait
-            2: [(0, 1000, True), (10, 1000, False)],  # sells out -> buy now
-            3: [(0, 1000, True), (10, 1000, True)],  # stable -> fair
-            4: [(0, 1000, True), (90, 500, True)],  # change beyond horizon -> fair
+            1: [(0, 1000, True), (20, 900, True)],  # price falls -> wait
+            2: [(0, 1000, True), (20, 1000, False)],  # sells out -> buy now
+            3: [(0, 1000, True), (20, 1000, True)],  # stable -> fair
+            4: [(0, 1000, True), (90, 500, True)],  # change beyond horizon -> unlabelled
+            5: [(0, 1000, True), (0.2, 900, True)],  # hours of future only -> unlabelled
         }
     )
     examples = m.label_price_paths(history, horizon_days=35)
@@ -178,8 +179,71 @@ def test_run_models_end_to_end_on_synthetic_catalogue() -> None:
     assert ins["deal_score"].between(0, 100).all()
     assert ins["fair_price"].notna().all()
     assert set(ins["recommendation"]) <= {m.BUY_NOW, m.WAIT, m.FAIR}
-    assert ins["recommendation_reason"].str.startswith("rules:").all()  # no history yet
+    assert ins["recommendation_reason"].str.startswith("กฎจาก Deal Score").all()  # no history yet
     assert ("gpu", "simple_regression") in report.market
     assert ("gpu", "fair_value_mlr") in report.market
     assert ("all", "demand_kmeans") in report.market
     assert any("timing tree" in note for note in report.notes)
+
+
+def test_timing_tree_is_rejected_when_it_cannot_beat_chance() -> None:
+    rng = np.random.default_rng(5)
+    n = 300
+    examples = pd.DataFrame(
+        {
+            **{f: rng.normal(size=n) for f in m.TIMING_FEATURES},
+            "label": rng.choice([m.WAIT, m.FAIR, m.BUY_NOW], size=n),  # pure noise
+            "scraped_at": pd.date_range("2025-01-01", periods=n, freq="D"),
+        }
+    )
+    model = m.fit_timing_tree(examples)
+    assert model.baseline_balanced_accuracy == pytest.approx(1 / 3)
+    assert model.usable is False
+
+
+def test_timing_tree_learns_a_real_signal() -> None:
+    rng = np.random.default_rng(6)
+    n = 400
+    pct = rng.uniform(-0.2, 0.2, size=n)
+    examples = pd.DataFrame(
+        {
+            **{f: rng.normal(size=n) for f in m.TIMING_FEATURES},
+            "scraped_at": pd.date_range("2025-01-01", periods=n, freq="D"),
+        }
+    )
+    examples["pct_vs_model_median"] = pct
+    examples["label"] = np.where(pct > 0.07, m.WAIT, np.where(pct < -0.07, m.BUY_NOW, m.FAIR))
+    model = m.fit_timing_tree(examples)
+    assert model.balanced_accuracy_test > 0.9
+    assert model.usable is True
+
+
+def test_name_segments_reads_conversion_relative_to_attention() -> None:
+    # Centroids seen on the live JIB data at k=4: views and sales correlate,
+    # and the best seller converts far better than its views suggest.
+    names = m.name_segments([(1.16, 0.38), (-0.45, -0.35), (-1.78, -0.70), (0.59, 3.75)])
+    assert names == [m.FAVORITE, m.NICHE, m.NICHE, m.HIDDEN_GEM]
+
+
+def test_name_segments_finds_hype_and_requires_a_margin() -> None:
+    assert m.name_segments([(0.19, -0.37), (0.1, 0.3)]) == [m.HYPE, m.FAVORITE]
+    # Sales barely above views is not a hidden gem.
+    assert m.name_segments([(0.5, 0.7)]) == [m.FAVORITE]
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"deal_score": 95, "in_stock": False, "stock_quantity": None}, m.WAIT),  # cannot buy
+        ({"deal_score": 85, "in_stock": True, "stock_quantity": 2}, m.BUY_NOW),
+        ({"deal_score": 70, "in_stock": True, "stock_quantity": None}, m.FAIR),
+        ({"deal_score": 10, "in_stock": True, "stock_quantity": None}, m.WAIT),
+        ({"deal_score": np.nan, "in_stock": True, "stock_quantity": None}, m.FAIR),
+    ],
+)
+def test_rule_recommendation(row: dict[str, object], expected: str) -> None:
+    from pricewatch.ml.train import rule_recommendation
+
+    label, reason = rule_recommendation(pd.Series(row))
+    assert label == expected
+    assert reason

@@ -76,12 +76,13 @@ _MIN_SPAN_DAYS = 0.5
 
 
 def _decode(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
+    """Decode a JSONB value; NULL (None, or NaN once pandas has seen it) is empty."""
     if isinstance(value, str):
         decoded: dict[str, Any] = json.loads(value)
         return decoded
-    return dict(value)
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
 
 
 def _rate(delta: pd.Series, span: pd.Series) -> pd.Series:

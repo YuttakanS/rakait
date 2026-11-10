@@ -72,8 +72,10 @@ def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
     if category is Category.CPU:
         return pd.DataFrame(
             {
-                "cores": numeric(frame, "cores"),
-                "threads": numeric(frame, "threads"),
+                # Log scale: each extra core is worth less, and 64-96 core
+                # workstation parts would otherwise dominate a linear fit.
+                "log2_cores": np.log2(numeric(frame, "cores")),
+                "log2_threads": np.log2(numeric(frame, "threads")),
                 "base_clock_ghz": numeric(frame, "base_clock_ghz"),
                 "x3d": numeric(frame, "x3d"),
                 "unlocked": numeric(frame, "unlocked"),
@@ -144,17 +146,21 @@ def current_timing_features(history: pd.DataFrame, current: pd.DataFrame) -> pd.
 
 
 def rule_recommendation(row: pd.Series) -> tuple[str, str]:
-    """Transparent fallback when history is too short to train the tree."""
+    """Transparent fallback while the timing tree is not reliable enough.
+
+    Deal Score 80 / 20 is about one standard deviation below / above fair
+    value (roughly the cheapest / dearest fifth of listings).
+    """
     score = row.get("deal_score")
-    if (
-        pd.notna(score)
-        and score >= 70
-        and (row.get("in_stock") is False or (row.get("stock_quantity") or 99) <= 3)
-    ):
-        return m.BUY_NOW, "well below fair value and stock is low"
-    if pd.notna(score) and score <= 30:
-        return m.WAIT, "priced above fair value for its specs"
-    return m.FAIR, "close to fair value for its specs"
+    if row.get("in_stock") is False:
+        return m.WAIT, "สินค้าหมดที่ร้านนี้ รอของเข้าหรือดูร้านอื่น"
+    if pd.notna(score) and score >= 80:
+        quantity = row.get("stock_quantity")
+        low = pd.notna(quantity) and quantity <= 3
+        return m.BUY_NOW, "ถูกกว่าราคายุติธรรมของสเปกนี้ชัดเจน" + (" และสต็อกเหลือน้อย" if low else "")
+    if pd.notna(score) and score <= 20:
+        return m.WAIT, "แพงกว่าราคายุติธรรมของสเปกนี้ชัดเจน"
+    return m.FAIR, "ราคาใกล้เคียงราคายุติธรรมของสเปกนี้"
 
 
 @dataclass
@@ -192,7 +198,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         # A. Simple linear regression.
         column, unit = SLR_FEATURES[category]
         try:
-            slr = m.simple_regression(specs[column], price, column)
+            slr = m.simple_regression(numeric(frame, column), price, column)
             resid = slr.residuals.dropna()
             budget = resid[resid < -resid.std()].nsmallest(5).index
             report.market[(category.value, "simple_regression")] = {
@@ -205,7 +211,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "budget_listing_ids": frame.loc[budget, "listing_id"].astype(int).tolist(),
             }
             if figures:
-                _plot_slr(figures, category, specs[column], price, slr, unit)
+                _plot_slr(figures, category, numeric(frame, column), price, slr, unit)
         except ValueError as exc:
             report.notes.append(f"{category.value} simple regression: {exc}")
 
@@ -278,6 +284,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             "rules": timing.rules,
             "accuracy_test": timing.accuracy_test,
             "baseline_accuracy_test": timing.baseline_accuracy_test,
+            "balanced_accuracy_test": timing.balanced_accuracy_test,
+            "baseline_balanced_accuracy": timing.baseline_balanced_accuracy,
+            "used_for_recommendations": timing.usable,
             "confusion": timing.confusion,
             "classes": timing.classes,
             "n_train": timing.n_train,
@@ -289,18 +298,25 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     except ValueError as exc:
         report.notes.append(f"timing tree: {exc}; using transparent rules instead")
 
+    if timing is not None and not timing.usable:
+        report.notes.append(
+            f"timing tree: balanced accuracy {timing.balanced_accuracy_test:.2f} is below 0.60 "
+            f"(chance {timing.baseline_balanced_accuracy:.2f}); using transparent rules"
+        )
+        timing = None
+
     merged = pd.concat([current[["in_stock", "stock_quantity"]], insights], axis=1)
     if timing is not None:
         feats = current_timing_features(history, current)
         x = feats[timing.features].astype(float).fillna(pd.Series(timing.medians))
         insights["recommendation"] = timing.model.predict(x)
         insights["recommendation_reason"] = [
-            "decision tree: " + m.explain_path(timing, feats.loc[i]) for i in feats.index
+            "Decision Tree: " + m.explain_path(timing, feats.loc[i]) for i in feats.index
         ]
     else:
         recs = merged.apply(rule_recommendation, axis=1)
         insights["recommendation"] = [r[0] for r in recs]
-        insights["recommendation_reason"] = ["rules: " + r[1] for r in recs]
+        insights["recommendation_reason"] = ["กฎจาก Deal Score: " + r[1] for r in recs]
     return report
 
 
