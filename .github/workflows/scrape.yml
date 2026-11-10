@@ -24,3 +24,6 @@ jobs:
       - run: uv sync --frozen --no-dev
       - run: uv run pricewatch -v migrate
       - run: uv run pricewatch -v scrape
+      # Link even when one store failed: the others' new listings still need it.
+      - if: ${{ !cancelled() }}
+        run: uv run pricewatch link
