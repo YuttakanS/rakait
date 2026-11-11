@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { AutoSubmitSelect } from "@/components/auto-submit-select";
 import { ClusterBadge, DealScore, FairDelta, RecommendationBadge } from "@/components/badges";
-import { InfoIcon, SearchIcon } from "@/components/icons";
+import { Glyph, InfoIcon, SearchIcon } from "@/components/icons";
 import { ProductImage } from "@/components/product-image";
 import { CATEGORY_LABELS, CLUSTER_LABELS, MERCHANTS, formatTHB, merchantList } from "@/lib/format";
 import { listProducts } from "@/lib/queries";
@@ -60,7 +60,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
               name="q"
               defaultValue={query}
               placeholder="ค้นหารุ่น เช่น RTX 5060, 7800X3D, DDR5 32GB"
-              className="h-10 w-full rounded-[var(--radius-control)] border border-border bg-surface pr-3 pl-9 text-sm shadow-sm placeholder:text-subtle focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft"
+              className="h-10 w-full rounded-[var(--radius-control)] border border-border bg-surface pr-3 pl-9 text-base sm:text-sm shadow-sm placeholder:text-subtle focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft"
             />
           </label>
           <AutoSubmitSelect
@@ -101,13 +101,13 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                     : "border-border bg-surface text-foreground hover:border-accent hover:text-accent"
                 }`}
               >
-                <span aria-hidden>{CLUSTER_LABELS[c].icon}</span>
+                <Glyph name={c} className="h-4 w-4" />
                 {CLUSTER_LABELS[c].label}
               </Link>
             );
           })}
           {cluster && (
-            <Link href={hrefWith(params, { cluster: undefined })} className="ml-1 text-xs text-muted underline hover:text-accent">
+            <Link href={hrefWith(params, { cluster: undefined })} className="ml-1 py-2 text-xs text-muted underline hover:text-accent">
               ล้างตัวกรอง
             </Link>
           )}

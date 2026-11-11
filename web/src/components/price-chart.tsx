@@ -1,14 +1,11 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { useWidth } from "@/components/use-width";
 import { MERCHANTS, MERCHANT_COLORS, formatTHB } from "@/lib/format";
 import type { PricePoint } from "@/lib/types";
 
-const W = 760;
-const H = 280;
 const PAD = { top: 16, right: 16, bottom: 32, left: 72 };
-const IW = W - PAD.left - PAD.right;
-const IH = H - PAD.top - PAD.bottom;
 
 type XY = { x: number; y: number };
 
@@ -83,6 +80,12 @@ const fmtDay = (t: number, long = false) =>
 export function PriceChart({ points, names }: { points: PricePoint[]; names: Record<string, string> }) {
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [boxRef, measured] = useWidth<HTMLDivElement>(760);
+  // Drawn at its real width: text and strokes are true pixels on any screen.
+  const W = Math.max(280, measured);
+  const H = W < 520 ? 240 : 280;
+  const IW = W - PAD.left - PAD.right;
+  const IH = H - PAD.top - PAD.bottom;
 
   const model = useMemo(() => {
     const byMerchant = new Map<string, { t: number; v: number }[]>();
@@ -106,9 +109,10 @@ export function PriceChart({ points, names }: { points: PricePoint[]; names: Rec
       .map((s) => ({ s, last: byMerchant.get(s)!.at(-1)! }))
       .filter(({ last }) => last.t === t1);
     const cheapest = latest.sort((a, b) => a.last.v - b.last.v)[0]?.s ?? order[0];
-    const xTicks = Array.from({ length: 5 }, (_, i) => t0 + ((t1 - t0) * i) / 4);
+    const nx = W < 520 ? 3 : 5; // fewer date labels where they would collide
+    const xTicks = Array.from({ length: nx }, (_, i) => t0 + ((t1 - t0) * i) / (nx - 1));
     return { byMerchant, order, ticks, x, y, days, cheapest, xTicks, t0, t1 };
-  }, [points]);
+  }, [points, W, IW, IH]);
 
   if (points.length < 2) {
     return <p className="text-sm text-muted">ประวัติราคายังน้อยเกินไปสำหรับวาดกราฟ</p>;
@@ -137,7 +141,7 @@ export function PriceChart({ points, names }: { points: PricePoint[]; names: Rec
 
   return (
     <figure className="space-y-3">
-      <div className="relative">
+      <div className="relative" ref={boxRef}>
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}

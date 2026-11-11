@@ -39,7 +39,7 @@ export function EffectBars({ effects }: { effects: Effect[] }) {
           </div>
         );
       })}
-      <div className="grid grid-cols-[minmax(0,9rem)_1fr_3rem] gap-2 text-[11px] text-subtle">
+      <div className="grid grid-cols-[minmax(0,9rem)_1fr_3rem] gap-2 text-xs text-subtle">
         <span />
         <div className="flex justify-between">
           <span>← ทำให้ถูกลง</span>

@@ -38,10 +38,10 @@ export default async function RootLayout({
             <Link href="/" className="text-xl font-bold tracking-tight text-foreground">
               Raka<span className="text-accent">IT</span>
             </Link>
-            <Link href="/" className="text-sm font-medium text-muted hover:text-accent">
+            <Link href="/" className="py-2 text-sm font-medium text-muted hover:text-accent">
               สินค้า
             </Link>
-            <Link href="/insights" className="text-sm font-medium text-muted hover:text-accent">
+            <Link href="/insights" className="py-2 text-sm font-medium text-muted hover:text-accent">
               ภาพรวมตลาด
             </Link>
             <span className="ml-auto text-xs text-muted">อัปเดตล่าสุด {formatDateTime(updated)}</span>

@@ -1,5 +1,5 @@
 import { EffectBars, type Effect } from "@/components/effect-bars";
-import { ChevronIcon, InfoIcon } from "@/components/icons";
+import { ChevronIcon, Glyph, InfoIcon } from "@/components/icons";
 import { SpecScatter } from "@/components/spec-scatter";
 import { CATEGORY_LABELS, CLUSTER_LABELS, formatDateTime, formatTHB } from "@/lib/format";
 import { getCoverage, getMarketInsights, getSpecPoints } from "@/lib/queries";
@@ -91,7 +91,7 @@ function Section({
 /** Small grey statistic with the full detail in a native tooltip (ⓘ). */
 function StatNote({ text, detail }: { text: string; detail: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-subtle" title={detail}>
+    <span className="inline-flex items-center gap-1 text-xs text-subtle" title={detail}>
       {text} <InfoIcon className="h-3 w-3" />
     </span>
   );
@@ -150,7 +150,7 @@ export default async function InsightsPage() {
                   <span className="font-medium">
                     {CATEGORY_LABELS[c]}: ราคา vs {UNIT[c].axis}
                   </span>
-                  <span className="text-[11px] text-subtle">R² {fixed(p.r2)}</span>
+                  <span className="text-xs text-subtle">R² {fixed(p.r2)}</span>
                 </figcaption>
                 <SpecScatter
                   points={pts}
@@ -202,8 +202,8 @@ export default async function InsightsPage() {
               return (
                 <div key={c.cluster} className="card space-y-3 p-5">
                   <div className="flex items-center gap-2">
-                    <span className="text-2xl" aria-hidden>
-                      {CLUSTER_LABELS[c.label].icon}
+                    <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-soft text-accent">
+                      <Glyph name={c.label} className="h-5 w-5" />
                     </span>
                     <div>
                       <div className="font-semibold">{CLUSTER_LABELS[c.label].label}</div>
@@ -384,7 +384,7 @@ export default async function InsightsPage() {
                         R²(cv) {fixed(p.r2_cv)} · {String(p.leaves)} leaves
                       </span>
                     </div>
-                    <pre className="max-h-64 overflow-auto text-[11px] leading-tight text-muted">{String(p.rules)}</pre>
+                    <pre className="max-h-64 overflow-auto text-xs leading-tight text-muted">{String(p.rules)}</pre>
                   </div>
                 );
               })}
@@ -411,7 +411,7 @@ export default async function InsightsPage() {
                 {fixed(num(timing.baseline_balanced_accuracy) * 100, 1)}% · train {String(timing.n_train)} / test{" "}
                 {String(timing.n_test)}
               </p>
-              <pre className="max-h-72 overflow-auto text-[11px] leading-tight text-muted">{String(timing.rules)}</pre>
+              <pre className="max-h-72 overflow-auto text-xs leading-tight text-muted">{String(timing.rules)}</pre>
             </div>
           )}
         </div>

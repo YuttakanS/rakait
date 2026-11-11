@@ -16,7 +16,7 @@ The platform leverages resilient Web Scraping, Structured Normalization, and Fou
   - `canonical_products`: Silicon specifications, hardware architecture specs, normalized attributes.
   - `merchant_listings`: Vendor-specific SKU URLs, current pricing, view counts, and inventory/sales velocity.
   - `price_history`: Time-series ledger storing price fluctuations for statistical regression and tracking.
-- **Frontend / Client**: Next.js (App Router), Tailwind CSS, TypeScript. Every page and component follows the design contract in [ux-ui.md](ux-ui.md) (tokens, copy glossary, components, page templates, review checklist).
+- **Frontend / Client**: Next.js (App Router), Tailwind CSS, TypeScript. Every page and component follows the design contract in [ux-ui.md](ux-ui.md) (tokens, copy glossary, components, page templates, review checklist). For UI work, load the project skill `ui-ux-pro-max` (`.claude/skills/ui-ux-pro-max`) for rule checks (accessibility, touch, typography, charts, Next.js); `ux-ui.md` overrides its style suggestions.
 
 ---
 

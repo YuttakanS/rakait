@@ -7,6 +7,13 @@ formatters, labels and store order in `web/src/lib/format.ts`, shared UI in
 `web/src/components/`. The design review that shaped this version is
 `ui_ux.md`.
 
+Rule checks come from the project skill `.claude/skills/ui-ux-pro-max`
+(MIT, nextlevelbuilder/ui-ux-pro-max-skill): its accessibility, touch,
+performance, typography and chart rules apply to every change. Its
+product-wide style recommendations do not: no verified match exists for a
+price-comparison tool (searched Nov 2026), so the visual direction is this
+file's. Where the two disagree, this file wins; record the reason here.
+
 ---
 
 ## 1. Product principles
@@ -16,7 +23,7 @@ formatters, labels and store order in `web/src/lib/format.ts`, shared UI in
    recommendation) is supporting evidence and is never shown without the price.
 2. **Consumer first, statistics on request.** Pages speak to shoppers: hero
    numbers, pictures, charts. Model quality (R², MAPE, n, accuracy) stays visible
-   but small (`text-[11px] text-subtle` with an ⓘ tooltip), and full tables,
+   but small (`text-xs text-subtle` with an ⓘ tooltip), and full tables,
    formulas and tree rules live in a collapsed "รายละเอียดทางสถิติ" section.
 3. **Honest models.** When a model is below its usefulness threshold, say so in
    plain Thai and say what is used instead. Never invent a value: missing is `–`.
@@ -43,22 +50,25 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 
 ### Glossary (use these exact strings)
 
-| Concept | UI label | Icon | Hint |
+| Concept | UI label | Icon (`Glyph` name) | Hint |
 |---|---|---|---|
 | Fair market value (MLR) | ราคายุติธรรม | | ประเมินจากสเปกด้วย Multiple Linear Regression |
 | Deal Score | Deal {score} | | 0–100 (50 = ราคายุติธรรม) |
-| `buy_now` | ซื้อเลย | ✓ | |
-| `wait` | รอก่อน | ⏳ | |
-| `fair_price` | ราคาเหมาะสม | = | |
-| `hidden_gem` | ช้างเผือก | 🐘 | ยอดเข้าชมน้อย แต่ขายดี |
-| `community_favorite` | ขวัญใจชุมชน | ⭐ | คนดูเยอะและซื้อจริง |
-| `overpriced_hype` | กระแสแรง ขายไม่ออก | 🔥 | คนดูเยอะ แต่ยอดขายต่ำ |
-| `niche` | เฉพาะกลุ่ม | 🎯 | ยอดเข้าชมและยอดขายต่ำ |
+| `buy_now` | ซื้อเลย | check | |
+| `wait` | รอก่อน | clock | |
+| `fair_price` | ราคาเหมาะสม | equals | |
+| `hidden_gem` | ช้างเผือก | gem | ยอดเข้าชมน้อย แต่ขายดี |
+| `community_favorite` | ขวัญใจชุมชน | star | คนดูเยอะและซื้อจริง |
+| `overpriced_hype` | กระแสแรง ขายไม่ออก | flame | คนดูเยอะ แต่ยอดขายต่ำ |
+| `niche` | เฉพาะกลุ่ม | target | ยอดเข้าชมและยอดขายต่ำ |
 | In stock / sold out | ● มีของ / ○ สินค้าหมด | | |
 | Categories | การ์ดจอ · ซีพียู · แรม · SSD | | |
 | Nav | สินค้า · ภาพรวมตลาด | | |
 
-Icons are decorative (`aria-hidden`); the label always carries the meaning.
+Icons are inline SVG from `components/icons.tsx` (24-unit box, 2 px round
+strokes), never emoji: emoji render differently per OS and cannot follow
+colour tokens (skill rules `no-emoji-icons`, `icon-style-consistent`). They are
+decorative (`aria-hidden`); the label always carries the meaning.
 
 ## 3. Design tokens
 
@@ -127,7 +137,13 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | Product name (card) | `text-base font-semibold`, 2-line clamp | GeForce RTX 5060 Ti 16GB |
 | Body | `text-sm` | |
 | Meta | `text-xs text-muted` | การ์ดจอ · NVIDIA |
-| Statistics note | `text-[11px] text-subtle` + ⓘ | จาก 374 รายการ ⓘ |
+| Statistics note | `text-xs text-subtle` + ⓘ | จาก 374 รายการ ⓘ |
+
+- Nothing below 12 px (`text-xs`); the scale is 12 / 14 / 16 / 18 / 24 / 30 / 36.
+- Line height 1.6 for xs/sm/base (set in `@theme`): Thai tone marks and lower
+  vowels need more than Tailwind's 1.43.
+- Text inputs and selects are 16 px on mobile (`text-base sm:text-sm`): iOS
+  zooms the page into any field below 16 px.
 
 ### Shape, depth and spacing
 
@@ -168,6 +184,7 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | **Product hero** | `app/product/[id]/page.tsx` | `.card`, image left (≤ 220 px on mobile), then name, "ราคาต่ำสุดตอนนี้" hero price at store, Deal + recommendation, DealMeter, reason, four stat tiles (ราคาสูงสุด, ประหยัดได้สูงสุด, จำนวนร้าน, มีของ). |
 | **OfferRow** | `app/product/[id]/page.tsx` | One `.card` per offer on a fixed 4-column grid (identity · price · DealMeter · verdict) so columns align; cheapest has a green ring and "ถูกที่สุด"; sold-out rows at 70% opacity. First 6 shown, the rest behind "ดูอีก N รายการ". |
 | **PriceChart** | `price-chart.tsx` (client) | Daily minimum per store; **monotone cubic** curves (smooth without overshooting a recorded price), 2 px lines in store colours, a 22%→0 gradient wash under the store that is cheapest today only, hairline grid with round THB ticks, 5 date ticks, crosshair + one tooltip listing every store at the hovered day, text legend. |
+| **Chart sizing** | `use-width.ts` | Charts measure their container (ResizeObserver) and draw a viewBox equal to the real width, so 12 px axis text stays 12 px on a phone (a fixed 760-unit viewBox shrank it to ~5 px). Narrow charts use fewer date ticks. |
 | **SpecScatter** | `spec-scatter.tsx` (client) | Price vs one spec with the fitted SLR line; axes end at the 97.5th percentile with the hidden count printed; nearest-point hover (≤ 24 px) naming model, spec and price. |
 | **EffectBars** | `effect-bars.tsx` | Diverging horizontal bars of MLR effect (% per SD), sorted by magnitude, value printed on every bar, "← ทำให้ถูกลง / ทำให้แพงขึ้น →" caption. |
 | **KPI tile** | insights | Label → big value → unit line → statistics note with ⓘ. |
@@ -258,7 +275,11 @@ export default async function Page() {
 - Semantics: one h1, h2 per section, `<table>`/`<th>`, `<dl>` for specs,
   `role="img"` + `aria-label` on charts, `aria-pressed` on toggles,
   `sr-only` labels on selects and search.
-- Focus: visible ring (`focus-visible:ring-accent-soft`); tap targets ≥ 36 px.
+- Focus: visible ring (`focus-visible:ring-accent-soft`).
+- Pointer targets ≥ 24 × 24 CSS px (WCAG 2.2 AA target size; standalone links
+  get `py-2`), controls 36–40 px tall, ≥ 8 px apart.
+- `cursor: pointer` on buttons, selects and summaries (Tailwind v4 resets
+  buttons to the default cursor); `touch-action: manipulation` on `html`.
 - Motion: hover lift disabled under `prefers-reduced-motion`.
 - External links: `target="_blank" rel="noopener noreferrer"`.
 
@@ -286,6 +307,9 @@ export default async function Page() {
 
 ## 10. Review checklist
 
+- [ ] Ran the relevant `ui-ux-pro-max` checks (`--domain ux` for the concern,
+      `--stack nextjs` for implementation) and its pre-delivery checklist.
+- [ ] No emoji as icons; nothing under 12 px; inputs 16 px on mobile.
 - [ ] Tokens only (no hex); checked in light and dark.
 - [ ] Thai copy from the glossary; store count/list derived from `MERCHANTS`.
 - [ ] Price is the most prominent number in its block.

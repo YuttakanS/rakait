@@ -112,12 +112,31 @@
   --color-warn-bg: var(--warn-bg);
   --color-neutral-bg: var(--neutral-bg);
   --font-sans: var(--font-thai), ui-sans-serif, system-ui, sans-serif;
+  /* Thai stacks tone marks above and vowels below the line: 1.6 keeps them
+     from touching (ui-ux-pro-max line-height rule: 1.5-1.75 for body). */
+  --text-xs--line-height: 1.6;
+  --text-sm--line-height: 1.6;
+  --text-base--line-height: 1.6;
+}
+
+html {
+  /* No 300 ms double-tap-zoom delay on taps (ui-ux-pro-max tap-delay). */
+  touch-action: manipulation;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+}
+
+/* Tailwind v4 resets buttons to the default cursor; every control here acts
+   on click (ui-ux-pro-max cursor-pointer). */
+button,
+select,
+summary,
+[role="button"] {
+  cursor: pointer;
 }
 
 .tabular {

@@ -34,12 +34,11 @@ export const RECOMMENDATION_LABELS: Record<Recommendation, string> = {
   fair_price: "ราคาเหมาะสม",
 };
 
-/** Icons are decorative (aria-hidden); the label always carries the meaning. */
-export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string; icon: string }> = {
-  hidden_gem: { label: "ช้างเผือก", hint: "ยอดเข้าชมน้อย แต่ขายดี", icon: "🐘" },
-  community_favorite: { label: "ขวัญใจชุมชน", hint: "คนดูเยอะและซื้อจริง", icon: "⭐" },
-  overpriced_hype: { label: "กระแสแรง ขายไม่ออก", hint: "คนดูเยอะ แต่ยอดขายต่ำ", icon: "🔥" },
-  niche: { label: "เฉพาะกลุ่ม", hint: "ยอดเข้าชมและยอดขายต่ำ", icon: "🎯" },
+export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string }> = {
+  hidden_gem: { label: "ช้างเผือก", hint: "ยอดเข้าชมน้อย แต่ขายดี" },
+  community_favorite: { label: "ขวัญใจชุมชน", hint: "คนดูเยอะและซื้อจริง" },
+  overpriced_hype: { label: "กระแสแรง ขายไม่ออก", hint: "คนดูเยอะ แต่ยอดขายต่ำ" },
+  niche: { label: "เฉพาะกลุ่ม", hint: "ยอดเข้าชมและยอดขายต่ำ" },
 };
 
 /**

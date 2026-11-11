@@ -1,3 +1,4 @@
+import { Glyph } from "@/components/icons";
 import { CLUSTER_LABELS, RECOMMENDATION_LABELS } from "@/lib/format";
 import type { DemandCluster, Recommendation } from "@/lib/types";
 
@@ -22,25 +23,23 @@ export function DealScore({ score, prominent = false }: { score: number | null; 
   );
 }
 
-const REC_ICON: Record<Recommendation, string> = { buy_now: "✓", wait: "⏳", fair_price: "=" };
-
 export function RecommendationBadge({ value }: { value: Recommendation | null }) {
   if (value === null) return null;
   const tone =
     value === "buy_now" ? "bg-good-bg text-good" : value === "wait" ? "bg-warn-bg text-warn" : "bg-neutral-bg text-foreground";
   return (
     <span className={`${pill} ${tone}`}>
-      <span aria-hidden>{REC_ICON[value]}</span>
+      <Glyph name={value} />
       {RECOMMENDATION_LABELS[value]}
     </span>
   );
 }
 
 export function ClusterBadge({ value }: { value: DemandCluster }) {
-  const { label, hint, icon } = CLUSTER_LABELS[value];
+  const { label, hint } = CLUSTER_LABELS[value];
   return (
     <span className={`${pill} border border-border bg-surface text-muted`} title={hint}>
-      <span aria-hidden>{icon}</span>
+      <Glyph name={value} />
       {label}
     </span>
   );

@@ -1,13 +1,10 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { useWidth } from "@/components/use-width";
 import { formatTHB } from "@/lib/format";
 
-const W = 360;
-const H = 220;
-const PAD = { top: 10, right: 12, bottom: 30, left: 56 };
-const IW = W - PAD.left - PAD.right;
-const IH = H - PAD.top - PAD.bottom;
+const PAD = { top: 10, right: 12, bottom: 34, left: 64 };
 
 export type ScatterPoint = { x: number; price: number; model: string };
 
@@ -35,6 +32,11 @@ export function SpecScatter({
   xUnit: string;
 }) {
   const ref = useRef<SVGSVGElement>(null);
+  const [boxRef, measured] = useWidth<HTMLDivElement>(480);
+  const W = Math.max(260, measured); // real width: tick text stays 12 px
+  const H = Math.round(Math.min(300, Math.max(220, W * 0.55)));
+  const IW = W - PAD.left - PAD.right;
+  const IH = H - PAD.top - PAD.bottom;
   const [hover, setHover] = useState<number | null>(null);
 
   const geo = useMemo(() => {
@@ -52,7 +54,7 @@ export function SpecScatter({
     const x0 = Math.max(0, -intercept / slope);
     const x1 = Math.min(xMax, (yMax - intercept) / slope);
     return { xMax, yMax, sx, sy, xy, x0, x1, shown, hidden: points.length - shown.length };
-  }, [points, slope, intercept]);
+  }, [points, slope, intercept, IW, IH]);
 
   if (points.length === 0) return <p className="text-sm text-muted">ยังไม่มีข้อมูล</p>;
   const { xMax, yMax, sx, sy, xy, x0, x1, shown, hidden } = geo;
@@ -79,7 +81,7 @@ export function SpecScatter({
   const h = hover === null ? null : { ...shown[hover], ...xy[hover] };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={boxRef}>
       <svg
         ref={ref}
         viewBox={`0 0 ${W} ${H}`}
@@ -92,7 +94,7 @@ export function SpecScatter({
         {yTicks.map((v) => (
           <g key={v}>
             <line x1={PAD.left} x2={W - PAD.right} y1={sy(v)} y2={sy(v)} stroke="var(--border)" />
-            <text x={PAD.left - 6} y={sy(v) + 4} textAnchor="end" fontSize="11" fill="var(--muted)">
+            <text x={PAD.left - 6} y={sy(v) + 4} textAnchor="end" fontSize="12" fill="var(--muted)">
               {formatTHB(v)}
             </text>
           </g>
@@ -101,15 +103,15 @@ export function SpecScatter({
           <text
             key={v}
             x={sx(v)}
-            y={H - 12}
-            fontSize="11"
+            y={H - 18}
+            fontSize="12"
             fill="var(--muted)"
             textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
           >
             {Math.round(v).toLocaleString("th-TH")}
           </text>
         ))}
-        <text x={W - PAD.right} y={H - 1} fontSize="10" fill="var(--muted)" textAnchor="end">
+        <text x={W - PAD.right} y={H - 2} fontSize="12" fill="var(--muted)" textAnchor="end">
           {xLabel} ({xUnit})
         </text>
         {xy.map((p, i) => (
@@ -143,7 +145,7 @@ export function SpecScatter({
         </div>
       )}
       {hidden > 0 && (
-        <p className="mt-1 text-[11px] text-subtle">ไม่แสดง {hidden} รายการที่สเปกหรือราคาสูงผิดปกติ (เกิน percentile 97.5)</p>
+        <p className="mt-1 text-xs text-subtle">ไม่แสดง {hidden} รายการที่สเปกหรือราคาสูงผิดปกติ (เกิน percentile 97.5)</p>
       )}
     </div>
   );

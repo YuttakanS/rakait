@@ -63,7 +63,7 @@ function StoreDot({ merchant }: { merchant: string }) {
 function Stat({ label, value, tone = "" }: { label: string; value: string; tone?: string }) {
   return (
     <div className="rounded-[var(--radius-control)] bg-surface-muted px-3 py-2">
-      <div className="text-[11px] text-muted">{label}</div>
+      <div className="text-xs text-muted">{label}</div>
       <div className={`tabular text-sm font-semibold ${tone}`}>{value}</div>
     </div>
   );
@@ -83,7 +83,7 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
         <div className="flex flex-wrap items-center gap-2">
           <StoreDot merchant={o.merchant} />
           <span className="font-semibold">{o.merchantName}</span>
-          {best && <span className="rounded-full bg-good-bg px-2 py-0.5 text-[11px] font-semibold text-good">ถูกที่สุด</span>}
+          {best && <span className="rounded-full bg-good-bg px-2 py-0.5 text-xs font-semibold text-good">ถูกที่สุด</span>}
           <span className={`text-xs ${o.inStock ? "text-good" : "text-muted"}`}>
             {o.inStock ? "● มีของ" : "○ สินค้าหมด"}
             {o.stockQuantity !== null && ` (${o.stockQuantity} ชิ้น)`}
@@ -99,7 +99,7 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
           <ExternalIcon className="mt-0.5 h-3 w-3 shrink-0 opacity-60 group-hover:opacity-100" />
         </a>
         {(o.viewCount !== null || o.soldCount !== null) && (
-          <div className="flex flex-wrap gap-x-3 text-[11px] text-subtle">
+          <div className="flex flex-wrap gap-x-3 text-xs text-subtle">
             {o.viewCount !== null && <span>{o.viewCount.toLocaleString("th-TH")} views</span>}
             {o.soldCount !== null && <span>ขายแล้ว {o.soldCount.toLocaleString("th-TH")}</span>}
             {o.salesPerDay !== null && <span>~{o.salesPerDay.toFixed(2)} ชิ้น/วัน</span>}
@@ -137,7 +137,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-8">
-      <Link href="/" className="inline-flex items-center gap-1 text-sm text-muted hover:text-accent">
+      <Link href="/" className="inline-flex items-center gap-1 py-2 text-sm text-muted hover:text-accent">
         ← กลับไปหน้ารวม
       </Link>
 
