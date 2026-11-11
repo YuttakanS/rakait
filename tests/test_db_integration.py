@@ -154,6 +154,28 @@ async def test_record_scrape_runs(conn) -> None:
     ]
 
 
+async def test_recent_listing_counts_ignores_unhealthy_runs(conn) -> None:
+    from pricewatch.db.repository import recent_listing_counts, record_scrape_runs
+    from pricewatch.pipeline import ScrapeRun
+
+    await apply_migrations(conn)
+    hour = timedelta(hours=1)
+    runs = [
+        ScrapeRun("jib", Category.GPU, T0 + i * hour, T0 + i * hour, count)
+        for i, count in enumerate([10, 100, 110, 120])
+    ] + [
+        ScrapeRun("jib", Category.GPU, T0 + 9 * hour, T0 + 9 * hour, 0, "FetchError"),
+        ScrapeRun("jib", Category.GPU, T0 + 9 * hour, T0 + 9 * hour, 5, None, "drop"),
+        ScrapeRun("banana", Category.CPU, T0, T0, 40),
+    ]
+    await record_scrape_runs(conn, runs)
+
+    assert await recent_listing_counts(conn, window=3) == {
+        ("jib", Category.GPU): 110.0,  # newest three healthy: 100, 110, 120
+        ("banana", Category.CPU): 40.0,
+    }
+
+
 async def test_rls_denies_non_owner_roles(conn) -> None:
     """A non-owner role (standing in for Supabase's anon) sees no rows even if granted."""
 

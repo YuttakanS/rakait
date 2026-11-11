@@ -26,6 +26,8 @@ class ScrapeRun:
         finished_at: When the attempt ended (UTC).
         listing_count: Listings obtained; 0 on failure.
         error: Failure description, or ``None`` on success.
+        warning: Data-quality concern about a successful run (see
+            :mod:`pricewatch.quality`), or ``None``.
     """
 
     store: str
@@ -34,6 +36,7 @@ class ScrapeRun:
     finished_at: datetime
     listing_count: int
     error: str | None = None
+    warning: str | None = None
 
 
 @dataclass

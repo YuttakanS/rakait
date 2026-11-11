@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import asyncpg
 
-from pricewatch.models import ScrapedListing
+from pricewatch.models import Category, ScrapedListing
 from pricewatch.pipeline import ScrapeRun
 
 _STAGE_COLUMNS: tuple[str, ...] = (
@@ -181,11 +181,13 @@ async def record_scrape_runs(conn: asyncpg.Connection, runs: Sequence[ScrapeRun]
     status: str = await conn.execute(
         """
         INSERT INTO scrape_runs
-            (merchant_id, category, started_at, finished_at, listing_count, error)
-        SELECT m.id, r.category, r.started_at, r.finished_at, r.listing_count, r.error
+            (merchant_id, category, started_at, finished_at, listing_count, error, warning)
+        SELECT m.id, r.category, r.started_at, r.finished_at, r.listing_count, r.error,
+               r.warning
         FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::timestamptz[],
-                    $5::int[], $6::text[]) WITH ORDINALITY
-             AS r (merchant, category, started_at, finished_at, listing_count, error, ord)
+                    $5::int[], $6::text[], $7::text[]) WITH ORDINALITY
+             AS r (merchant, category, started_at, finished_at, listing_count, error,
+                   warning, ord)
         JOIN merchants AS m ON m.slug = r.merchant
         ORDER BY r.ord  -- identity ids follow input order
         """,
@@ -195,5 +197,45 @@ async def record_scrape_runs(conn: asyncpg.Connection, runs: Sequence[ScrapeRun]
         [run.finished_at for run in runs],
         [run.listing_count for run in runs],
         [run.error for run in runs],
+        [run.warning for run in runs],
     )
     return int(status.rsplit(" ", 1)[-1])
+
+
+async def recent_listing_counts(
+    conn: asyncpg.Connection, *, window: int = 8
+) -> dict[tuple[str, Category], float]:
+    """Median listing count of each (store, category)'s recent healthy runs.
+
+    The baseline for :mod:`pricewatch.quality`. Only runs without an error or
+    warning count, so one bad run cannot drag the baseline down and mask the
+    next. The window function scans the whole log, O(runs); at 8 runs a day
+    per (store, category) that stays in the tens of thousands of rows for
+    years, so a LATERAL top-N over ``scrape_runs_merchant_started_idx`` is not
+    yet worth its complexity.
+
+    Args:
+        conn: Open database connection.
+        window: Number of recent healthy runs per (store, category).
+
+    Returns:
+        Median count keyed by (merchant slug, category).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT merchant, category,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY listing_count) AS median
+        FROM (
+            SELECT m.slug AS merchant, r.category, r.listing_count,
+                   row_number() OVER (PARTITION BY r.merchant_id, r.category
+                                      ORDER BY r.started_at DESC) AS rn
+            FROM scrape_runs AS r
+            JOIN merchants AS m ON m.id = r.merchant_id
+            WHERE r.category IS NOT NULL AND r.error IS NULL AND r.warning IS NULL
+        ) AS recent
+        WHERE rn <= $1
+        GROUP BY merchant, category
+        """,
+        window,
+    )
+    return {(row["merchant"], Category(row["category"])): float(row["median"]) for row in rows}

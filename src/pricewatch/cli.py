@@ -12,6 +12,7 @@ from datetime import date, datetime
 
 from pricewatch.models import Category, ScrapedListing
 from pricewatch.pipeline import StoreResult, run_scrape
+from pricewatch.quality import annotate_runs
 from pricewatch.scrapers import SCRAPERS
 
 
@@ -58,19 +59,34 @@ async def _scrape(
 
     listings = [item for result in results for item in result.listings]
     runs = [run for result in results for run in result.runs]
-    if database_url is not None:
+    if database_url is None:
+        runs = annotate_runs(runs, listings, {})
+    else:
         from pricewatch.db import connect
-        from pricewatch.db.repository import record_scrape_runs, save_listings
+        from pricewatch.db.repository import (
+            recent_listing_counts,
+            record_scrape_runs,
+            save_listings,
+        )
 
         conn = await connect(database_url)
         try:
+            # Baselines are read before this run is logged, so it is compared
+            # only with its predecessors.
+            runs = annotate_runs(runs, listings, await recent_listing_counts(conn))
             written = await save_listings(conn, listings) if listings else 0
             logged = await record_scrape_runs(conn, runs)
         finally:
             await conn.close()
         print(f"wrote {written} price-history rows, {logged} scrape-run records")
 
-    return 1 if any(result.errors for result in results) else 0
+    warned = [run for run in runs if run.warning is not None]
+    for run in warned:
+        category = run.category.value if run.category is not None else "-"
+        print(f"  WARN {run.store}/{category}: {run.warning}", file=sys.stderr)
+    # A warning still saves the data but fails the step, so the scheduled
+    # workflow turns red and notifies, as it does for errors.
+    return 1 if warned or any(result.errors for result in results) else 0
 
 
 async def _train() -> int:
@@ -101,6 +117,8 @@ async def _train() -> int:
                 "n",
                 "k",
                 "silhouette",
+                "ari_vs_kmeans",
+                "cophenetic_corr",
                 "accuracy_test",
                 "baseline_accuracy_test",
                 "leaves",
