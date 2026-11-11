@@ -200,9 +200,14 @@ class FairValueModel:
         intercept: b0.
         r2_cv: 5-fold cross-validated R^2 on log(price).
         mape_cv: Cross-validated mean absolute % error of the fair price.
-        n: Rows used.
+        n: Rows the regression was fitted on (in stock, with required specs).
         fair_price: Out-of-fold fair price per row (THB).
-        z_residual: Out-of-fold standardised log residual per row.
+        z_residual: Out-of-fold log residual per row over its prediction
+            standard error, ``e / (s * sqrt(1 + h))``.
+        leverage: Out-of-fold leverage ``h`` of each row against the fold
+            that predicted it (NaN for unscored rows).
+        extrapolated: Rows left unscored because ``h`` exceeded
+            :data:`MAX_LEVERAGE`.
     """
 
     features: list[str]
@@ -213,6 +218,8 @@ class FairValueModel:
     n: int
     fair_price: pd.Series
     z_residual: pd.Series
+    leverage: pd.Series | None = None
+    extrapolated: int = 0
     diagnostics: RegressionDiagnostics | None = None
 
     def coefficient_table(self) -> list[dict[str, float | str]]:
@@ -254,12 +261,46 @@ def _design_matrix(features: pd.DataFrame, required: list[str]) -> pd.DataFrame:
     return pd.concat([imputed, pd.DataFrame(flags, index=features.index)], axis=1)
 
 
+#: Out-of-fold leverage above which a row is not scored. h = x0'(X'X)^-1 x0
+#: is the prediction variance in units of the residual variance; h > 1 means
+#: the fit is less certain of the fair price than of a typical listing's
+#: deviation from it, i.e. the row lies outside the specs the fold was fitted
+#: on (a GT 1030 4GB priced from RTX-era cards). Its "deal" would be the
+#: extrapolation error, so it gets no fair price rather than a guessed one.
+MAX_LEVERAGE = 1.0
+
+
+def _oof_predict(
+    x: np.ndarray, y: np.ndarray, fit_rows: np.ndarray, splits: Any
+) -> tuple[np.ndarray, np.ndarray]:
+    """Out-of-fold OLS predictions and leverages.
+
+    Each fold is fitted on its training rows that are in ``fit_rows`` and
+    predicts all of its held-out rows. Leverage per held-out row is
+    ``x0' (X'X)^+ x0`` (intercept included), computed for the whole fold in
+    one einsum. O(folds * (n p^2 + p^3)).
+    """
+    x1 = np.column_stack([np.ones(len(x)), x])
+    pred = np.full(len(y), np.nan)
+    lev = np.full(len(y), np.nan)
+    for train, test in splits:
+        train = train[fit_rows[train]]
+        if len(train) <= x1.shape[1]:
+            continue
+        gram_inv = np.linalg.pinv(x1[train].T @ x1[train])
+        beta = gram_inv @ (x1[train].T @ y[train])
+        pred[test] = x1[test] @ beta
+        lev[test] = np.einsum("ij,jk,ik->i", x1[test], gram_inv, x1[test])
+    return pred, lev
+
+
 def fit_fair_value(
     features: pd.DataFrame,
     price: pd.Series,
     *,
     required: list[str] | None = None,
     groups: pd.Series | None = None,
+    fit_mask: pd.Series | None = None,
     folds: int = 5,
 ) -> FairValueModel:
     """Fit the fair-value MLR and score each row out-of-fold.
@@ -271,7 +312,14 @@ def fit_fair_value(
     Rows missing any ``required`` feature are neither fitted nor scored: their
     fair price and residual are NaN. A fair price for a CPU whose core count
     is unknown would be a guess, and a guessed fair price produces exactly the
-    "90% below fair value" deals the score must never claim.
+    "90% below fair value" deals the score must never claim. For the same
+    reason rows whose out-of-fold leverage exceeds :data:`MAX_LEVERAGE` are
+    left unscored.
+
+    The residual is standardised by its prediction standard error,
+    ``s * sqrt(1 + h)``, not by ``s`` alone: a row far from the fitted data
+    has an uncertain fair price, and the same residual is weaker evidence of
+    a deal there.
 
     Args:
         features: Numeric feature columns (NaN allowed outside ``required``).
@@ -282,11 +330,15 @@ def fit_fair_value(
             saw none of them, so the fair price of a product is never learned
             from that product's own prices, and identical listings of it get
             one identical prediction instead of fold-dependent ones.
+        fit_mask: Rows the regression may learn from (default all). Sold-out
+            listings keep their last price for months; trained on, those stale
+            prices (DDR4 kits at a pre-shortage 1,790 THB beside 4,600 THB
+            in-stock ones) drag the line. They are still scored.
         folds: Cross-validation folds.
 
     Returns:
         The fitted model with out-of-fold fair prices and z-scored residuals
-        (NaN for unscored rows).
+        (NaN for unscored rows). R^2 and MAPE are over fitted, scored rows.
 
     Raises:
         ValueError: If a required feature is unusable or too few rows remain.
@@ -302,43 +354,54 @@ def fit_fair_value(
     if unusable:
         raise ValueError(f"required features unusable: {unusable}")
     complete = features[required].notna().all(axis=1)  # all True when none required
-    if int(complete.sum()) < 15:
-        raise ValueError(f"only {int(complete.sum())} rows have the required features")
+    learn = (
+        fit_mask.reindex(features.index).fillna(False).astype(bool)
+        if fit_mask is not None
+        else pd.Series(True, index=features.index)
+    )
+    if int((complete & learn).sum()) < 15:
+        raise ValueError(f"only {int((complete & learn).sum())} rows have the required features")
     design = _design_matrix(features.loc[complete, usable], required)
-    design = design.loc[:, design.nunique() > 1]
+    fit_rows = learn.loc[complete].to_numpy(bool)
+    # A column must vary among the rows the fit learns from.
+    design = design.loc[:, design.loc[fit_rows].nunique() > 1]
     columns = [str(c) for c in design.columns]
-    fit_price = price.loc[complete]
-    x = StandardScaler().fit_transform(design)
-    y = np.log(fit_price.to_numpy(float))
+    all_price = price.loc[complete].to_numpy(float)
+    x = StandardScaler().fit(design.loc[fit_rows]).transform(design)
+    y = np.log(all_price)
     if groups is not None:
-        fit_groups = groups.loc[complete].to_numpy()
-        folds = max(2, min(folds, len(np.unique(fit_groups))))
-        oof_log = cross_val_predict(
-            LinearRegression(), x, y, cv=GroupKFold(n_splits=folds), groups=fit_groups
-        )
+        fold_groups = groups.loc[complete].to_numpy()
+        folds = max(2, min(folds, len(np.unique(fold_groups))))
+        splits = GroupKFold(n_splits=folds).split(x, y, fold_groups)
     else:
         folds = max(2, min(folds, len(y) // 5))
-        cv = KFold(n_splits=folds, shuffle=True, random_state=_RNG)
-        oof_log = cross_val_predict(LinearRegression(), x, y, cv=cv)
-    model = LinearRegression().fit(x, y)
+        splits = KFold(n_splits=folds, shuffle=True, random_state=_RNG).split(x)
+    oof_log, lev = _oof_predict(x, y, fit_rows, splits)
+    model = LinearRegression().fit(x[fit_rows], y[fit_rows])
 
     resid = y - oof_log
-    sigma = resid.std(ddof=len(columns) + 1) or 1.0
+    scored = np.isfinite(oof_log) & (lev <= MAX_LEVERAGE)
+    fitted = fit_rows & scored
+    sigma = float(resid[fitted].std(ddof=len(columns) + 1)) or 1.0
     # Duan's smearing: exp(E[log y]) underestimates E[y] under log-normal noise.
-    smear = float(np.mean(np.exp(resid)))
-    fair = np.exp(oof_log) * smear
-    ss_res = float((resid**2).sum())
-    ss_tot = float(((y - y.mean()) ** 2).sum())
+    smear = float(np.mean(np.exp(resid[fitted])))
+    fair = np.where(scored, np.exp(oof_log) * smear, np.nan)
+    z = np.where(scored, resid / (sigma * np.sqrt(1 + lev)), np.nan)
+    y_fit = y[fitted]
+    ss_res = float((resid[fitted] ** 2).sum())
+    ss_tot = float(((y_fit - y_fit.mean()) ** 2).sum())
     return FairValueModel(
         features=columns,
         coefficients=[float(b) for b in model.coef_],
         intercept=float(model.intercept_),
         r2_cv=1 - ss_res / ss_tot,
-        mape_cv=float(np.mean(np.abs(fit_price.to_numpy(float) - fair) / fair)),
-        n=len(y),
+        mape_cv=float(np.mean(np.abs(all_price[fitted] - fair[fitted]) / fair[fitted])),
+        n=int(fit_rows.sum()),
         fair_price=pd.Series(fair, index=design.index).reindex(features.index),
-        z_residual=pd.Series(resid / sigma, index=design.index).reindex(features.index),
-        diagnostics=regression_diagnostics(x, y, model, columns),
+        z_residual=pd.Series(z, index=design.index).reindex(features.index),
+        leverage=pd.Series(lev, index=design.index).reindex(features.index),
+        extrapolated=int((np.isfinite(lev) & (lev > MAX_LEVERAGE)).sum()),
+        diagnostics=regression_diagnostics(x[fit_rows], y[fit_rows], model, columns),
     )
 
 

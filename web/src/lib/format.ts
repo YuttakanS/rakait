@@ -61,6 +61,8 @@ export const FEATURE_LABELS: Record<string, string> = {
   perf_class: "ระดับชิป (รุ่น)",
   perf_x_gen: "ระดับชิป × รุ่นปี",
   generation: "รุ่นปีที่ออก (generation)",
+  release_year: "ปีที่ออกวางขาย",
+  tier: "ระดับรุ่น",
   shader_cores: "จำนวนคอร์กราฟิก",
   boost_clock_mhz: "Boost clock",
   bus_width_bit: "ความกว้างบัส",

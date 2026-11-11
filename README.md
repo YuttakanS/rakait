@@ -19,6 +19,7 @@ full specification.
 | Web app (Next.js) | done (`web/`) |
 | ML pipeline: hierarchical clustering (Ward) vs K-Means | done |
 | ML pipeline: MLR residual diagnostics (VIF, Q-Q, residual vs fitted, Jarque-Bera, Breusch-Pagan) | done (`reports/figures/*_mlr_diagnostics.png`) |
+| ML pipeline: fair value fitted on in-stock listings, launch-year features, prediction-interval Deal Score with an extrapolation guard (leverage > 1 → unscored) | done (model `2026.11-v2`) |
 | API service (FastAPI / ONNX) | not started |
 
 ## Setup

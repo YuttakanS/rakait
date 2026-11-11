@@ -20,7 +20,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v1"
+MODEL_VERSION = "2026.11-v2"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -34,35 +34,101 @@ SLR_FEATURES: dict[Category, tuple[str, str]] = {
 _NV_SUFFIX = {"Ti Super": 0.7, "Ti": 0.5, "Super": 0.3}
 _AMD_SUFFIX = {"XTX": 0.8, "XT": 0.5, "GRE": 0.3}
 
+#: Launch year per GPU series. Model numbers are not comparable across
+#: vendors or eras (GT 710 is a 2014 card, "7" > RTX 50's "5"; Radeon 9000 is
+#: NVIDIA 50's contemporary), so the regression gets the year instead.
+_NV_SERIES_YEAR = {
+    ("GT", 7): 2014,
+    ("GTX", 9): 2015,
+    ("GT", 10): 2017,
+    ("GTX", 10): 2016,
+    ("GTX", 16): 2019,
+    ("RTX", 20): 2018,
+    ("RTX", 30): 2020,
+    ("RTX", 40): 2022,
+    ("RTX", 50): 2025,
+}
+_AMD_SERIES_YEAR = {5: 2019, 6: 2020, 7: 2022, 9: 2025}
+
+#: Reference year: release years enter the model as years since 2020, so the
+#: coefficient table stays readable.
+_YEAR0 = 2020
+
 
 def gpu_class(chip: object) -> tuple[float, float]:
-    """Map a chip name to (generation, performance class) on a common scale.
+    """Map a chip name to (launch year, performance class).
 
-    NVIDIA "RTX 5070 Ti" -> (5, 7.5); AMD "RX 9070 XT" -> (9, 7.5);
-    AMD "RX 7600" -> (7, 6). Suffixes add a fraction of a class.
+    NVIDIA "RTX 5070 Ti" -> (2025, 7.5); AMD "RX 9070 XT" -> (2025, 7.5);
+    NVIDIA "GT 710" -> (2014, 1). Suffixes add a fraction of a class; an
+    unknown series has a NaN year.
     """
     if not isinstance(chip, str):
         return (np.nan, np.nan)
-    if (nv := re.search(r"(?:RTX|GTX|GT) (\d{3,4})(?: (Ti Super|Ti|Super))?", chip)) is not None:
-        number = int(nv.group(1))
-        gen = number // 1000 if number >= 1000 else number // 100
-        return (gen, (number % 100) / 10 + _NV_SUFFIX.get(nv.group(2) or "", 0.0))
+    if (nv := re.search(r"(RTX|GTX|GT) (\d{3,4})(?: (Ti Super|Ti|Super))?", chip)) is not None:
+        number = int(nv.group(2))
+        year = _NV_SERIES_YEAR.get((nv.group(1), number // 100), np.nan)
+        return (year, (number % 100) / 10 + _NV_SUFFIX.get(nv.group(3) or "", 0.0))
     if (amd := re.search(r"RX (\d{4})(?: (XTX|XT|GRE))?", chip)) is not None:
         number = int(amd.group(1))
         tier = (number % 100) // 10 if number >= 9000 else (number % 1000) // 100
-        return (number // 1000, tier + _AMD_SUFFIX.get(amd.group(2) or "", 0.0))
+        year = _AMD_SERIES_YEAR.get(number // 1000, np.nan)
+        return (year, tier + _AMD_SUFFIX.get(amd.group(2) or "", 0.0))
     return (np.nan, np.nan)
+
+
+#: Launch year per CPU family generation (Ryzen 4000 desktop parts are 2020
+#: Zen 2 silicon; Ryzen 8000 desktop APUs and 9000 both 2024).
+_RYZEN_YEAR = {1: 2017, 2: 2018, 3: 2019, 4: 2020, 5: 2020, 7: 2022, 8: 2024, 9: 2024}
+_INTEL_CORE_YEAR = {10: 2020, 11: 2021, 12: 2021, 13: 2022, 14: 2023}
+
+
+def cpu_release(model: object, generation: object) -> tuple[float, float]:
+    """Map a CPU model to (launch year, product tier).
+
+    Tier is the brand's own ladder: Ryzen 3/5/7/9, Core i3-i9 and Core Ultra
+    5/7/9 share one scale; Threadripper is 11 and Pentium 1. Six cores at
+    2,590 THB is a Ryzen 5 4500 from 2020, not a 2024 Ryzen 5 9600X: without
+    the year and tier, core counts alone priced the two alike.
+    """
+    if not isinstance(model, str):
+        return (np.nan, np.nan)
+    gen = (
+        int(generation)
+        if isinstance(generation, (int, float)) and np.isfinite(generation)
+        else None
+    )
+    if "Threadripper" in model:
+        tier = 11.0
+    elif "Pentium" in model:
+        tier = 1.0
+    elif (t := re.search(r"(?:Ryzen|Core i|Core Ultra) ?(\d)\b", model)) is not None:
+        tier = float(t.group(1))
+    else:
+        tier = np.nan
+    if "Core Ultra" in model:
+        year: float = 2024
+    elif "Pentium" in model:
+        year = 2020
+    elif model.startswith("Ryzen") and gen is not None:
+        year = _RYZEN_YEAR.get(gen, np.nan)
+    elif model.startswith("Core i") and gen is not None:
+        year = _INTEL_CORE_YEAR.get(gen, np.nan)
+    else:
+        year = np.nan
+    return (year, tier)
 
 
 def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
     """Numeric hardware features per category (no demand signals)."""
     if category is Category.GPU:
-        gen_class = frame.get("chip", pd.Series(dtype=object)).map(gpu_class)
+        year_class = frame.get("chip", pd.Series(dtype=object)).map(gpu_class)
         return pd.DataFrame(
             {
                 "vram_gb": numeric(frame, "vram_gb"),
-                "perf_class": [gc[1] for gc in gen_class] if len(gen_class) else np.nan,
-                "generation": [gc[0] for gc in gen_class] if len(gen_class) else np.nan,
+                "perf_class": [yc[1] for yc in year_class] if len(year_class) else np.nan,
+                "release_year": [yc[0] - _YEAR0 for yc in year_class]
+                if len(year_class)
+                else np.nan,
                 "shader_cores": numeric(frame, "shader_cores"),
                 "boost_clock_mhz": numeric(frame, "boost_clock_mhz"),
                 "bus_width_bit": numeric(frame, "bus_width_bit"),
@@ -70,6 +136,9 @@ def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
             index=frame.index,
         )
     if category is Category.CPU:
+        models = frame.get("model", pd.Series(dtype=object, index=frame.index))
+        gens = numeric(frame, "generation")
+        year_tier = [cpu_release(mo, g) for mo, g in zip(models, gens, strict=True)]
         return pd.DataFrame(
             {
                 # Log scale: each extra core is worth less, and 64-96 core
@@ -82,6 +151,8 @@ def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
                 "is_amd": (frame["manufacturer"] == "AMD").astype(float)
                 if "manufacturer" in frame
                 else 0.0,
+                "release_year": [yt[0] - _YEAR0 for yt in year_tier] if year_tier else np.nan,
+                "tier": [yt[1] for yt in year_tier] if year_tier else np.nan,
             },
             index=frame.index,
         )
@@ -116,7 +187,7 @@ _LOG2_FOR_MLR: tuple[str, ...] = ("vram_gb", "capacity_gb")
 #: Specs a listing must have for a fair price to be estimated at all. Optional
 #: specs may be missing (imputed with a missingness indicator).
 REQUIRED_FOR_FAIR_VALUE: dict[Category, list[str]] = {
-    Category.GPU: ["log2_vram_gb", "perf_class", "generation"],
+    Category.GPU: ["log2_vram_gb", "perf_class", "release_year"],
     Category.CPU: ["log2_cores", "log2_threads"],
     Category.RAM: ["log2_capacity_gb", "speed_mhz"],
     Category.SSD: ["log2_capacity_gb", "nvme"],
@@ -129,12 +200,9 @@ def mlr_features(specs: pd.DataFrame) -> pd.DataFrame:
     for column in _LOG2_FOR_MLR:
         if column in out:
             out[f"log2_{column}"] = np.log2(out.pop(column).where(lambda v: v > 0))
-    if {"perf_class", "generation"} <= set(out.columns):
-        # Each GPU generation prices its tiers differently (a last-generation
-        # flagship vs a current mid-range card). Under product-grouped CV this
-        # interaction lifted R2 from 0.75 to 0.78; squares and one-hot
-        # generations did not help on 59 models.
-        out["perf_x_gen"] = out["perf_class"] * out["generation"]
+    # No class x generation interaction: it was fitted on model numbers as
+    # generations; with launch years it lowered product-grouped CV R2 (0.805
+    # without, 0.792 with) and let the 2014-2017 GT cards extrapolate.
     return out
 
 
@@ -299,6 +367,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 price,
                 required=REQUIRED_FOR_FAIR_VALUE[category],
                 groups=key,
+                # Learn from what can be bought today; sold-out rows carry
+                # stale prices but are still scored.
+                fit_mask=frame["in_stock"].fillna(False).astype(bool),
             )
             scores = m.deal_score(mlr.z_residual)
             insights.loc[frame.index, "fair_price"] = mlr.fair_price.round(0)
@@ -313,7 +384,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "mape_cv": mlr.mape_cv,
                 "n": mlr.n,
                 "required": REQUIRED_FOR_FAIR_VALUE[category],
-                "unscored": int(len(frame) - mlr.n),
+                "unscored": int(mlr.fair_price.isna().sum()),
+                "extrapolated": mlr.extrapolated,
+                "fitted_on": "in-stock listings",
                 "diagnostics": mlr.diagnostics.summary() if mlr.diagnostics else None,
             }
             if figures:

@@ -193,11 +193,13 @@ def test_timing_tree_needs_enough_history() -> None:
 @pytest.mark.parametrize(
     ("chip", "expected"),
     [
-        ("GeForce RTX 5070 Ti", (5, 7.5)),
-        ("GeForce RTX 3050", (3, 5.0)),
-        ("GeForce GT 1030", (1, 3.0)),
-        ("Radeon RX 9070 XT", (9, 7.5)),
-        ("Radeon RX 7600", (7, 6.0)),
+        ("GeForce RTX 5070 Ti", (2025, 7.5)),
+        ("GeForce RTX 3050", (2020, 5.0)),
+        ("GeForce GT 1030", (2017, 3.0)),
+        # Model number 710 once read as "generation 7", newer than RTX 50.
+        ("GeForce GT 710", (2014, 1.0)),
+        ("Radeon RX 9070 XT", (2025, 7.5)),
+        ("Radeon RX 7600", (2022, 6.0)),
         (None, None),
     ],
 )
@@ -207,6 +209,61 @@ def test_gpu_class(chip: object, expected: tuple[float, float] | None) -> None:
         assert all(np.isnan(v) for v in result)
     else:
         assert result == expected
+
+
+@pytest.mark.parametrize(
+    ("model", "generation", "expected"),
+    [
+        ("Ryzen 5 4500", 4, (2020, 5.0)),
+        ("Ryzen 5 9600X", 9, (2024, 5.0)),
+        ("Core i7-14700F", 14, (2023, 7.0)),
+        ("Core Ultra 9 285K", np.nan, (2024, 9.0)),
+        ("Ryzen Threadripper Pro 9995WX", 9, (2024, 11.0)),
+    ],
+)
+def test_cpu_release(model: str, generation: float, expected: tuple[float, float]) -> None:
+    from pricewatch.ml.train import cpu_release
+
+    assert cpu_release(model, generation) == expected
+
+
+def test_sold_out_stale_prices_are_scored_but_not_learned() -> None:
+    rng = np.random.default_rng(31)
+    n = 200
+    gb = rng.choice([8.0, 16.0, 32.0], size=n)
+    price = pd.Series(np.exp(7 + 0.9 * np.log2(gb) + rng.normal(0, 0.05, n)))
+    sold_out = pd.Series(np.arange(n) < 60)
+    price[sold_out] *= 0.4  # last price before a market-wide increase
+    features = pd.DataFrame({"log2_gb": np.log2(gb)})
+
+    naive = m.fit_fair_value(features, price)
+    fit = m.fit_fair_value(features, price, fit_mask=~sold_out)
+
+    pct = price / fit.fair_price - 1
+    assert fit.n == n - 60
+    assert fit.mape_cv < 0.06 < naive.mape_cv
+    assert pct[~sold_out].abs().median() < 0.05  # in-stock rows priced right
+    assert pct[sold_out].median() == pytest.approx(-0.6, abs=0.05)  # stale, still scored
+
+
+def test_extrapolated_rows_are_not_scored() -> None:
+    rng = np.random.default_rng(41)
+    n = 120
+    year = rng.choice([2022.0, 2025.0], size=n)
+    tier = rng.uniform(5, 9, size=n)
+    # One ancient card far outside the data: about 15 SD out on year, so its
+    # held-out leverage (~ z^2 / n) is above 1.
+    year[0], tier[0] = 2000.0, 1.0
+    price = pd.Series(np.exp(8 + 0.3 * tier + 0.05 * (year - 2020) + rng.normal(0, 0.05, n)))
+    features = pd.DataFrame({"year": year, "tier": tier})
+
+    fit = m.fit_fair_value(features, price)
+
+    assert fit.extrapolated >= 1
+    assert np.isnan(fit.fair_price.iloc[0])
+    assert np.isnan(fit.z_residual.iloc[0])
+    assert fit.fair_price.iloc[1:].notna().all()
+    assert fit.leverage is not None and (fit.leverage.iloc[1:] <= m.MAX_LEVERAGE).all()
 
 
 def test_run_models_end_to_end_on_synthetic_catalogue() -> None:

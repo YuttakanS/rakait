@@ -132,6 +132,9 @@ export function roundForCopy(value: number): number {
 export const FACTOR_HINTS: Record<string, string> = {
   perf_class: "เช่น RTX 5060 → 5070 → 5080",
   generation: "เช่น RTX 40 → RTX 50",
+  release_year: "เช่น RTX 40 (2022) → RTX 50 (2025)",
+  "cpu.release_year": "เช่น Ryzen 5000 (2020) → Ryzen 9000 (2024)",
+  tier: "เช่น Ryzen 5 → 7 → 9, Core i5 → i7 → i9",
   log2_vram_gb: "เช่น 8GB → 16GB",
   "ram.log2_capacity_gb": "เช่น 16GB → 32GB",
   "ssd.log2_capacity_gb": "เช่น 1TB → 2TB",
