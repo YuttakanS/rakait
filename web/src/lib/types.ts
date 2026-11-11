@@ -78,6 +78,8 @@ export interface CoverageRow {
 
 /** One listing on a simple-regression scatter: spec value vs price. */
 export interface SpecPoint {
+  /** Canonical product id (links to /product/[id]). */
+  id: number;
   category: Category;
   x: number;
   price: number;

@@ -187,7 +187,7 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | **Chart sizing** | `use-width.ts` | Charts measure their container (ResizeObserver) and draw a viewBox equal to the real width, so 12 px axis text stays 12 px on a phone (a fixed 760-unit viewBox shrank it to ~5 px). Narrow charts use fewer date ticks. |
 | **SpecScatter** | `spec-scatter.tsx` (client) | Price vs one spec with the fitted SLR line; axes end at the 97.5th percentile with the hidden count printed; nearest-point hover (≤ 24 px) naming model, spec and price. |
 | **EffectBars** | `effect-bars.tsx` | Diverging horizontal bars of MLR effect (% per SD), sorted by magnitude, value printed on every bar, "← ทำให้ถูกลง / ทำให้แพงขึ้น →" caption. |
-| **KPI tile** | insights | Label → big value → unit line → statistics note with ⓘ. |
+| **Price ladder** | insights | Table per spec tier: tier + model count, starting price (link to cheapest model), typical price, cheapest model (sm+). |
 | **StatNote** | insights | `text-[11px] text-subtle` + ⓘ icon; the full statistic in `title`. |
 | **Statistics details** | insights | Native `<details>` card, collapsed by default, chevron rotates when open. |
 | **Empty state** | anywhere | `.card` with centred muted text saying what is missing and why. |
@@ -210,16 +210,35 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 
 ### 6.3 Market insights (`/insights`, nav "ภาพรวมตลาด")
 
-1. h1 + one-paragraph purpose + computed time.
-2. **ราคาต่อหน่วยสเปกตอนนี้**: four KPI tiles (GPU per GB VRAM, CPU per core,
-   RAM per GB, SSD per TB) then four SpecScatter panels.
-3. **อะไรทำให้ราคาแพงขึ้น**: EffectBars per category, MAPE as a StatNote.
-4. **กลุ่มความต้องการของตลาด**: one tile per segment name (K-Means clusters
-   sharing a name are merged, size-weighted), icon, share bar, averages.
-5. **คำแนะนำ ซื้อเลย / รอก่อน**: whether the decision tree or the rules drive
-   advice, with the current accuracy vs. the 60% bar.
-6. **รายละเอียดทางสถิติ** (collapsed): data coverage, record linkage, MLR β
-   table, regression-tree rules, K-Means vs Ward, decision-tree rules.
+Every consumer section answers a shopper's question in words and prices;
+model output appears only as plain-Thai phrasing plus a StatNote. Helpers live
+in `lib/market.ts`.
+
+1. h1 + one-sentence purpose + computed time, then jump-link chips to the four
+   sections (anchors, `py-2` targets).
+2. **งบเท่านี้ได้สเปกแค่ไหน** (`#ladder`): one card per category: icon + name,
+   the SLR slope as a sentence ("VRAM เพิ่มทุก 1 GB ราคาเพิ่มเฉลี่ยราว ฿4,400",
+   rounded for copy) with reliability as a word (R² ≥ 0.75 สูง, ≥ 0.5 ปานกลาง,
+   else ต่ำ), then a **price ladder** table per spec tier: starting price
+   (links to that tier's cheapest model), typical price (median of each
+   model's cheapest offer; one price per model), model count, cheapest model
+   (hidden on mobile). The SpecScatter sits behind "ดูกราฟราคาทุกรายการ".
+3. **อะไรทำให้ราคาแพงขึ้น** (`#drivers`): top 4 hardware factors per category
+   as a ranked list: Thai label, one-line example (`FACTOR_HINTS`), a
+   single-hue importance bar relative to factor 1, and direction in words
+   (▲ ยิ่งสูง ยิ่งแพง / ▲ ราคาสูงกว่า for yes/no features). Model plumbing is
+   excluded here (missing-spec flags, the generation × tier interaction,
+   demand signals, `nvme` which `pcie_gen` already carries); the signed
+   EffectBars (% per SD) live in the statistics section.
+4. **ของที่คนซื้อจริง** (`#demand`): one clickable tile per segment name in
+   the fixed chip order, linking to `/?cluster=…`; average views and sales as
+   "~1 ชิ้น / N วัน"; listing count and share.
+5. **ป้าย ซื้อเลย / รอก่อน คิดจากอะไร** (`#advice`): while the tree is below
+   its bar, the three rules as badge + sentence; the accuracy vs. 60% as a
+   StatNote.
+6. **รายละเอียดทางสถิติ** (collapsed): data coverage, SLR table, record
+   linkage, MLR EffectBars + β table + OLS diagnostics, regression-tree rules,
+   K-Means vs Ward, decision-tree rules.
 
 ### 6.4 Adding a page
 

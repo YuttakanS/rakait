@@ -173,7 +173,7 @@ export async function getPriceHistory(id: number): Promise<PricePoint[]> {
  */
 export async function getSpecPoints(): Promise<SpecPoint[]> {
   const rows = await sql`
-    SELECT c.category, c.model, l.current_price::float8 AS price,
+    SELECT c.id::int AS id, c.category, c.model, l.current_price::float8 AS price,
            (CASE c.category
               WHEN 'gpu' THEN c.specs ->> 'vram_gb'
               WHEN 'cpu' THEN c.specs ->> 'cores'
@@ -186,6 +186,7 @@ export async function getSpecPoints(): Promise<SpecPoint[]> {
   return rows
     .filter((r) => r.x !== null)
     .map((r) => ({
+      id: r.id as number,
       category: r.category as Category,
       model: r.model as string,
       price: r.price as number,
