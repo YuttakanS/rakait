@@ -11,7 +11,12 @@ from decimal import Decimal
 
 import pytest
 
-from pricewatch.db.migrate import MigrationError, apply_migrations
+from pricewatch.db.migrate import (
+    DEFAULT_MIGRATIONS_DIR,
+    MigrationError,
+    apply_migrations,
+    discover_migrations,
+)
 from pricewatch.db.repository import UnknownMerchantError, save_listings
 from pricewatch.models import Category, ScrapedListing
 
@@ -60,9 +65,13 @@ def _listing(
 
 
 async def test_migrations_apply_once(conn) -> None:
-    assert await apply_migrations(conn) == ["0001", "0002", "0003", "0004", "0005", "0006"]
+    expected = [version for version, _ in discover_migrations(DEFAULT_MIGRATIONS_DIR)]
+    assert expected[:8] == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]
+    assert await apply_migrations(conn) == expected
     assert await apply_migrations(conn) == []
-    assert await conn.fetchval("SELECT count(*) FROM merchants") == 5
+    # Five merchants seeded by 0001, Advice removed by 0008.
+    slugs = await conn.fetch("SELECT slug FROM merchants ORDER BY slug")
+    assert [row["slug"] for row in slugs] == ["banana", "ihavecpu", "itcity", "jib"]
 
 
 async def test_edited_migration_is_detected(conn, tmp_path) -> None:
