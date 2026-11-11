@@ -8,7 +8,9 @@ from pricewatch.quality import annotate_runs, run_warnings
 T0 = datetime(2026, 11, 11, tzinfo=timezone.utc)
 
 
-def _listing(sku: str, price: Decimal | None, category: Category = Category.GPU) -> ScrapedListing:
+def _listing(
+    sku: str, price: Decimal | None, category: Category = Category.GPU, in_stock: bool = True
+) -> ScrapedListing:
     return ScrapedListing(
         merchant="jib",
         merchant_sku=sku,
@@ -16,7 +18,7 @@ def _listing(sku: str, price: Decimal | None, category: Category = Category.GPU)
         title=f"item {sku}",
         url=f"https://example.com/{sku}",  # type: ignore[arg-type]
         price=price,
-        in_stock=True,
+        in_stock=in_stock,
         scraped_at=T0,
     )
 
@@ -41,7 +43,14 @@ def test_failed_runs_are_not_double_reported() -> None:
 
 def test_missing_prices_warn() -> None:
     items = [_listing("a", None), _listing("b", None), _listing("c", Decimal(5))]
-    assert run_warnings(_run(3), items, baseline=None) == ["2/3 listings have no price"]
+    assert run_warnings(_run(3), items, baseline=None) == ["2/3 in-stock listings have no price"]
+
+
+def test_sold_out_listings_without_price_are_expected() -> None:
+    # JIB renders "N/A" for every sold-out card: not a broken selector.
+    items = [_listing(str(i), None, in_stock=False) for i in range(8)]
+    items += [_listing("a", Decimal(5)), _listing("b", Decimal(6))]
+    assert run_warnings(_run(10), items, baseline=None) == []
 
 
 def test_count_drop_against_baseline_warns() -> None:
@@ -61,6 +70,6 @@ def test_annotate_runs_groups_listings_by_store_and_category() -> None:
 
     assert [run.warning for run in annotated] == [
         None,
-        "3/3 listings have no price",
+        "3/3 in-stock listings have no price",
         "no listings returned",
     ]

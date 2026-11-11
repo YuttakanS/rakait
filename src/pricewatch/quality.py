@@ -20,7 +20,9 @@ from pricewatch.pipeline import ScrapeRun
 
 #: A run below this fraction of its recent median listing count is flagged.
 MIN_COUNT_RATIO = 0.5
-#: A run where more than this fraction of listings lack a price is flagged.
+#: A run where more than this fraction of in-stock listings lack a price is
+#: flagged. Sold-out listings are excluded: JIB shows "N/A" instead of a price
+#: for them by design, so they carry no signal about a broken selector.
 MAX_MISSING_PRICE = 0.5
 
 BaselineKey = tuple[str, Category]
@@ -48,9 +50,10 @@ def run_warnings(
         return ["no listings returned"]
 
     warnings: list[str] = []
-    missing = sum(1 for item in listings if item.price is None)
-    if missing > MAX_MISSING_PRICE * count:
-        warnings.append(f"{missing}/{count} listings have no price")
+    in_stock = [item for item in listings if item.in_stock]
+    missing = sum(1 for item in in_stock if item.price is None)
+    if in_stock and missing > MAX_MISSING_PRICE * len(in_stock):
+        warnings.append(f"{missing}/{len(in_stock)} in-stock listings have no price")
     if baseline is not None and baseline > 0 and count < MIN_COUNT_RATIO * baseline:
         drop = 1 - count / baseline
         warnings.append(f"{count} listings, {drop:.0%} below the recent median of {baseline:g}")
