@@ -126,47 +126,93 @@ def _impute(matrix: pd.DataFrame) -> pd.DataFrame:
     return matrix.fillna(matrix.median(numeric_only=True)).fillna(0.0)
 
 
-def fit_fair_value(features: pd.DataFrame, price: pd.Series, *, folds: int = 5) -> FairValueModel:
+def _design_matrix(features: pd.DataFrame, required: list[str]) -> pd.DataFrame:
+    """Median-impute optional features and add a 0/1 indicator per gap.
+
+    Missingness is not random here: titles that omit a spec are mostly old or
+    budget parts. A bare median imputation would give such a listing the specs
+    of a mid-range product and a fair price several times its real one; the
+    indicator lets the regression learn that group's own offset instead.
+    Required columns are complete by construction (rows lacking them are
+    excluded before this call).
+    """
+    imputed = _impute(features)
+    flags = {
+        f"{c}_missing": features[c].isna().astype(float)
+        for c in features
+        if c not in required and features[c].isna().any()
+    }
+    return pd.concat([imputed, pd.DataFrame(flags, index=features.index)], axis=1)
+
+
+def fit_fair_value(
+    features: pd.DataFrame,
+    price: pd.Series,
+    *,
+    required: list[str] | None = None,
+    folds: int = 5,
+) -> FairValueModel:
     """Fit the fair-value MLR and score each row out-of-fold.
 
     Out-of-fold predictions matter here: an in-sample fit would let each
     listing pull the regression line towards its own price and understate how
     under- or over-priced it is.
 
+    Rows missing any ``required`` feature are neither fitted nor scored: their
+    fair price and residual are NaN. A fair price for a CPU whose core count
+    is unknown would be a guess, and a guessed fair price produces exactly the
+    "90% below fair value" deals the score must never claim.
+
     Args:
-        features: Numeric feature columns (NaN allowed; median-imputed).
+        features: Numeric feature columns (NaN allowed outside ``required``).
         price: Listing price in THB, aligned with ``features``.
+        required: Features a row must have to be scored.
         folds: Cross-validation folds.
 
     Returns:
-        The fitted model with out-of-fold fair prices and z-scored residuals.
+        The fitted model with out-of-fold fair prices and z-scored residuals
+        (NaN for unscored rows).
+
+    Raises:
+        ValueError: If a required feature is unusable or too few rows remain.
     """
     usable = _usable_columns(features)
     if not usable:
         raise ValueError("no usable features for the fair-value model")
-    x = StandardScaler().fit_transform(_impute(features[usable]))
-    y = np.log(price.to_numpy(float))
+    required = required or []
+    unusable = [c for c in required if c not in usable]
+    if unusable:
+        raise ValueError(f"required features unusable: {unusable}")
+    complete = features[required].notna().all(axis=1)  # all True when none required
+    if int(complete.sum()) < 15:
+        raise ValueError(f"only {int(complete.sum())} rows have the required features")
+    design = _design_matrix(features.loc[complete, usable], required)
+    design = design.loc[:, design.nunique() > 1]
+    columns = [str(c) for c in design.columns]
+    fit_price = price.loc[complete]
+    x = StandardScaler().fit_transform(design)
+    y = np.log(fit_price.to_numpy(float))
     folds = max(2, min(folds, len(y) // 5))
     cv = KFold(n_splits=folds, shuffle=True, random_state=_RNG)
     oof_log = cross_val_predict(LinearRegression(), x, y, cv=cv)
     model = LinearRegression().fit(x, y)
 
     resid = y - oof_log
-    sigma = resid.std(ddof=len(usable) + 1) or 1.0
+    sigma = resid.std(ddof=len(columns) + 1) or 1.0
     # Duan's smearing: exp(E[log y]) underestimates E[y] under log-normal noise.
     smear = float(np.mean(np.exp(resid)))
     fair = np.exp(oof_log) * smear
     ss_res = float((resid**2).sum())
     ss_tot = float(((y - y.mean()) ** 2).sum())
     return FairValueModel(
-        features=usable,
+        features=columns,
         coefficients=[float(b) for b in model.coef_],
         intercept=float(model.intercept_),
         r2_cv=1 - ss_res / ss_tot,
-        mape_cv=float(np.mean(np.abs(price.to_numpy(float) - fair) / fair)),
+        mape_cv=float(np.mean(np.abs(fit_price.to_numpy(float) - fair) / fair)),
         n=len(y),
-        fair_price=pd.Series(fair, index=features.index),
-        z_residual=pd.Series(resid / sigma, index=features.index),
+        fair_price=pd.Series(fair, index=design.index).reindex(features.index),
+        z_residual=pd.Series(resid / sigma, index=design.index).reindex(features.index),
     )
 
 

@@ -107,6 +107,31 @@ def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
     )
 
 
+#: Specs the fair-value model log-transforms. Price scales with capacity as a
+#: power law (a 2 TB drive costs about twice a 1 TB one), so in a model of
+#: log(price) the regressor must be log(capacity); a linear term extrapolates
+#: exponentially (an 8 TB SSD came out at 1.9 million THB).
+_LOG2_FOR_MLR: tuple[str, ...] = ("vram_gb", "capacity_gb")
+
+#: Specs a listing must have for a fair price to be estimated at all. Optional
+#: specs may be missing (imputed with a missingness indicator).
+REQUIRED_FOR_FAIR_VALUE: dict[Category, list[str]] = {
+    Category.GPU: ["log2_vram_gb", "perf_class", "generation"],
+    Category.CPU: ["log2_cores", "log2_threads"],
+    Category.RAM: ["log2_capacity_gb", "speed_mhz"],
+    Category.SSD: ["log2_capacity_gb", "nvme"],
+}
+
+
+def mlr_features(specs: pd.DataFrame) -> pd.DataFrame:
+    """Spec features as the fair-value MLR sees them (capacities in log2)."""
+    out = specs.copy()
+    for column in _LOG2_FOR_MLR:
+        if column in out:
+            out[f"log2_{column}"] = np.log2(out.pop(column).where(lambda v: v > 0))
+    return out
+
+
 def demand_features(frame: pd.DataFrame) -> pd.DataFrame:
     """Demand signals of the specification: log views and log sales velocity."""
     return pd.DataFrame(
@@ -145,15 +170,23 @@ def current_timing_features(history: pd.DataFrame, current: pd.DataFrame) -> pd.
     return out
 
 
-def rule_recommendation(row: pd.Series) -> tuple[str, str]:
+#: Reason shown when no fair price could be estimated for a listing.
+NO_FAIR_PRICE = "ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ"
+
+
+def rule_recommendation(row: pd.Series) -> tuple[str | None, str]:
     """Transparent fallback while the timing tree is not reliable enough.
 
     Deal Score 80 / 20 is about one standard deviation below / above fair
-    value (roughly the cheapest / dearest fifth of listings).
+    value (roughly the cheapest / dearest fifth of listings). A listing
+    without a Deal Score gets no recommendation rather than a "fair price"
+    verdict it has no evidence for.
     """
     score = row.get("deal_score")
     if row.get("in_stock") is False:
         return m.WAIT, "สินค้าหมดที่ร้านนี้ รอของเข้าหรือดูร้านอื่น"
+    if pd.isna(score):
+        return None, NO_FAIR_PRICE
     if pd.notna(score) and score >= 80:
         quantity = row.get("stock_quantity")
         low = pd.notna(quantity) and quantity <= 3
@@ -217,7 +250,11 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
 
         # B. Multiple linear regression -> fair value and Deal Score.
         try:
-            mlr = m.fit_fair_value(pd.concat([specs, demand_features(frame)], axis=1), price)
+            mlr = m.fit_fair_value(
+                pd.concat([mlr_features(specs), demand_features(frame)], axis=1),
+                price,
+                required=REQUIRED_FOR_FAIR_VALUE[category],
+            )
             scores = m.deal_score(mlr.z_residual)
             insights.loc[frame.index, "fair_price"] = mlr.fair_price.round(0)
             insights.loc[frame.index, "residual"] = (price - mlr.fair_price).round(0)
@@ -230,6 +267,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "r2_cv": mlr.r2_cv,
                 "mape_cv": mlr.mape_cv,
                 "n": mlr.n,
+                "required": REQUIRED_FOR_FAIR_VALUE[category],
+                "unscored": int(len(frame) - mlr.n),
             }
             if figures:
                 _plot_mlr(figures, category, price, mlr)
@@ -328,7 +367,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     else:
         recs = merged.apply(rule_recommendation, axis=1)
         insights["recommendation"] = [r[0] for r in recs]
-        insights["recommendation_reason"] = ["กฎจาก Deal Score: " + r[1] for r in recs]
+        insights["recommendation_reason"] = [
+            "กฎจาก Deal Score: " + reason if rec is not None else reason for rec, reason in recs
+        ]
     return report
 
 
