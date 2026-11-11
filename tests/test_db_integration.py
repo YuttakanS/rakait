@@ -363,3 +363,19 @@ async def test_image_url_survives_observations_without_one(conn) -> None:
     assert await conn.fetchval("SELECT image_url FROM merchant_listings") == (
         "https://www.jib.co.th/img/b.jpg"
     )
+
+
+async def test_web_reader_can_only_read(conn) -> None:
+    import asyncpg
+
+    await apply_migrations(conn)
+    await save_listings(conn, [_listing("1", "1000", 5, T0)])
+    async with conn.transaction():
+        await conn.execute("SET LOCAL ROLE web_reader")
+        assert await conn.fetchval("SELECT count(*) FROM merchant_listings") == 1  # RLS policy
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await conn.execute("DELETE FROM merchant_listings")
+    async with conn.transaction():
+        await conn.execute("SET LOCAL ROLE web_reader")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await conn.fetchval("SELECT count(*) FROM schema_migrations")
