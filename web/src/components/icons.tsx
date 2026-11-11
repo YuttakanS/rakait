@@ -127,3 +127,44 @@ export function Glyph({ name, className = "h-3.5 w-3.5" }: { name: string } & Ic
     </svg>
   );
 }
+
+/** Storefront chrome icons (header actions, nav, promo tiles). */
+const UI: Record<string, React.ReactNode> = {
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  tag: (
+    <>
+      <path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9Z" />
+      <circle cx="7.5" cy="7.5" r="1.5" />
+    </>
+  ),
+  chart: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
+  store: (
+    <>
+      <path d="M3 9 5 4h14l2 5" />
+      <path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" />
+      <path d="M5 12v8h14v-8M10 20v-5h4v5" />
+    </>
+  ),
+  scale: (
+    <>
+      <path d="M12 3v18M7 21h10M5 7h14" />
+      <path d="m5 7-3 7a3 3 0 0 0 6 0Zm14 0-3 7a3 3 0 0 0 6 0Z" />
+    </>
+  ),
+  spark: <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6" />,
+  arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3.5 2" />
+    </>
+  ),
+};
+
+export function UiIcon({ name, className = "h-5 w-5" }: { name: keyof typeof UI | string } & IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={`shrink-0 ${className}`} {...base}>
+      {UI[name]}
+    </svg>
+  );
+}

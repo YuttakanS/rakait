@@ -58,3 +58,36 @@ export function FairDelta({ pct, className = "" }: { pct: number | null; classNa
     </span>
   );
 }
+
+/**
+ * Card-corner tags: a solid Deal tag and a "ถูกกว่า x%" ribbon, the
+ * storefront's discount-tag shape. Solid fills carry white text (>= 5:1);
+ * Deal 31–69 is a white tag with a border, so only strong deals shout.
+ */
+export function DealTag({ score }: { score: number | null }) {
+  if (score === null) return null;
+  const tone =
+    score >= 70
+      ? "bg-good-solid text-white"
+      : score <= 30
+        ? "bg-bad-solid text-white"
+        : "border border-border bg-surface text-foreground";
+  return (
+    <span
+      className={`tabular inline-flex items-center rounded-[6px] px-2 py-1 text-xs font-bold tracking-wide shadow-sm ${tone}`}
+      title="Deal Score 0–100 (50 = ราคายุติธรรม)"
+    >
+      DEAL {score}
+    </span>
+  );
+}
+
+/** "ถูกกว่าราคายุติธรรม 12%" as a tag; nothing when not meaningfully below fair. */
+export function BelowFairTag({ pct }: { pct: number | null }) {
+  if (pct === null || pct > -0.005) return null;
+  return (
+    <span className="tabular inline-flex items-center gap-1 rounded-[6px] bg-good-bg px-2 py-1 text-xs font-semibold text-good">
+      ▼ ถูกกว่าราคายุติธรรม {Math.round(-pct * 100)}%
+    </span>
+  );
+}

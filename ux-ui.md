@@ -29,9 +29,12 @@ file's. Where the two disagree, this file wins; record the reason here.
    plain Thai and say what is used instead. Never invent a value: missing is `–`.
 4. **Thai first.** UI copy is Thai; model terms stay in English where Thai readers
    use them (Deal Score, K-Means, R²).
-5. **Calm and modern.** Light grey page, white raised cards with a soft shadow,
-   one navy accent, colour reserved for meaning (status, store identity). No
-   banners, carousels or pop-ups.
+5. **Storefront, honestly.** The layout reads as a Thai IT store (announcement
+   bar, wide search, category menu, hero banner, product cards with CTAs) on a
+   light grey page with white raised cards and one trust-blue brand colour.
+   Every banner and button shows real data or leads somewhere real: no cart,
+   login, delivery tracking, invented promotions or contact details the site
+   does not have (it sells nothing). No carousels or pop-ups.
 6. **Fast by default.** Server components; client components only for real
    interaction (chart hover, auto-submitting selects).
 
@@ -63,7 +66,8 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | `niche` | เฉพาะกลุ่ม | target | ยอดเข้าชมและยอดขายต่ำ |
 | In stock / sold out | ● มีของ / ○ สินค้าหมด | | |
 | Categories | การ์ดจอ · ซีพียู · แรม · SSD | | |
-| Nav | สินค้า · ภาพรวมตลาด | | |
+| Nav | หมวดหมู่สินค้า (menu) · หน้าแรก · การ์ดจอ · ซีพียู · แรม · SSD · ภาพรวมตลาด | | |
+| Header shortcuts | ดีลเด็ด · เทียบหลายร้าน · ภาพรวมตลาด | tag · scale · chart | |
 
 Icons are inline SVG from `components/icons.tsx` (24-unit box, 2 px round
 strokes), never emoji: emoji render differently per OS and cannot follow
@@ -88,8 +92,11 @@ automatic inversion). Tailwind utilities map to them (`bg-surface`,
 | `--muted` | `#64748b` | `#94a3b8` | Secondary text, axis labels |
 | `--subtle` | `#94a3b8` | `#64748b` | Tertiary text: statistics notes, footer |
 | `--border` | `#e2e8f0` | `#253047` | 1 px borders, grid lines |
-| `--accent` | `#1e3a8a` | `#8fb0ff` | Primary button, active filter, headline price, focus |
-| `--accent-soft` | `#e0e7ff` | `#1e2a4d` | Focus ring, hovered card border |
+| `--accent` | `#1d4ed8` | `#8fb0ff` | Brand colour: search button, CTAs, category button, active filter, focus, hover |
+| `--accent-soft` | `#dbeafe` | `#1e2a4d` | Focus ring, hovered card border, icon discs |
+| `--topbar` / `--on-topbar` | `#0f172a` / `#cbd5e1` | `#050810` / `#94a3b8` | Announcement bar |
+| `--hero-from` → `--hero-to` | `#1e3a8a` → `#2563eb` | `#142451` → `#1e3f94` | Hero banner gradient (`.hero-banner`), white text ≥ 5:1 |
+| `--good-solid` / `--bad-solid` | `#047857` / `#b91c1c` | same | Solid DEAL tags with white text |
 
 ### Status (reserved: never a chart series colour)
 
@@ -132,7 +139,8 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | Page title | `text-3xl font-bold tracking-tight` | เทียบราคาอุปกรณ์คอม 4 ร้าน |
 | Section title | `text-xl font-semibold` (insights) / `text-lg font-semibold` (cards) | อะไรทำให้ราคาแพงขึ้น |
 | Hero price | `text-4xl font-bold text-accent tabular` | ฿27,090 |
-| Card / row price | `text-2xl font-bold tracking-tight tabular` | ฿16,490 |
+| Card price | `text-[26px] font-extrabold tracking-tight tabular` | ฿16,490 |
+| Row price (offers) | `text-2xl font-bold tracking-tight tabular` | ฿16,490 |
 | KPI tile value | `text-3xl font-bold tabular` | ฿4,550 |
 | Product name (card) | `text-base font-semibold`, 2-line clamp | GeForce RTX 5060 Ti 16GB |
 | Body | `text-sm` | |
@@ -157,11 +165,20 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 
 ## 4. Layout
 
-- Container `mx-auto max-w-6xl px-4`, body `py-8`.
-- Header: sticky, translucent surface with blur; logo **Raka<span>IT</span>**,
-  nav (สินค้า, ภาพรวมตลาด), last-updated time right-aligned.
-- Footer: one `text-xs text-subtle` paragraph (sources, cadence, "รูปสินค้าเป็นของแต่ละร้าน", models, educational).
-- Grids: product cards `sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`; KPI tiles
+- Container `mx-auto max-w-7xl px-4`, main `py-6 sm:py-8`; a skip link to `#main`.
+- Announcement bar (`bg-topbar`, `h-9`, `text-xs`): last update + cadence and
+  the store list (md+) left, "ร้านค้าที่เทียบราคา" (→ footer `#stores`) right.
+- Header (`bg-surface`, sticky from `lg`): logo (blue "R" tile + **Raka<span>IT</span>**
+  wordmark + tagline), the wide search (2 px brand border, attached brand
+  button; full-width second row on mobile), three icon+label shortcuts right.
+  Below a hairline, the nav row: brand "หมวดหมู่สินค้า" button opening the
+  category menu (icon, name, example brands; outside click / Esc close), then
+  text links with a 2 px underline on the current page; the link row scrolls
+  sideways inside itself on phones.
+- Footer (`bg-surface`, top border): brand blurb, store list with store-colour
+  dots (`#stores`), menu links, then the `text-xs text-subtle` sources line
+  (includes "RakaIT ไม่ได้ขายสินค้าเอง").
+- Grids: product cards `grid-cols-2 lg:grid-cols-3 xl:grid-cols-4` (2 up on phones); KPI tiles
   `sm:grid-cols-2 lg:grid-cols-4`; chart panels `md:grid-cols-2`.
 - Responsive, designed at 360–375 px first: the search field takes the full
   first row, selects share the second, the button wraps; offer rows stack;
@@ -171,11 +188,16 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 
 | Component | File | Rules |
 |---|---|---|
-| **Search + filters panel** | `app/page.tsx` | One `.card`. GET `<form action="/">`: search input with a magnifier icon inside (`h-10`), category `<select>`, sort `<select>`, navy `ค้นหา` button (`h-10`). Below a divider: demand-cluster toggle buttons. Filters are URL state. |
+| **HeaderSearch** | `header-search.tsx` (client) | GET `<form action="/">`, prefilled from `?q=` and keeping `?category=`; `h-11`; Suspense fallback is the same form empty, so prerendered pages keep it. |
+| **SiteNav** | `site-nav.tsx` (client) | Category menu + links; reads the pathname only (prerender-safe). |
+| **Hero banner** | `app/page.tsx` | Landing only (no filter/search/sort). `.hero-banner`, `lg:aspect-[16/5]`, one link to the product: "Deal of the week" eyebrow, model, price, struck-through fair price + % below, white CTA "ดูราคา N ร้าน", image on a white tile. The product is the best Deal ≥ 60 that is in stock at ≥ 2 stores; no hero when none qualifies. |
+| **Promo tiles** | `app/page.tsx` | Three `.card-interactive` tiles under the hero: เทียบหลายร้าน, ราคายุติธรรม, ซื้อเลยหรือรอ, each linking to the real page; body line hidden on phones. |
+| **Listing toolbar** | `app/page.tsx` | Heading (search term / category / segment / "ดีลแนะนำวันนี้") + count left, category and sort AutoSubmitSelects right; cluster chips below; "ล้างทั้งหมด" when anything is set. |
 | **AutoSubmitSelect** | `auto-submit-select.tsx` (client) | Native `<select>` that submits its form on change; still works without JS via the button. Custom chevron, `sr-only` label. |
 | **Cluster toggle** | `app/page.tsx` | Pill `<Link>` with icon + label, `aria-pressed`; active = navy fill. Clicking the active one clears it; "ล้างตัวกรอง" appears when set. |
 | **ProductImage** | `product-image.tsx` (client) | Merchant image hot-linked at the variant `lib/images.ts` picks for its displayed size; `width`/`height` reserve the box; `priority` (first 4 cards, product hero) = eager + `fetchpriority="high"`, everything else lazy; `referrerPolicy="no-referrer"`; on load error, or no image, the category glyph on `--surface-muted`. Never proxied or stored. |
-| **ProductCard** | `app/page.tsx` | Whole card is the link (`.card-interactive`). Image (4:3) with **Deal badge in the top-right corner** → meta → name → **price (largest)** + "ถึง ฿max" → ▼/▲ fair delta → footer: store count, recommendation, clusters. |
+| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ~~฿x~~" when below fair, else "สูงสุด ฿max" → BelowFairTag, recommendation, first cluster → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out). The struck price is always labelled ราคายุติธรรม, never presented as a former price. |
+| **DealTag / BelowFairTag** | `badges.tsx` | Card tags, 6 px radius. DEAL ≥ 70 solid green, ≤ 30 solid red, else white with border; "▼ ถูกกว่าราคายุติธรรม x%" on `good-bg`. |
 | **DealScore** | `badges.tsx` | Pill `Deal {n}`; ≥ 70 good, ≤ 30 bad, else neutral; `prominent` variant for card corners. |
 | **RecommendationBadge** | `badges.tsx` | Icon + word; buy_now good, wait warn, fair neutral. The reason text is a `title` tooltip in rows and a sentence in the product hero. |
 | **ClusterBadge** | `badges.tsx` | Outlined pill with icon; hint in `title`. |
@@ -196,9 +218,9 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 
 ### 6.1 Product list (`/`)
 
-1. h1 (with store count) + two-line explanation of matching and Deal Score.
-2. Search + filters panel.
-3. "พบ N รุ่น" then the product grid, or the empty state.
+1. `sr-only` h1 (store count and names); search lives in the header.
+2. Landing only: hero banner + promo tiles.
+3. Listing toolbar, then the product grid, or the empty state.
 
 ### 6.2 Product detail (`/product/[id]`)
 

@@ -14,11 +14,24 @@
   --subtle: #94a3b8;
   --border: #e2e8f0;
 
-  /* Primary: deep navy; used for actions, active filters and focus. */
-  --accent: #1e3a8a;
+  /* Primary brand: trust blue; search button, CTAs, active filters, focus,
+     hover states. White on #1d4ed8 is 6.7:1. */
+  --accent: #1d4ed8;
   --accent-hover: #1e40af;
-  --accent-soft: #e0e7ff;
+  --accent-soft: #dbeafe;
   --on-accent: #ffffff;
+
+  /* Storefront chrome: the slim announcement bar and the hero banner. */
+  --topbar: #0f172a;
+  --on-topbar: #cbd5e1;
+  --hero-from: #1e3a8a;
+  --hero-to: #2563eb;
+  --on-hero: #ffffff;
+  --on-hero-muted: #dbeafe;
+
+  /* Solid tag fills (white text, >= 5:1 in both themes). */
+  --good-solid: #047857;
+  --bad-solid: #b91c1c;
 
   /* Status (reserved: never reused as a series colour). */
   --good: #047857;
@@ -66,6 +79,16 @@
     --accent-soft: #1e2a4d;
     --on-accent: #0b1120;
 
+    --topbar: #050810;
+    --on-topbar: #94a3b8;
+    --hero-from: #142451;
+    --hero-to: #1e3f94;
+    --on-hero: #ffffff;
+    --on-hero-muted: #c7d6fe;
+
+    --good-solid: #047857;
+    --bad-solid: #b91c1c;
+
     --good: #34d399;
     --good-strong: #10b981;
     --good-bg: #0b3326;
@@ -111,6 +134,12 @@
   --color-warn: var(--warn);
   --color-warn-bg: var(--warn-bg);
   --color-neutral-bg: var(--neutral-bg);
+  --color-topbar: var(--topbar);
+  --color-on-topbar: var(--on-topbar);
+  --color-on-hero: var(--on-hero);
+  --color-on-hero-muted: var(--on-hero-muted);
+  --color-good-solid: var(--good-solid);
+  --color-bad-solid: var(--bad-solid);
   --font-sans: var(--font-thai), ui-sans-serif, system-ui, sans-serif;
   /* Thai stacks tone marks above and vowels below the line: 1.6 keeps them
      from touching (ui-ux-pro-max line-height rule: 1.5-1.75 for body). */
@@ -164,7 +193,27 @@ summary,
   transform: translateY(-2px);
 }
 
+/* Promotional banner surface (home hero). */
+.hero-banner {
+  background:
+    radial-gradient(120% 140% at 100% 0%, rgb(255 255 255 / 0.14), transparent 55%),
+    linear-gradient(120deg, var(--hero-from), var(--hero-to));
+  color: var(--on-hero);
+}
+
+/* Lift for the hero and promo tiles, same motion rules as cards. */
+.lift {
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .lift,
+  .lift:hover,
   .card-interactive,
   .card-interactive:hover {
     transition: none;
