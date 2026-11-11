@@ -1,7 +1,7 @@
 # CLAUDE.md - Project Specification & Developer Directives
 
 ## 1. Project Overview & System Architecture
-An end-to-end IT Hardware Price Comparison & Market Intelligence Platform targeting top Thai electronics retailers (IHAVECPU, JIB, BaNANA, Advice, IT City).
+An end-to-end IT Hardware Price Comparison & Market Intelligence Platform targeting top Thai electronics retailers (IHAVECPU, JIB, BaNANA, IT City).
 The platform leverages resilient Web Scraping, Structured Normalization, and Foundational Machine Learning Algorithms to deliver actionable consumer transparency: Fair Market Value estimation, Buy/Wait decision paths, Stockout risk warnings, and Demand clustering (Views vs. Actual Purchases).
 
 ### High-Level Architecture
