@@ -66,6 +66,10 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
            (array_agg(i.recommendation ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_rec,
            (array_agg(i.demand_cluster ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_cluster,
            (array_agg(i.pct_vs_fair ORDER BY l.in_stock DESC, l.current_price))[1] AS best_pct,
+           (array_agg(i.fair_price ORDER BY l.in_stock DESC, l.current_price))[1]::float8 AS fair_price,
+           (array_agg(i.fair_error_pct ORDER BY l.in_stock DESC, l.current_price))[1] AS fair_error_pct,
+           coalesce((array_agg(i.fair_uncertain ORDER BY l.in_stock DESC, l.current_price))[1], false)
+               AS fair_uncertain,
            (array_agg(${IMAGE} ORDER BY l.in_stock DESC, l.current_price)
                 FILTER (WHERE ${IMAGE} IS NOT NULL))[1] AS image_url
     FROM canonical_products c
@@ -94,6 +98,9 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
     cheapestRecommendation: (r.cheapest_rec as Recommendation | null) ?? null,
     cheapestCluster: (r.cheapest_cluster as DemandCluster | null) ?? null,
     bestPctVsFair: (r.best_pct as number | null) ?? null,
+    fairPrice: (r.fair_price as number | null) ?? null,
+    fairErrorPct: (r.fair_error_pct as number | null) ?? null,
+    fairUncertain: r.fair_uncertain as boolean,
     imageUrl: (r.image_url as string | null) ?? null,
   }));
 }
@@ -108,6 +115,7 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
            l.current_price::float8 AS price, l.in_stock, l.stock_quantity,
            l.view_count, l.sold_count, l.last_scraped_at,
            i.fair_price::float8 AS fair_price, i.pct_vs_fair, i.deal_score,
+           i.fair_error_pct, coalesce(i.fair_uncertain, false) AS fair_uncertain,
            i.recommendation, i.recommendation_reason, i.demand_cluster, i.sales_per_day,
            ${IMAGE} AS image_url
     FROM merchant_listings l
@@ -139,6 +147,8 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
         fairPrice: (r.fair_price as number | null) ?? null,
         pctVsFair: (r.pct_vs_fair as number | null) ?? null,
         dealScore: (r.deal_score as number | null) ?? null,
+        fairErrorPct: (r.fair_error_pct as number | null) ?? null,
+        fairUncertain: r.fair_uncertain as boolean,
         recommendation: (r.recommendation as Recommendation | null) ?? null,
         recommendationReason: (r.recommendation_reason as string | null) ?? null,
         demandCluster: (r.demand_cluster as DemandCluster | null) ?? null,

@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { AutoSubmitSelect } from "@/components/auto-submit-select";
 import { Glyph, InfoIcon, UiIcon } from "@/components/icons";
-import { ProductCard, impliedFair } from "@/components/product-card";
+import { ProductCard, shownFair } from "@/components/product-card";
 import { ProductImage } from "@/components/product-image";
-import { CATEGORY_LABELS, CLUSTER_LABELS, MERCHANTS, formatTHB, merchantList } from "@/lib/format";
+import { CATEGORY_LABELS, CLUSTER_LABELS, MERCHANTS, formatBand, formatTHB, merchantList } from "@/lib/format";
 import { listProducts } from "@/lib/queries";
 import type { Category, DemandCluster, ProductSummary, SortKey } from "@/lib/types";
 
@@ -64,7 +64,7 @@ const PROMOS = [
 ] as const;
 
 function Hero({ p }: { p: ProductSummary }) {
-  const fair = impliedFair(p);
+  const fair = shownFair(p);
   return (
     <Link
       href={`/product/${p.id}`}
@@ -83,7 +83,7 @@ function Hero({ p }: { p: ProductSummary }) {
           <span className="text-4xl font-extrabold tracking-tight sm:text-5xl">{formatTHB(p.minPrice)}</span>
           {fair !== null && p.bestPctVsFair !== null && (
             <span className="pb-1 text-sm text-on-hero-muted">
-              ราคายุติธรรม <s>{formatTHB(fair)}</s> · ถูกกว่า {Math.round(-p.bestPctVsFair * 100)}%
+              ราคายุติธรรม {formatTHB(fair)} {formatBand(p.fairErrorPct)} · ถูกกว่า {Math.round(-p.bestPctVsFair * 100)}%
             </span>
           )}
         </div>

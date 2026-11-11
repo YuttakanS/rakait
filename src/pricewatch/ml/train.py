@@ -20,7 +20,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v3"
+MODEL_VERSION = "2026.11-v4"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -297,6 +297,21 @@ def current_timing_features(history: pd.DataFrame, current: pd.DataFrame) -> pd.
     return out
 
 
+#: |price / fair - 1| above which a fair price is flagged "ประเมินไม่แน่นอน".
+#: Ranking listings by residual selects the model's largest overestimates:
+#: on the live catalogue (2026-11-12) 98% of the top-60 "deals" was a gap
+#: shared by every store of the model (the listing itself was 1% under the
+#: other stores), concentrated in pre-2022 CPUs/GPUs and budget SSD/RAM
+#: brands the spec features cannot see. A gap this large is far outside the
+#: fit's typical error (MAPE 14-23%), so it is more likely the model than the
+#: market: the listing keeps its fair price for reference but gets no Deal
+#: Score (so it never ranks as a deal) and no recommendation.
+UNCERTAIN_GAP = 0.40
+UNCERTAIN_REASON = (
+    "ประเมินไม่แน่นอน: ราคายุติธรรมที่โมเดลให้ต่างจากราคาจริงเกิน 40% "
+    "มักเป็นเพราะสเปกในชื่อสินค้าแยกรุ่นเก่าหรือแบรนด์ไม่ออก จึงไม่ใช้จัดอันดับดีล"
+)
+
 #: Reason shown when no fair price could be estimated for a listing.
 NO_FAIR_PRICE = "ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ"
 
@@ -342,8 +357,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         },
         index=current.index,
     )
-    for column in ("fair_price", "residual", "pct_vs_fair", "deal_score"):
+    for column in ("fair_price", "residual", "pct_vs_fair", "deal_score", "fair_error_pct"):
         insights[column] = np.nan
+    insights["fair_uncertain"] = False
     insights["demand_cluster"] = None
     report = TrainReport(insights=insights)
 
@@ -395,11 +411,15 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 # stale prices but are still scored.
                 fit_mask=frame["in_stock"].fillna(False).astype(bool),
             )
-            scores = m.deal_score(mlr.z_residual)
+            pct = price / mlr.fair_price - 1
+            uncertain = pct.abs() > UNCERTAIN_GAP
+            scores = m.deal_score(mlr.z_residual).where(~uncertain)
             insights.loc[frame.index, "fair_price"] = mlr.fair_price.round(0)
             insights.loc[frame.index, "residual"] = (price - mlr.fair_price).round(0)
-            insights.loc[frame.index, "pct_vs_fair"] = price / mlr.fair_price - 1
+            insights.loc[frame.index, "pct_vs_fair"] = pct
             insights.loc[frame.index, "deal_score"] = scores
+            insights.loc[frame.index, "fair_error_pct"] = mlr.error_pct()
+            insights.loc[frame.index, "fair_uncertain"] = uncertain
             report.market[(category.value, "fair_value_mlr")] = {
                 "target": "log(price)",
                 "coefficients": mlr.coefficient_table(),
@@ -410,6 +430,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "required": REQUIRED_FOR_FAIR_VALUE[category],
                 "unscored": int(mlr.fair_price.isna().sum()),
                 "extrapolated": mlr.extrapolated,
+                "uncertain": int(uncertain.sum()),
+                "uncertain_gap": UNCERTAIN_GAP,
+                "error_pct_median": float(mlr.error_pct().median()),
                 "fitted_on": "in-stock listings",
                 "diagnostics": mlr.diagnostics.summary() if mlr.diagnostics else None,
             }
@@ -515,6 +538,11 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         insights["recommendation_reason"] = [
             "กฎจาก Deal Score: " + reason if rec is not None else reason for rec, reason in recs
         ]
+    # Whatever produced the recommendation, a fair price this far off the
+    # market cannot back a buy / wait call.
+    flagged = insights["fair_uncertain"].astype(bool)
+    insights.loc[flagged, "recommendation"] = None
+    insights.loc[flagged, "recommendation_reason"] = UNCERTAIN_REASON
     return report
 
 
@@ -533,15 +561,16 @@ async def persist(conn: asyncpg.Connection, report: TrainReport) -> int:
             INSERT INTO listing_insights (
                 listing_id, computed_at, model_version, fair_price, residual, pct_vs_fair,
                 deal_score, demand_cluster, recommendation, recommendation_reason,
-                sales_per_day, views_per_day)
+                sales_per_day, views_per_day, fair_error_pct, fair_uncertain)
             SELECT u.listing_id, $1, $2, u.fair_price, u.residual, u.pct_vs_fair,
                    u.deal_score, u.demand_cluster, u.recommendation, u.reason,
-                   u.sales_per_day, u.views_per_day
+                   u.sales_per_day, u.views_per_day, u.fair_error_pct, u.fair_uncertain
             FROM unnest($3::bigint[], $4::numeric[], $5::numeric[], $6::float8[],
                         $7::smallint[], $8::text[], $9::text[], $10::text[],
-                        $11::float8[], $12::float8[])
+                        $11::float8[], $12::float8[], $13::float8[], $14::boolean[])
                  AS u (listing_id, fair_price, residual, pct_vs_fair, deal_score,
-                       demand_cluster, recommendation, reason, sales_per_day, views_per_day)
+                       demand_cluster, recommendation, reason, sales_per_day, views_per_day,
+                       fair_error_pct, fair_uncertain)
             """,
             now,
             MODEL_VERSION,
@@ -555,6 +584,8 @@ async def persist(conn: asyncpg.Connection, report: TrainReport) -> int:
             col("recommendation_reason"),
             col("sales_per_day"),
             col("views_per_day"),
+            col("fair_error_pct"),
+            [bool(v) for v in ins["fair_uncertain"]],
         )
         # linkage_quality belongs to `pricewatch link`, which runs before train.
         await conn.execute("DELETE FROM market_insights WHERE kind <> 'linkage_quality'")

@@ -93,6 +93,21 @@ export function BelowFairTag({ pct }: { pct: number | null }) {
   );
 }
 
+/**
+ * Fair price too far from the market to trust (|price / fair - 1| > 40%).
+ * Words plus an icon-free amber pill; the reason is printed next to it.
+ */
+export function UncertainTag() {
+  return (
+    <span
+      className="inline-flex items-center rounded-[6px] bg-warn-bg px-2 py-1 text-xs font-semibold text-warn"
+      title="ราคายุติธรรมต่างจากราคาจริงเกิน 40% จึงไม่ใช้จัดอันดับดีล"
+    >
+      ประเมินไม่แน่นอน
+    </span>
+  );
+}
+
 /** Sold-out marker: words plus a hollow dot, so the state never rests on dimming alone. */
 export function SoldOutTag({ label = "หมด" }: { label?: string }) {
   return (

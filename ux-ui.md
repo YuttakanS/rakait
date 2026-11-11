@@ -196,7 +196,7 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | **AutoSubmitSelect** | `auto-submit-select.tsx` (client) | Native `<select>` that submits its form on change; still works without JS via the button. Custom chevron, `sr-only` label. |
 | **Cluster toggle** | `app/page.tsx` | Pill `<Link>` with icon + label, `aria-pressed`; active = navy fill. Clicking the active one clears it; "ล้างตัวกรอง" appears when set. |
 | **ProductImage** | `product-image.tsx` (client) | Merchant image hot-linked at the variant `lib/images.ts` picks for its displayed size; `width`/`height` reserve the box; `priority` (first 4 cards, product hero) = eager + `fetchpriority="high"`, everything else lazy; `referrerPolicy="no-referrer"`; on load error, or no image, the category glyph on `--surface-muted`. Never proxied or stored. |
-| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ~~฿x~~" when below fair, else "สูงสุด ฿max" → BelowFairTag, then `VerdictBadges` (recommendation + the headline offer's cluster, conflict note under them) → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" with N = stores in stock (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out, where the price drops to a small "ราคาล่าสุด ฿x" and no badges show). The struck price is always labelled ราคายุติธรรม, never presented as a former price. |
+| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ฿x ± y%" (80% prediction interval, `formatBand`) whenever an in-stock fair price exists, else "สูงสุด ฿max" → BelowFairTag, then `VerdictBadges` (recommendation + the headline offer's cluster, conflict note under them) → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" with N = stores in stock (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out, where the price drops to a small "ราคาล่าสุด ฿x" and no badges show). The fair price is never struck through or presented as a former price, and never shown without its ± band. |
 | **DealTag / BelowFairTag** | `badges.tsx` | Card tags, 6 px radius. DEAL ≥ 70 solid green, ≤ 30 solid red, else white with border; "▼ ถูกกว่าราคายุติธรรม x%" on `good-bg`. |
 | **DealScore** | `badges.tsx` | Pill `Deal {n}`; ≥ 70 good, ≤ 30 bad, else neutral; `prominent` variant for card corners. |
 | **RecommendationBadge** | `badges.tsx` | Icon + word; buy_now good, wait warn, fair neutral. The reason text is a `title` tooltip in rows and a sentence in the product hero. |
@@ -313,6 +313,11 @@ export default async function Page() {
   ช้างเผือก keeps รอก่อน. The withheld badge is named in a visible sentence
   under the badges (full row width in OfferRow), never a hover-only tooltip.
   A card's cluster is the headline offer's own, never another store's.
+- Fair-price uncertainty (`fair_uncertain`, migration 0012): a listing priced
+  more than 40% away from its fair price shows the amber "ประเมินไม่แน่นอน"
+  tag instead of DEAL / "▼ ถูกกว่า", a DealMeter without a bar, no
+  recommendation, and is never ranked as a deal (its Deal Score is null).
+  Every fair price carries "± y%", the half-width of its 80% interval.
 - No fair price is estimated when a listing's title lacks a core spec (VRAM and
   chip; cores and threads; capacity and speed; capacity and interface). Such a
   listing shows `–` for Deal Score, no recommendation, and the reason

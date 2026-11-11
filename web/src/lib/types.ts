@@ -21,8 +21,14 @@ export interface ProductSummary {
   cheapestRecommendation: Recommendation | null;
   /** Demand cluster of that same headline offer (not another store's). */
   cheapestCluster: DemandCluster | null;
-  /** Most negative price-vs-fair delta among offers (e.g. -0.12 = 12% below). */
+  /** Price-vs-fair delta of the headline offer (e.g. -0.12 = 12% below). */
   bestPctVsFair: number | null;
+  /** Fair price of the headline offer (one value per model). */
+  fairPrice: number | null;
+  /** Half-width of the fair price's 80% interval, as a fraction ("± Y%"). */
+  fairErrorPct: number | null;
+  /** Price over 40% away from fair: shown for reference, never ranked. */
+  fairUncertain: boolean;
   imageUrl: string | null;
 }
 
@@ -42,6 +48,8 @@ export interface Offer {
   fairPrice: number | null;
   pctVsFair: number | null;
   dealScore: number | null;
+  fairErrorPct: number | null;
+  fairUncertain: boolean;
   recommendation: Recommendation | null;
   recommendationReason: string | null;
   demandCluster: DemandCluster | null;

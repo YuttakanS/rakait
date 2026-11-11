@@ -1,4 +1,4 @@
-import { formatTHB } from "@/lib/format";
+import { formatBand, formatTHB } from "@/lib/format";
 
 const RANGE = 0.4; // ±40% fills half the track; beyond that the bar is clamped.
 
@@ -7,9 +7,32 @@ const RANGE = 0.4; // ±40% fills half the track; beyond that the bar is clamped
  * price, green to the left when cheaper, red to the right when pricier. The
  * percentage is always printed, so the colour is never the only signal.
  */
-export function DealMeter({ price, fair, pct }: { price: number; fair: number | null; pct: number | null }) {
+export function DealMeter({
+  price,
+  fair,
+  pct,
+  errorPct = null,
+  uncertain = false,
+}: {
+  price: number;
+  fair: number | null;
+  pct: number | null;
+  errorPct?: number | null;
+  uncertain?: boolean;
+}) {
   if (fair === null || pct === null) {
     return <span className="text-xs text-muted">ยังไม่มีราคายุติธรรม</span>;
+  }
+  if (uncertain) {
+    // No bar: a green arm would read as a deal the model cannot back.
+    return (
+      <div className="w-full min-w-[140px] space-y-0.5 text-xs">
+        <span className="font-semibold text-warn">ประเมินไม่แน่นอน</span>
+        <p className="tabular text-muted">
+          ยุติธรรม {formatTHB(fair)} {formatBand(errorPct)} · ต่างจากราคาจริงเกิน 40%
+        </p>
+      </div>
+    );
   }
   const clamped = Math.max(-RANGE, Math.min(RANGE, pct));
   const half = (Math.abs(clamped) / RANGE) * 50;
@@ -22,7 +45,9 @@ export function DealMeter({ price, fair, pct }: { price: number; fair: number | 
     <div className="w-full min-w-[140px] space-y-1">
       <div className="flex items-baseline justify-between gap-2 text-xs">
         <span className={`font-semibold ${below ? "text-good" : "text-muted"}`}>{label}</span>
-        <span className="tabular text-muted">ยุติธรรม {formatTHB(fair)}</span>
+        <span className="tabular text-muted">
+          ยุติธรรม {formatTHB(fair)} {formatBand(errorPct)}
+        </span>
       </div>
       <div
         className="relative h-2 w-full rounded-full bg-neutral-bg"

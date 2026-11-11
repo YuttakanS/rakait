@@ -266,7 +266,8 @@ def test_extrapolated_rows_are_not_scored() -> None:
     assert fit.leverage is not None and (fit.leverage.iloc[1:] <= m.MAX_LEVERAGE).all()
 
 
-def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
+def _gpu_catalogue(seed: int) -> pd.DataFrame:
+    """Synthetic in-stock GPU listings priced from their specs (±10% noise)."""
     rng = np.random.default_rng(seed)  # own stream: independent of test order
     # Twelve products (six chips, three per vendor, x two VRAM sizes), so
     # every product shares each spec value with others: product-grouped CV
@@ -289,7 +290,7 @@ def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
     base = np.array([11000, 15000, 20000, 12000, 21000, 26000])[chip_idx] * np.where(
         big == 1, 1.15, 1.0
     )
-    current = pd.DataFrame(
+    return pd.DataFrame(
         {
             "listing_id": np.arange(n),
             "category": "gpu",
@@ -306,6 +307,10 @@ def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
             "age_days": 30,
         }
     )
+
+
+def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
+    current = _gpu_catalogue(seed)
 
     report = run_models(current, pd.DataFrame(), figures=None)
 
@@ -531,3 +536,49 @@ def test_gpu_mlr_leaves_out_vendor_incomparable_specs() -> None:
     assert specs["is_amd"].tolist() == [1.0, 0.0, 0.0]
     assert {"shader_cores", "boost_clock_mhz"} <= set(NOT_IN_MLR[Category.GPU])
     assert "is_amd" not in NOT_IN_MLR[Category.GPU]
+
+
+def test_fair_price_far_from_market_is_flagged_and_never_ranked() -> None:
+    from pricewatch.ml.train import UNCERTAIN_GAP, UNCERTAIN_REASON
+
+    current = _gpu_catalogue(7)
+    # Every store sells one product at ~35% of its spec-implied price: a gap
+    # no 15-25% MAPE fit can vouch for (the live top-60 "deals" were this).
+    odd = current["canonical_id"] == 3
+    current.loc[odd, "price"] *= 0.35
+
+    ins = run_models(current, pd.DataFrame(), figures=None).insights
+
+    flagged = ins["fair_uncertain"].astype(bool)
+    assert flagged[odd].all()
+    assert (ins.loc[flagged, "pct_vs_fair"].abs() > UNCERTAIN_GAP).all()
+    assert ins.loc[flagged, "fair_price"].notna().all()  # kept for reference
+    assert ins.loc[flagged, "deal_score"].isna().all()  # so never ranked
+    assert ins.loc[flagged, "recommendation"].isna().all()
+    assert (ins.loc[flagged, "recommendation_reason"] == UNCERTAIN_REASON).all()
+    # Everything else keeps a score and an honest error band.
+    rest = ins["fair_price"].notna() & ~flagged
+    assert rest.any() and ins.loc[rest, "deal_score"].notna().all()
+    band = ins.loc[ins["fair_price"].notna(), "fair_error_pct"]
+    assert band.between(0.01, 1.0).all()
+
+
+def test_error_band_widens_with_leverage() -> None:
+    fit = m.FairValueModel(
+        features=[],
+        coefficients=[],
+        intercept=0.0,
+        r2_cv=0.9,
+        mape_cv=0.1,
+        n=10,
+        fair_price=pd.Series([100.0, 100.0, np.nan]),
+        z_residual=pd.Series([0.0, 0.0, np.nan]),
+        leverage=pd.Series([0.0, 0.8, np.nan]),
+        sigma=0.2,
+    )
+
+    band = fit.error_pct()
+
+    assert band.iloc[0] == pytest.approx(np.sinh(m.Z_80 * 0.2))  # ~ ±26%
+    assert band.iloc[1] > band.iloc[0]
+    assert np.isnan(band.iloc[2])

@@ -124,7 +124,13 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
       {o.inStock ? (
         <>
           <div className="tabular text-2xl font-bold tracking-tight md:text-right">{formatTHB(o.price)}</div>
-          <DealMeter price={o.price} fair={o.fairPrice} pct={o.pctVsFair} />
+          <DealMeter
+            price={o.price}
+            fair={o.fairPrice}
+            pct={o.pctVsFair}
+            errorPct={o.fairErrorPct}
+            uncertain={o.fairUncertain}
+          />
           <div className="flex flex-col items-start gap-1.5 md:items-end" title={o.recommendationReason ?? undefined}>
             <DealScore score={o.dealScore} />
             <VerdictBadges verdict={verdict} align="end" showNote={false} />
@@ -206,7 +212,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               </div>
 
               <div className="max-w-md">
-                <DealMeter price={cheapest.price} fair={cheapest.fairPrice} pct={cheapest.pctVsFair} />
+                <DealMeter
+                  price={cheapest.price}
+                  fair={cheapest.fairPrice}
+                  pct={cheapest.pctVsFair}
+                  errorPct={cheapest.fairErrorPct}
+                  uncertain={cheapest.fairUncertain}
+                />
               </div>
               <VerdictBadges verdict={verdictOf(cheapest)} className="max-w-xl" />
               {cheapest.recommendationReason && (

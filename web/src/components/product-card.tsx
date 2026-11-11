@@ -1,18 +1,14 @@
 import Link from "next/link";
-import { BelowFairTag, DealTag, VerdictBadges } from "@/components/badges";
+import { BelowFairTag, DealTag, UncertainTag, VerdictBadges } from "@/components/badges";
 import { UiIcon } from "@/components/icons";
 import { ProductImage } from "@/components/product-image";
-import { CATEGORY_LABELS, formatTHB } from "@/lib/format";
+import { CATEGORY_LABELS, formatBand, formatTHB } from "@/lib/format";
 import type { ProductSummary } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
 
-/**
- * Fair price implied by the cheapest offer's delta: price = fair × (1 + pct).
- * Only meaningful when that offer is in stock and below fair.
- */
-export function impliedFair(p: ProductSummary): number | null {
-  if (p.inStockOffers === 0 || p.bestPctVsFair === null || p.bestPctVsFair > -0.005) return null;
-  return p.minPrice / (1 + p.bestPctVsFair);
+/** Fair price worth printing: the headline offer's, while it is in stock. */
+export function shownFair(p: ProductSummary): number | null {
+  return p.inStockOffers > 0 ? p.fairPrice : null;
 }
 
 /**
@@ -21,7 +17,7 @@ export function impliedFair(p: ProductSummary): number | null {
  */
 export function ProductCard({ p, priority = false }: { p: ProductSummary; priority?: boolean }) {
   const inStock = p.inStockOffers > 0;
-  const fair = impliedFair(p);
+  const fair = shownFair(p);
   const verdict = resolveVerdict({ inStock, recommendation: p.cheapestRecommendation, cluster: p.cheapestCluster });
   return (
     <Link
@@ -66,8 +62,10 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
           )}
           <p className="mt-1.5 min-h-5 text-xs text-muted">
             {fair !== null ? (
+              // Always with its error band: a 25% "deal" inside a ±30% band
+              // is not evidence of one.
               <>
-                ราคายุติธรรม <s className="text-subtle">{formatTHB(fair)}</s>
+                ราคายุติธรรม {formatTHB(fair)} <span className="whitespace-nowrap">{formatBand(p.fairErrorPct)}</span>
               </>
             ) : inStock && p.maxPrice > p.minPrice ? (
               <>สูงสุด {formatTHB(p.maxPrice)}</>
@@ -79,7 +77,7 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
 
         {inStock && (
           <div className="space-y-1.5">
-            <BelowFairTag pct={p.bestPctVsFair} />
+            {p.fairUncertain ? <UncertainTag /> : <BelowFairTag pct={p.bestPctVsFair} />}
             <VerdictBadges verdict={verdict} />
           </div>
         )}

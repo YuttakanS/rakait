@@ -208,6 +208,7 @@ class FairValueModel:
             that predicted it (NaN for unscored rows).
         extrapolated: Rows left unscored because ``h`` exceeded
             :data:`MAX_LEVERAGE`.
+        sigma: Out-of-fold residual standard deviation ``s`` on log(price).
     """
 
     features: list[str]
@@ -221,6 +222,21 @@ class FairValueModel:
     leverage: pd.Series | None = None
     extrapolated: int = 0
     diagnostics: RegressionDiagnostics | None = None
+    sigma: float = math.nan
+
+    def error_pct(self) -> pd.Series:
+        """Half-width of each row's 80% prediction interval, as a fraction.
+
+        The interval is ``fair * exp(±z * s * sqrt(1 + h))`` on the log scale;
+        ``sinh`` of the half-width is its symmetric "± Y%" reading (the true
+        interval is slightly wider above than below). Rows far from the data
+        the fold saw (high ``h``) get a wider band. O(n), vectorised.
+        """
+        if self.leverage is None:
+            return pd.Series(np.nan, index=self.fair_price.index)
+        se = self.sigma * np.sqrt(1 + self.leverage)
+        band = pd.Series(np.sinh(Z_80 * se), index=self.leverage.index)
+        return band.where(self.fair_price.notna())
 
     def coefficient_table(self) -> list[dict[str, float | str]]:
         """Coefficients with their % effect per standard deviation."""
@@ -268,6 +284,11 @@ def _design_matrix(features: pd.DataFrame, required: list[str]) -> pd.DataFrame:
 #: on (a GT 1030 4GB priced from RTX-era cards). Its "deal" would be the
 #: extrapolation error, so it gets no fair price rather than a guessed one.
 MAX_LEVERAGE = 1.0
+
+#: Standard-normal quantile of a two-sided 80% interval (the "± Y%" shown
+#: beside a fair price): wide enough to be honest about a 15-25% MAPE fit,
+#: narrow enough to tell a real gap from noise.
+Z_80 = 1.2816
 
 
 def _oof_predict(
@@ -415,6 +436,7 @@ def fit_fair_value(
         leverage=pd.Series(lev, index=design.index).reindex(features.index),
         extrapolated=int((lev > MAX_LEVERAGE).sum()),  # NaN compares False
         diagnostics=regression_diagnostics(x[fit_rows], y[fit_rows], model, columns),
+        sigma=sigma,
     )
 
 

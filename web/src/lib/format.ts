@@ -12,6 +12,11 @@ export function formatPct(value: number | null | undefined, digits = 0): string 
   return `${value > 0 ? "+" : ""}${pct}%`;
 }
 
+/** "± 25%" for a fair price's error band; empty when unknown. */
+export function formatBand(errorPct: number | null | undefined): string {
+  return errorPct === null || errorPct === undefined ? "" : `± ${Math.round(errorPct * 100)}%`;
+}
+
 export function formatDateTime(iso: string | null): string {
   if (!iso) return "–";
   return new Date(iso).toLocaleString("th-TH", {
