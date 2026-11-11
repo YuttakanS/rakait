@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 from pydantic import ValidationError
 
 from pricewatch.models import Category, ScrapedListing
-from pricewatch.scrapers.base import StoreScraper
+from pricewatch.scrapers.base import StoreScraper, absolute_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,9 @@ def _parse_item(
             price=_parse_price(item.get("price_sale")),
             in_stock=stock is not None and stock > 0,
             stock_quantity=stock,
+            image_url=absolute_image_url(  # type: ignore[arg-type]
+                str(item.get("image") or ""), BASE_URL
+            ),
             scraped_at=scraped_at,
         )
     except ValidationError as exc:

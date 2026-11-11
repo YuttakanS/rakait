@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from pricewatch.models import Category, ScrapedListing
-from pricewatch.scrapers.base import StoreScraper
+from pricewatch.scrapers.base import StoreScraper, absolute_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ def _parse_card(
     top = card.css_first(".product-item-top")
     spec_node = card.css_first(".product-short-attribute")
     price_node = card.css_first(".product-price .price")
+    image_node = card.css_first("img.image")  # badges use img.product-label-*
     try:
         return ScrapedListing(
             merchant=BananaScraper.merchant,
@@ -126,6 +127,9 @@ def _parse_card(
             price=_parse_price(price_node.text()) if price_node is not None else None,
             # Sold-out cards carry `-is-inactive` and a "สินค้าหมด" badge.
             in_stock="-is-inactive" not in ((top.attributes.get("class") or "") if top else ""),
+            image_url=absolute_image_url(  # type: ignore[arg-type]
+                image_node.attributes.get("src") if image_node is not None else None, BASE_URL
+            ),
             scraped_at=scraped_at,
         )
     except ValidationError as exc:

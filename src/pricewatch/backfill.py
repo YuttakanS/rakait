@@ -161,7 +161,9 @@ async def backfill_jib(
                     logger.info(
                         "archive: %s %s -> %d cards", snapshot.timestamp, snapshot.url, len(page)
                     )
-                    listings.extend(page)
+                    # Archived image paths point into the Wayback Machine, not
+                    # the merchant; images come from live scrapes only.
+                    listings.extend(item.model_copy(update={"image_url": None}) for item in page)
     finally:
         if own_fetcher:
             await client.aclose()

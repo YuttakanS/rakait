@@ -96,6 +96,7 @@ def test_in_stock_cpu_page() -> None:
     assert item.price == Decimal("17990")
     assert item.in_stock is True
     assert str(item.url) == CPU_URL
+    assert str(item.image_url).endswith("/product/9800x3d.jpg")
 
 
 def test_page_without_product_markup_raises() -> None:

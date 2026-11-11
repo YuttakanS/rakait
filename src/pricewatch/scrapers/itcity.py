@@ -33,7 +33,7 @@ from pydantic import ValidationError
 from selectolax.lexbor import LexborHTMLParser
 
 from pricewatch.models import Category, ScrapedListing
-from pricewatch.scrapers.base import StoreScraper
+from pricewatch.scrapers.base import StoreScraper, absolute_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,7 @@ def parse_product_page(html: str, url: str, scraped_at: datetime) -> ScrapedList
         return None
 
     price_node = tree.css_first("span.text-heading-1.color-dark-gray")
+    image_node = tree.css_first('meta[property="og:image"]')
     # The badge is rendered twice (image overlay and buy box) and only when
     # sold out; neither the page chrome nor the hydration state contains it.
     sold_out = _SOLD_OUT in html
@@ -169,6 +170,10 @@ def parse_product_page(html: str, url: str, scraped_at: datetime) -> ScrapedList
             url=f"{BASE_URL}{path}",  # type: ignore[arg-type]
             price=_parse_price(price_node.text()) if price_node is not None else None,
             in_stock=not sold_out,
+            image_url=absolute_image_url(  # type: ignore[arg-type]
+                image_node.attributes.get("content") if image_node is not None else None,
+                BASE_URL,
+            ),
             scraped_at=scraped_at,
         )
     except ValidationError as exc:

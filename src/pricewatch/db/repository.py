@@ -21,6 +21,7 @@ _STAGE_COLUMNS: tuple[str, ...] = (
     "sold_count",
     "in_stock",
     "stock_quantity",
+    "image_url",
     "scraped_at",
 )
 
@@ -37,6 +38,7 @@ CREATE TEMP TABLE listing_stage (
     sold_count    BIGINT,
     in_stock      BOOLEAN NOT NULL,
     stock_quantity INTEGER,
+    image_url     TEXT,
     scraped_at    TIMESTAMPTZ NOT NULL
 ) ON COMMIT DROP
 """
@@ -47,11 +49,11 @@ CREATE TEMP TABLE listing_stage (
 _UPSERT_LISTINGS = """
 INSERT INTO merchant_listings AS l (
     merchant_id, merchant_sku, category, title, url, spec_text,
-    current_price, view_count, sold_count, in_stock, stock_quantity,
+    current_price, view_count, sold_count, in_stock, stock_quantity, image_url,
     first_seen_at, last_scraped_at
 )
 SELECT m.id, s.merchant_sku, s.category, s.title, s.url, s.spec_text,
-       s.price, s.view_count, s.sold_count, s.in_stock, s.stock_quantity,
+       s.price, s.view_count, s.sold_count, s.in_stock, s.stock_quantity, s.image_url,
        s.scraped_at, s.scraped_at
 FROM listing_stage AS s
 JOIN merchants AS m ON m.slug = s.merchant
@@ -75,6 +77,11 @@ ON CONFLICT (merchant_id, merchant_sku) DO UPDATE SET
                            THEN EXCLUDED.in_stock ELSE l.in_stock END,
     stock_quantity  = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
                            THEN EXCLUDED.stock_quantity ELSE l.stock_quantity END,
+    -- A newer observation without an image (archive backfill, card without a
+    -- thumbnail) keeps the last known one.
+    image_url       = CASE WHEN l.last_scraped_at <= EXCLUDED.last_scraped_at
+                           THEN COALESCE(EXCLUDED.image_url, l.image_url)
+                           ELSE COALESCE(l.image_url, EXCLUDED.image_url) END,
     last_scraped_at = GREATEST(l.last_scraped_at, EXCLUDED.last_scraped_at)
 """
 
@@ -140,6 +147,7 @@ async def save_listings(conn: asyncpg.Connection, listings: Sequence[ScrapedList
             item.sold_count,
             item.in_stock,
             item.stock_quantity,
+            str(item.image_url) if item.image_url is not None else None,
             item.scraped_at,
         )
         for item in latest.values()

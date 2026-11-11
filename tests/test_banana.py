@@ -91,3 +91,9 @@ async def test_ram_filter_and_pagination_count_filtered_items() -> None:
     # The filtered notebook module still counts toward the site's total, so
     # the crawl stops after page 2 instead of requesting an empty page 3.
     assert requested == [BASE, f"{BASE}?page=2"]
+
+
+def test_product_image_not_promo_badge(listing_html: str) -> None:
+    listings, _ = parse_category_page(listing_html, Category.GPU, NOW)
+    assert str(listings[1].image_url) == "https://media-cdn.bnn.in.th/1/asus-rtx5050-thumbnail.jpg"
+    assert listings[0].image_url is None

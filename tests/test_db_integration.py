@@ -335,3 +335,31 @@ async def test_train_persists_insights(conn, tmp_path) -> None:
     assert "linkage_quality" in kinds  # written by link, kept by train
     assert report.market[("gpu", "simple_regression")]["slope_thb_per_unit"] > 0
     assert (tmp_path / "gpu_simple_regression.png").exists()
+
+
+async def test_image_url_survives_observations_without_one(conn) -> None:
+    await apply_migrations(conn)
+
+    def obs(at: datetime, image: str | None) -> ScrapedListing:
+        return ScrapedListing(
+            merchant="jib",
+            merchant_sku="img1",
+            category=Category.GPU,
+            title="VGA ASUS DUAL RTX 5060 8GB",
+            url="https://www.jib.co.th/p/1",
+            price=Decimal("10000"),
+            in_stock=True,
+            image_url=image,
+            scraped_at=at,
+        )
+
+    await save_listings(conn, [obs(T0, "https://www.jib.co.th/img/a.jpg")])
+    await save_listings(conn, [obs(T0 + timedelta(hours=3), None)])  # newer, no image
+    await save_listings(conn, [obs(T0 - timedelta(days=30), None)])  # archive backfill
+    assert await conn.fetchval("SELECT image_url FROM merchant_listings") == (
+        "https://www.jib.co.th/img/a.jpg"
+    )
+    await save_listings(conn, [obs(T0 + timedelta(hours=6), "https://www.jib.co.th/img/b.jpg")])
+    assert await conn.fetchval("SELECT image_url FROM merchant_listings") == (
+        "https://www.jib.co.th/img/b.jpg"
+    )

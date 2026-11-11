@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from pricewatch.models import Category, ScrapedListing
-from pricewatch.scrapers.base import StoreScraper
+from pricewatch.scrapers.base import StoreScraper, absolute_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,7 @@ def _parse_card(
     box_node = card.css_first("div.boxprice")
     desc_node = card.css_first("div.description")
     buy_node = card.css_first("div.buy_promo")
+    image_node = card.css_first("img.imgpspecial")
     box_text = box_node.text() if box_node is not None else ""
 
     try:
@@ -116,6 +117,10 @@ def _parse_card(
             # use `ct_add` with the label "สินค้าหมดชั่วคราว".
             in_stock=buy_node is not None
             and "cart_modal" in (buy_node.attributes.get("class") or ""),
+            image_url=absolute_image_url(  # type: ignore[arg-type]
+                image_node.attributes.get("src") if image_node is not None else None,
+                "https://www.jib.co.th",
+            ),
             scraped_at=scraped_at,
         )
     except ValidationError as exc:

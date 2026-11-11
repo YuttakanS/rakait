@@ -153,3 +153,11 @@ async def test_scraper_crawls_every_path_of_a_category() -> None:
     assert requested == [f"{root}/3/1028", f"{root}/3/1471"]
     assert [item.merchant_sku for item in listings] == ["1", "2", "3"]
     assert {item.category for item in listings} == {Category.SSD}
+
+
+def test_image_url_is_absolute_and_empty_src_is_none(listing_html: str) -> None:
+    listings, _ = parse_listing_page(listing_html, Category.GPU, NOW)
+    assert str(listings[0].image_url) == (
+        "https://www.jib.co.th/img_master/product/medium/2025051914552976790_1.jpg?v=1"
+    )
+    assert listings[1].image_url is None  # lazy-load placeholder src=""

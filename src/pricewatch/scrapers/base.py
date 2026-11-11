@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import ClassVar
+from urllib.parse import urljoin
 
 from pricewatch.models import Category, ScrapedListing
 from pricewatch.scrapers.fetcher import PoliteFetcher
@@ -43,3 +44,22 @@ class StoreScraper(ABC):
         Returns:
             All listings found, de-duplicated by merchant SKU.
         """
+
+
+def absolute_image_url(src: str | None, base: str) -> str | None:
+    """Resolve a card's image ``src`` against the merchant origin.
+
+    Empty sources (lazy-load placeholders) and non-HTTP schemes (``data:``
+    URIs) mean no usable image.
+
+    Args:
+        src: The ``src`` attribute or JSON field as served.
+        base: The merchant origin, e.g. ``"https://www.jib.co.th"``.
+
+    Returns:
+        An absolute http(s) URL, or ``None``.
+    """
+    if not src or not src.strip():
+        return None
+    url = urljoin(base + "/", src.strip())
+    return url if url.startswith(("http://", "https://")) else None

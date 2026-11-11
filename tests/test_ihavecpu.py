@@ -44,6 +44,8 @@ def test_item_fields(storage_html: str) -> None:
     assert item.in_stock is True
     assert item.view_count is None and item.sold_count is None
     assert str(item.url).startswith("https://ihavecpu.com/product/43262/")
+    assert str(item.image_url).endswith("/img/product/p1_150.jpg")
+    assert listings[1].image_url is None  # "image": ""
     assert item.scraped_at == NOW
 
 
