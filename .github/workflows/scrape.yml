@@ -15,7 +15,11 @@ concurrency:
 
 jobs:
   scrape:
-    runs-on: ubuntu-latest
+    # IHAVECPU and BaNANA return HTTP 403 to GitHub-hosted (datacenter) IPs,
+    # so this job runs on a self-hosted Windows runner on a residential line;
+    # install it with scripts/setup-runner.ps1. While that machine is off,
+    # runs queue and start when it comes back (GitHub drops them after 24 h).
+    runs-on: [self-hosted, Windows, pricewatch]
     timeout-minutes: 45
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -12,7 +12,7 @@ full specification.
 | Scraping framework (rate limit, backoff, failure isolation) | done |
 | Store scrapers | JIB, IHAVECPU, BaNANA, IT City (GPU, CPU, RAM, SSD) |
 | JIB history backfill from the Wayback Machine | done (`pricewatch backfill`) |
-| Scheduled scraping (GitHub Actions, every 3 h) + `scrape_runs` log | live on Supabase since 2026-11-11 |
+| Scheduled scraping (GitHub Actions on a self-hosted runner, every 3 h) + `scrape_runs` log | live on Supabase since 2026-11-11 |
 | Data-quality warnings (empty runs, missing prices, count drops) | done (`pricewatch.quality`) |
 | Record linkage: rules + calibrated TF-IDF similarity fallback | done (`pricewatch link`, `pricewatch.similarity`) |
 | ML pipeline (SLR, MLR fair value, trees, K-Means) | done (`pricewatch train`, figures in `reports/figures/`) |
@@ -50,6 +50,23 @@ Each run is checked before it is saved: a category that returns no listings,
 mostly unpriced listings, or fewer than half its recent median count gets a
 `scrape_runs.warning` and the command exits non-zero, so a merchant redesign
 that breaks selectors without raising an error still fails the scheduled job.
+
+### Scheduled runs on a self-hosted runner
+
+`.github/workflows/scrape.yml` runs `migrate → scrape → link → train` every
+3 hours. IHAVECPU and BaNANA answer HTTP 403 to GitHub-hosted runners
+(datacenter IPs), so the job targets a self-hosted Windows runner labelled
+`pricewatch`. Install it once from an elevated PowerShell (needs `gh auth login`
+with admin rights on the repository):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-runner.ps1
+gh workflow run scrape.yml   # first run, to check
+```
+
+The script verifies the runner's SHA-256 against the release notes and installs
+it as a Windows service. The job needs the `DATABASE_URL` repository secret.
+Runs queue while the machine is off or asleep and start when it is back.
 
 ## Development
 
