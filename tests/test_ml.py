@@ -401,3 +401,16 @@ def test_fair_value_model_carries_diagnostics() -> None:
     summary = fit.diagnostics.summary()
     assert set(summary["vif"]) == set(fit.features)
     assert summary["n"] == n
+
+
+def test_constant_required_feature_still_scores() -> None:
+    # One GPU generation only: "generation" is complete but constant.
+    n = 60
+    vram = RNG.choice([8.0, 12.0, 16.0], size=n)
+    features = pd.DataFrame({"log2_vram": np.log2(vram), "generation": 5.0})
+    price = pd.Series(np.exp(8 + 0.8 * np.log2(vram) + RNG.normal(0, 0.05, n)))
+
+    fit = m.fit_fair_value(features, price, required=["log2_vram", "generation"])
+
+    assert fit.fair_price.notna().all()
+    assert "generation" not in fit.features

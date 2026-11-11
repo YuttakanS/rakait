@@ -295,7 +295,10 @@ def fit_fair_value(
     if not usable:
         raise ValueError("no usable features for the fair-value model")
     required = required or []
-    unusable = [c for c in required if c not in usable]
+    # A required feature must be populated enough to score on; a constant one
+    # (every listing the same GPU generation) is fine: it carries no price
+    # information, so it gates scoring but drops out of the design matrix.
+    unusable = [c for c in required if c not in features or features[c].notna().mean() < 0.3]
     if unusable:
         raise ValueError(f"required features unusable: {unusable}")
     complete = features[required].notna().all(axis=1)  # all True when none required
