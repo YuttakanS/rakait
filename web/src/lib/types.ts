@@ -9,14 +9,18 @@ export interface ProductSummary {
   manufacturer: string;
   model: string;
   offers: number;
+  /** Stores listing the model, sold out or not. */
   stores: number;
+  /** Stores with the model in stock: the "ดูราคา N ร้าน" count. */
+  inStockStores: number;
   /** Offers currently in stock; 0 means the prices shown are last-known. */
   inStockOffers: number;
   minPrice: number;
   maxPrice: number;
   bestDeal: number | null;
   cheapestRecommendation: Recommendation | null;
-  clusters: DemandCluster[];
+  /** Demand cluster of that same headline offer (not another store's). */
+  cheapestCluster: DemandCluster | null;
   /** Most negative price-vs-fair delta among offers (e.g. -0.12 = 12% below). */
   bestPctVsFair: number | null;
   imageUrl: string | null;

@@ -36,8 +36,8 @@ export interface ProductFilter {
  * grouped query (one round trip; the planner uses the canonical index).
  *
  * The card describes one offer: the cheapest in-stock one (price, Deal
- * Score, fair-price delta and recommendation all from it, so they never
- * contradict each other). A sold-out listing keeps its last price, often
+ * Score, fair-price delta, recommendation and demand cluster all from it, so
+ * they never contradict each other). A sold-out listing keeps its last price, often
  * months stale (a sold-out RTX 5060 Ti 16GB still read ฿16,490 against
  * ฿27,000+ in stock), so it only headlines a model sold out everywhere.
  */
@@ -50,12 +50,13 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
     filter.sort === "price"
       ? sql`${buyable}, min_price ASC`
       : filter.sort === "stores"
-        ? sql`${buyable}, stores DESC, best_deal DESC NULLS LAST`
-        : sql`${buyable}, best_deal DESC NULLS LAST, stores DESC`;
+        ? sql`${buyable}, in_stock_stores DESC, best_deal DESC NULLS LAST`
+        : sql`${buyable}, best_deal DESC NULLS LAST, in_stock_stores DESC`;
   const rows = await sql`
     SELECT c.id, c.category, c.manufacturer, c.model,
            count(*)::int AS offers,
            count(DISTINCT l.merchant_id)::int AS stores,
+           count(DISTINCT l.merchant_id) FILTER (WHERE l.in_stock)::int AS in_stock_stores,
            count(*) FILTER (WHERE l.in_stock)::int AS in_stock_offers,
            coalesce(min(l.current_price) FILTER (WHERE l.in_stock), min(l.current_price))::float8
                AS min_price,
@@ -63,8 +64,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
                AS max_price,
            (array_agg(i.deal_score ORDER BY l.in_stock DESC, l.current_price))[1]::int AS best_deal,
            (array_agg(i.recommendation ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_rec,
-           coalesce(array_agg(DISTINCT i.demand_cluster)
-                    FILTER (WHERE i.demand_cluster IS NOT NULL), '{}') AS clusters,
+           (array_agg(i.demand_cluster ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_cluster,
            (array_agg(i.pct_vs_fair ORDER BY l.in_stock DESC, l.current_price))[1] AS best_pct,
            (array_agg(${IMAGE} ORDER BY l.in_stock DESC, l.current_price)
                 FILTER (WHERE ${IMAGE} IS NOT NULL))[1] AS image_url
@@ -86,12 +86,13 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
     model: r.model as string,
     offers: r.offers as number,
     stores: r.stores as number,
+    inStockStores: r.in_stock_stores as number,
     inStockOffers: r.in_stock_offers as number,
     minPrice: r.min_price as number,
     maxPrice: r.max_price as number,
     bestDeal: (r.best_deal as number | null) ?? null,
     cheapestRecommendation: (r.cheapest_rec as Recommendation | null) ?? null,
-    clusters: r.clusters as DemandCluster[],
+    cheapestCluster: (r.cheapest_cluster as DemandCluster | null) ?? null,
     bestPctVsFair: (r.best_pct as number | null) ?? null,
     imageUrl: (r.image_url as string | null) ?? null,
   }));

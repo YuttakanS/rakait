@@ -1,6 +1,7 @@
 import { Glyph } from "@/components/icons";
 import { CLUSTER_LABELS, RECOMMENDATION_LABELS } from "@/lib/format";
 import type { DemandCluster, Recommendation } from "@/lib/types";
+import type { Verdict } from "@/lib/verdict";
 
 const pill = "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap";
 
@@ -89,5 +90,53 @@ export function BelowFairTag({ pct }: { pct: number | null }) {
     <span className="tabular inline-flex items-center gap-1 rounded-[6px] bg-good-bg px-2 py-1 text-xs font-semibold text-good">
       ▼ ถูกกว่าราคายุติธรรม {Math.round(-pct * 100)}%
     </span>
+  );
+}
+
+/** Sold-out marker: words plus a hollow dot, so the state never rests on dimming alone. */
+export function SoldOutTag({ label = "หมด" }: { label?: string }) {
+  return (
+    <span className={`${pill} border border-border bg-surface-muted font-semibold text-muted`}>
+      <span aria-hidden>○</span>
+      {label}
+    </span>
+  );
+}
+
+/**
+ * One offer's status badges after `resolveVerdict`: "หมด" when sold out,
+ * otherwise the recommendation and the demand cluster that survived the
+ * conflict rules, with the reason for any withheld badge printed underneath
+ * (visible text, not a hover-only tooltip).
+ */
+export function VerdictBadges({
+  verdict,
+  className = "",
+  align = "start",
+  showNote = true,
+}: {
+  verdict: Verdict;
+  className?: string;
+  align?: "start" | "end";
+  /** False when the caller prints `verdict.note` itself (a narrow column). */
+  showNote?: boolean;
+}) {
+  if (!verdict.inStock) {
+    return (
+      <div className={className}>
+        <SoldOutTag />
+      </div>
+    );
+  }
+  if (!verdict.recommendation && !verdict.cluster) return null;
+  const end = align === "end";
+  return (
+    <div className={`space-y-1 ${end ? "md:text-right" : ""} ${className}`}>
+      <div className={`flex flex-wrap gap-1.5 ${end ? "md:justify-end" : ""}`}>
+        <RecommendationBadge value={verdict.recommendation} />
+        {verdict.cluster && <ClusterBadge value={verdict.cluster} />}
+      </div>
+      {showNote && verdict.note && <p className="text-xs leading-snug text-muted">{verdict.note}</p>}
+    </div>
   );
 }

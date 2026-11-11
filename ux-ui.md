@@ -64,7 +64,7 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | `community_favorite` | ขวัญใจชุมชน | star | คนดูเยอะและซื้อจริง |
 | `overpriced_hype` | กระแสแรง ขายไม่ออก | flame | คนดูเยอะ แต่ยอดขายต่ำ |
 | `niche` | เฉพาะกลุ่ม | target | ยอดเข้าชมและยอดขายต่ำ |
-| In stock / sold out | ● มีของ / ○ สินค้าหมด | | |
+| In stock / sold out | ● มีของ / ○ หมด (`SoldOutTag`); a model sold out everywhere: ○ หมดทุกร้าน | | |
 | Categories | การ์ดจอ · ซีพียู · แรม · SSD | | |
 | Nav | หมวดหมู่สินค้า (menu) · หน้าแรก · การ์ดจอ · ซีพียู · แรม · SSD · ภาพรวมตลาด | | |
 | Header shortcuts | ดีลเด็ด · เทียบหลายร้าน · ภาพรวมตลาด | tag · scale · chart | |
@@ -196,7 +196,7 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | **AutoSubmitSelect** | `auto-submit-select.tsx` (client) | Native `<select>` that submits its form on change; still works without JS via the button. Custom chevron, `sr-only` label. |
 | **Cluster toggle** | `app/page.tsx` | Pill `<Link>` with icon + label, `aria-pressed`; active = navy fill. Clicking the active one clears it; "ล้างตัวกรอง" appears when set. |
 | **ProductImage** | `product-image.tsx` (client) | Merchant image hot-linked at the variant `lib/images.ts` picks for its displayed size; `width`/`height` reserve the box; `priority` (first 4 cards, product hero) = eager + `fetchpriority="high"`, everything else lazy; `referrerPolicy="no-referrer"`; on load error, or no image, the category glyph on `--surface-muted`. Never proxied or stored. |
-| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ~~฿x~~" when below fair, else "สูงสุด ฿max" → BelowFairTag, recommendation, first cluster → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out). The struck price is always labelled ราคายุติธรรม, never presented as a former price. |
+| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ~~฿x~~" when below fair, else "สูงสุด ฿max" → BelowFairTag, then `VerdictBadges` (recommendation + the headline offer's cluster, conflict note under them) → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" with N = stores in stock (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out, where the price drops to a small "ราคาล่าสุด ฿x" and no badges show). The struck price is always labelled ราคายุติธรรม, never presented as a former price. |
 | **DealTag / BelowFairTag** | `badges.tsx` | Card tags, 6 px radius. DEAL ≥ 70 solid green, ≤ 30 solid red, else white with border; "▼ ถูกกว่าราคายุติธรรม x%" on `good-bg`. |
 | **DealScore** | `badges.tsx` | Pill `Deal {n}`; ≥ 70 good, ≤ 30 bad, else neutral; `prominent` variant for card corners. |
 | **RecommendationBadge** | `badges.tsx` | Icon + word; buy_now good, wait warn, fair neutral. The reason text is a `title` tooltip in rows and a sentence in the product hero. |
@@ -204,7 +204,7 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | **FairDelta** | `badges.tsx` | "▼ ถูกกว่าราคายุติธรรม x%" (good) / "▲ แพงกว่า… x%" (muted). Arrow + words, never colour alone. |
 | **DealMeter** | `deal-meter.tsx` | Diverging bar: grey track, tick at the fair price, green arm left when cheaper, red right when pricier, clamped at ±40%; label and fair price printed above; `role="img"` with a full-sentence label. |
 | **Product hero** | `app/product/[id]/page.tsx` | `.card`, image left (≤ 220 px on mobile), then name, "ราคาต่ำสุดตอนนี้" hero price at store, Deal + recommendation, DealMeter, reason, four stat tiles (ราคาสูงสุด, ประหยัดได้สูงสุด, จำนวนร้าน, มีของ). |
-| **OfferRow** | `app/product/[id]/page.tsx` | One `.card` per offer on a fixed 4-column grid (identity · price · DealMeter · verdict) so columns align; cheapest has a green ring and "ถูกที่สุด"; sold-out rows at 70% opacity. First 6 shown, the rest behind "ดูอีก N รายการ". |
+| **OfferRow** | `app/product/[id]/page.tsx` | One `.card` per offer on a fixed 4-column grid (identity · price · DealMeter · verdict) so columns align; cheapest in-stock offer has a green ring and "ถูกที่สุด" (only with 2+ in-stock offers); sold-out rows at 70% opacity with "○ หมด" and no price verdict. First 6 shown, the rest behind "ดูอีก N รายการ". |
 | **PriceChart** | `price-chart.tsx` (client) | Daily minimum per store; **monotone cubic** curves (smooth without overshooting a recorded price), 2 px lines in store colours, a 22%→0 gradient wash under the store that is cheapest today only, hairline grid with round THB ticks, 5 date ticks, crosshair + one tooltip listing every store at the hovered day, text legend. |
 | **Chart sizing** | `use-width.ts` | Charts measure their container (ResizeObserver) and draw a viewBox equal to the real width, so 12 px axis text stays 12 px on a phone (a fixed 760-unit viewBox shrank it to ~5 px). Narrow charts use fewer date ticks. |
 | **SpecScatter** | `spec-scatter.tsx` (client) | Price vs one spec with the fitted SLR line; axes end at the 97.5th percentile with the hidden count printed; nearest-point hover (≤ 24 px) naming model, spec and price. |
@@ -300,6 +300,19 @@ export default async function Page() {
   in-stock offer exists: the product hero, and the card's price, Deal Score
   and fair-price delta all come from in-stock offers (a sold-out listing keeps
   a stale last price). A model sold out everywhere says "หมดทุกร้าน · ราคาล่าสุด".
+- Store counts on CTAs ("ดูราคา N ร้าน", the hero button) count stores **with
+  stock** only (`inStockStores`). "ราคาสูงสุด (มีของ)", "ประหยัดได้สูงสุด" and
+  the "ถูกที่สุด" ring use in-stock offers only.
+- A sold-out offer row shows "○ หมด", its price small and muted as
+  "ราคาล่าสุด ฿x", "ไม่นำมาเทียบ เพราะสินค้าหมด" in place of the DealMeter, and
+  no Deal Score, recommendation or cluster.
+- Badge conflicts (`lib/verdict.ts`, one rule set for card, hero and rows): the
+  price verdict outranks the demand cluster, because it compares this offer's
+  own price with fair value while the cluster is a views/sales signal two
+  stores do not publish. ซื้อเลย + กระแสแรง ขายไม่ออก keeps ซื้อเลย; รอก่อน +
+  ช้างเผือก keeps รอก่อน. The withheld badge is named in a visible sentence
+  under the badges (full row width in OfferRow), never a hover-only tooltip.
+  A card's cluster is the headline offer's own, never another store's.
 - No fair price is estimated when a listing's title lacks a core spec (VRAM and
   chip; cores and threads; capacity and speed; capacity and interface). Such a
   listing shows `–` for Deal Score, no recommendation, and the reason

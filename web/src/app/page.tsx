@@ -33,12 +33,12 @@ function hrefWith(current: Search, patch: Partial<Search>): string {
 }
 
 /**
- * The hero's deal: the best Deal Score that is in stock and sold by at least
- * two stores, so the banner always leads to an actual comparison. O(n) over
- * the already-sorted list.
+ * The hero's deal: the best Deal Score in stock at two or more stores, so the
+ * banner always leads to an actual comparison (stores that are sold out do
+ * not count). O(n) over the already-sorted list.
  */
 function heroDeal(products: ProductSummary[]): ProductSummary | null {
-  return products.find((p) => p.inStockOffers > 0 && p.stores >= 2 && (p.bestDeal ?? 0) >= 60) ?? null;
+  return products.find((p) => p.inStockStores >= 2 && (p.bestDeal ?? 0) >= 60) ?? null;
 }
 
 /** Promo tiles under the hero: what the site does, each a real link. */
@@ -88,7 +88,7 @@ function Hero({ p }: { p: ProductSummary }) {
           )}
         </div>
         <span className="mt-2 inline-flex h-11 w-fit items-center gap-2 rounded-[var(--radius-control)] bg-white px-5 text-sm font-bold text-[var(--hero-from)] shadow-sm">
-          ดูราคา {p.stores} ร้าน
+          ดูราคา {p.inStockStores} ร้าน
           <UiIcon name="arrow" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
         </span>
       </div>
