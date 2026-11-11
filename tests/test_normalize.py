@@ -186,3 +186,8 @@ def test_ssd_line_spacing_is_canonical() -> None:
     a = extract(Category.SSD, "SANDISK OPTIMUS GX 7100 1TB M.2 PCIe 4 NVMe").model
     b = extract(Category.SSD, "SANDISK OPTIMUS GX7100 1TB M.2 PCIe 4 NVMe").model
     assert a == b == "SanDisk OPTIMUS GX7100 1TB"
+
+
+def test_ssd_line_keeps_words_before_digits_apart() -> None:
+    ex = extract(Category.SSD, "SANDISK OPTIMUS GX PRO 850X 8TB M.2 PCIe 4 NVMe")
+    assert ex.model == "SanDisk OPTIMUS GX PRO 850X 8TB"

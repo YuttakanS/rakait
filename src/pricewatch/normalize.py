@@ -334,8 +334,10 @@ def _ssd_line(title: str, brand: str) -> str | None:
     if (line := _SSD_LINE_RE.search(title)) is not None:
         name = re.sub(r"\s+", " ", line.group(1).upper())
         # "OPTIMUS GX 7100" and "OPTIMUS GX7100" are one line (found by the
-        # similarity duplicate report): glue short letter prefixes to digits.
-        return re.sub(r"\b([A-Z]{1,3}) (\d)", r"\1\2", name)
+        # similarity duplicate report): glue one- or two-letter series codes
+        # to their digits. Words such as PRO, EVO or PLUS stay separate
+        # ("OPTIMUS GX PRO 850X", "990 PRO").
+        return re.sub(r"\b([A-Z]{1,2}) (\d)", r"\1\2", name)
     brand_end = 0
     for regex, name in _BRAND_RES:
         if name == brand and (match := regex.search(title)) is not None:
