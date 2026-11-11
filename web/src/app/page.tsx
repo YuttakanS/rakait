@@ -152,7 +152,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                     </div>
                     <FairDelta pct={p.bestPctVsFair} />
                     <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-2">
-                      <span className="mr-auto text-xs text-muted">{p.stores} ร้าน</span>
+                      <span className="mr-auto text-xs text-muted">
+                        {p.inStockOffers > 0 ? `${p.stores} ร้าน` : "หมดทุกร้าน · ราคาล่าสุด"}
+                      </span>
                       <RecommendationBadge value={p.cheapestRecommendation} />
                       {p.clusters.map((c) => (
                         <ClusterBadge key={c} value={c} />

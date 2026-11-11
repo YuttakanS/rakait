@@ -57,6 +57,8 @@ export const MERCHANTS: readonly { slug: string; name: string }[] = [
 /** Readable names for model features shown on the insights page. */
 export const FEATURE_LABELS: Record<string, string> = {
   vram_gb: "ขนาด VRAM",
+  log2_vram_gb: "ขนาด VRAM",
+  log2_capacity_gb: "ความจุ",
   perf_class: "ระดับชิป (รุ่น)",
   generation: "รุ่นปีที่ออก (generation)",
   shader_cores: "จำนวนคอร์กราฟิก",
@@ -91,3 +93,15 @@ export const MERCHANT_COLORS: Record<string, string> = {
   banana: "var(--store-banana)",
   itcity: "var(--store-itcity)",
 };
+
+/**
+ * Thai label for a model feature. Missingness indicators added by the
+ * fair-value model ("boost_clock_mhz_missing") read as "ไม่ระบุ<feature>".
+ */
+export function featureLabel(name: string): string {
+  if (name.endsWith("_missing")) {
+    const base = name.slice(0, -"_missing".length);
+    return `ไม่ระบุ${FEATURE_LABELS[base] ?? base}`;
+  }
+  return FEATURE_LABELS[name] ?? name;
+}

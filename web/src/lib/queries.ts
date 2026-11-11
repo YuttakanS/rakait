@@ -34,6 +34,12 @@ export interface ProductFilter {
 /**
  * Canonical products currently on sale, aggregated across merchants in one
  * grouped query (one round trip; the planner uses the canonical index).
+ *
+ * Price, Deal Score and fair-price delta come from in-stock offers whenever
+ * the model has any: a sold-out listing keeps its last price, often months
+ * stale (a sold-out RTX 5060 Ti 16GB still read ฿16,490 against ฿27,000+ in
+ * stock), and must not headline the card. Only a model sold out everywhere
+ * falls back to all offers.
  */
 export async function listProducts(filter: ProductFilter): Promise<ProductSummary[]> {
   const order =
@@ -46,13 +52,16 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
     SELECT c.id, c.category, c.manufacturer, c.model,
            count(*)::int AS offers,
            count(DISTINCT l.merchant_id)::int AS stores,
-           min(l.current_price)::float8 AS min_price,
-           max(l.current_price)::float8 AS max_price,
-           max(i.deal_score)::int AS best_deal,
-           (array_agg(i.recommendation ORDER BY l.current_price))[1] AS cheapest_rec,
+           count(*) FILTER (WHERE l.in_stock)::int AS in_stock_offers,
+           coalesce(min(l.current_price) FILTER (WHERE l.in_stock), min(l.current_price))::float8
+               AS min_price,
+           coalesce(max(l.current_price) FILTER (WHERE l.in_stock), max(l.current_price))::float8
+               AS max_price,
+           coalesce(max(i.deal_score) FILTER (WHERE l.in_stock), max(i.deal_score))::int AS best_deal,
+           (array_agg(i.recommendation ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_rec,
            coalesce(array_agg(DISTINCT i.demand_cluster)
                     FILTER (WHERE i.demand_cluster IS NOT NULL), '{}') AS clusters,
-           min(i.pct_vs_fair) AS best_pct,
+           coalesce(min(i.pct_vs_fair) FILTER (WHERE l.in_stock), min(i.pct_vs_fair)) AS best_pct,
            (array_agg(${IMAGE} ORDER BY l.in_stock DESC, l.current_price)
                 FILTER (WHERE ${IMAGE} IS NOT NULL))[1] AS image_url
     FROM canonical_products c
@@ -73,6 +82,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
     model: r.model as string,
     offers: r.offers as number,
     stores: r.stores as number,
+    inStockOffers: r.in_stock_offers as number,
     minPrice: r.min_price as number,
     maxPrice: r.max_price as number,
     bestDeal: (r.best_deal as number | null) ?? null,

@@ -1,4 +1,4 @@
-import { FEATURE_LABELS } from "@/lib/format";
+import { featureLabel } from "@/lib/format";
 
 export type Effect = { feature: string; pct_effect_per_sd: number };
 
@@ -21,9 +21,9 @@ export function EffectBars({ effects }: { effects: Effect[] }) {
           <div
             key={e.feature}
             className="grid grid-cols-[minmax(0,9rem)_1fr_3rem] items-center gap-2 text-xs"
-            title={`${FEATURE_LABELS[e.feature] ?? e.feature}: ราคา ${label} ต่อ 1 SD`}
+            title={`${featureLabel(e.feature)}: ราคา ${label} ต่อ 1 SD`}
           >
-            <span className="truncate text-muted">{FEATURE_LABELS[e.feature] ?? e.feature}</span>
+            <span className="truncate text-muted">{featureLabel(e.feature)}</span>
             <div className="relative h-3">
               <div className="absolute inset-y-0 left-1/2 w-px bg-[var(--div-mid)]" />
               <div

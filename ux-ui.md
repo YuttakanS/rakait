@@ -238,8 +238,15 @@ export default async function Page() {
 | Model metrics | 2 decimals (R², silhouette, ARI); MAPE/accuracy as whole % in notes | `fixed` |
 
 - Stores that do not publish views or sales (BaNANA, IT City) show no demand fields.
-- Sold-out offers stay listed (dimmed) but never become the hero price when an
-  in-stock offer exists.
+- Sold-out offers stay listed (dimmed) but never headline anything while an
+  in-stock offer exists: the product hero, and the card's price, Deal Score
+  and fair-price delta all come from in-stock offers (a sold-out listing keeps
+  a stale last price). A model sold out everywhere says "หมดทุกร้าน · ราคาล่าสุด".
+- No fair price is estimated when a listing's title lacks a core spec (VRAM and
+  chip; cores and threads; capacity and speed; capacity and interface). Such a
+  listing shows `–` for Deal Score, no recommendation, and the reason
+  "ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ" — never a guessed
+  "90% below fair value".
 - Images: only what the merchant serves on its own listing; archive backfills
   never supply images.
 

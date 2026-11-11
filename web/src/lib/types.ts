@@ -10,6 +10,8 @@ export interface ProductSummary {
   model: string;
   offers: number;
   stores: number;
+  /** Offers currently in stock; 0 means the prices shown are last-known. */
+  inStockOffers: number;
   minPrice: number;
   maxPrice: number;
   bestDeal: number | null;
