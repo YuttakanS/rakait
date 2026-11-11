@@ -17,6 +17,7 @@
   --store-jib: #2c3d92;
   --store-ihavecpu: #d9480f;
   --store-banana: #c99700;
+  --store-itcity: #c2185b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,6 +38,7 @@
     --store-jib: #8c9eff;
     --store-ihavecpu: #ff8a50;
     --store-banana: #f2cc4d;
+    --store-itcity: #f48fb1;
   }
 }
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ClusterBadge, DealScore, RecommendationBadge } from "@/components/badges";
-import { CATEGORY_LABELS, CLUSTER_LABELS, formatTHB } from "@/lib/format";
+import { CATEGORY_LABELS, CLUSTER_LABELS, MERCHANTS, formatTHB, merchantList } from "@/lib/format";
 import { listProducts } from "@/lib/queries";
 import type { Category, DemandCluster, SortKey } from "@/lib/types";
 
@@ -53,9 +53,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   return (
     <div className="space-y-5">
       <section>
-        <h1 className="text-2xl font-bold">เทียบราคาอุปกรณ์คอม 3 ร้าน</h1>
+        <h1 className="text-2xl font-bold">เทียบราคาอุปกรณ์คอม {MERCHANTS.length} ร้าน</h1>
         <p className="mt-1 text-sm text-muted">
-          จับคู่สินค้ารุ่นเดียวกันจาก JIB, IHAVECPU และ BaNANA แล้วประเมิน “ราคายุติธรรม” จากสเปกด้วย Multiple
+          จับคู่สินค้ารุ่นเดียวกันจาก {merchantList()} แล้วประเมิน “ราคายุติธรรม” จากสเปกด้วย Multiple
           Linear Regression · Deal Score มากกว่า 50 คือถูกกว่าราคายุติธรรม
         </p>
       </section>

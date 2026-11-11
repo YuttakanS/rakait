@@ -34,6 +34,7 @@ export default async function InsightsPage() {
   const [insights, coverage] = await Promise.all([getMarketInsights(), getCoverage()]);
   const categories = Object.keys(CATEGORY_LABELS) as Category[];
   const kmeans = find(insights, "all", "demand_kmeans");
+  const hierarchy = find(insights, "all", "demand_hierarchical");
   const timing = find(insights, "all", "timing_tree");
   const computedAt = insights[0]?.computedAt ?? null;
 
@@ -169,6 +170,13 @@ export default async function InsightsPage() {
                 </div>
               ))}
             </div>
+            {hierarchy && (
+              <p className="tabular text-xs text-muted">
+                เทียบกับ Hierarchical Clustering (Ward, ตัดที่ k={String(hierarchy.k)}): silhouette{" "}
+                {fixed(hierarchy.silhouette)} · ARI กับ K-Means {fixed(hierarchy.ari_vs_kmeans)} (1 = แบ่งกลุ่มเหมือนกัน,
+                0 = ตรงกันแค่บังเอิญ) · cophenetic r {fixed(hierarchy.cophenetic_corr)}
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm text-muted">ยังมีข้อมูลยอดขายไม่พอสำหรับจัดกลุ่ม</p>

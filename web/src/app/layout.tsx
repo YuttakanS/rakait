@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Noto_Sans_Thai } from "next/font/google";
 import Link from "next/link";
 import { getLastUpdated } from "@/lib/queries";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, merchantList } from "@/lib/format";
 import "./globals.css";
 
 const notoThai = Noto_Sans_Thai({
@@ -14,7 +14,7 @@ const notoThai = Noto_Sans_Thai({
 export const metadata: Metadata = {
   title: "RakaIT – เทียบราคาอุปกรณ์คอม",
   description:
-    "เทียบราคาการ์ดจอ ซีพียู แรม และ SSD จาก JIB, IHAVECPU และ BaNANA พร้อมราคายุติธรรมจาก Machine Learning",
+    `เทียบราคาการ์ดจอ ซีพียู แรม และ SSD จาก ${merchantList()} พร้อมราคายุติธรรมจาก Machine Learning`,
 };
 
 export default async function RootLayout({
@@ -40,7 +40,7 @@ export default async function RootLayout({
         </header>
         <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
         <footer className="mx-auto max-w-6xl px-4 pb-10 text-xs text-muted">
-          ข้อมูลจาก JIB, IHAVECPU และ BaNANA เก็บอัตโนมัติทุก 3 ชั่วโมง · ราคายุติธรรมและคำแนะนำคำนวณด้วย
+          ข้อมูลจาก {merchantList()} เก็บอัตโนมัติทุก 3 ชั่วโมง · ราคายุติธรรมและคำแนะนำคำนวณด้วย
           Linear Regression, Decision Tree และ K-Means · โปรเจกต์เพื่อการศึกษา
         </footer>
       </body>

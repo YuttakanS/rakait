@@ -41,8 +41,23 @@ export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string
   niche: { label: "เฉพาะกลุ่ม", hint: "ยอดเข้าชมและยอดขายต่ำ" },
 };
 
+/** Stores the platform scrapes, in display order. Copy derives from this list. */
+export const MERCHANTS: readonly { slug: string; name: string }[] = [
+  { slug: "jib", name: "JIB" },
+  { slug: "ihavecpu", name: "IHAVECPU" },
+  { slug: "banana", name: "BaNANA" },
+  { slug: "itcity", name: "IT City" },
+];
+
+/** "JIB, IHAVECPU, BaNANA และ IT City" */
+export function merchantList(): string {
+  const names = MERCHANTS.map((m) => m.name);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} และ ${names.at(-1)}` : (names[0] ?? "");
+}
+
 export const MERCHANT_COLORS: Record<string, string> = {
   jib: "var(--store-jib)",
   ihavecpu: "var(--store-ihavecpu)",
   banana: "var(--store-banana)",
+  itcity: "var(--store-itcity)",
 };
