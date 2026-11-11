@@ -11,7 +11,14 @@ import type {
   ProductSummary,
   Recommendation,
   SortKey,
+  SpecPoint,
 } from "@/lib/types";
+
+/**
+ * Thumbnail URL read through to_jsonb so the query also runs against a
+ * database where migration 0010 (image_url) has not been applied yet.
+ */
+const IMAGE = sql`to_jsonb(l) ->> 'image_url'`;
 
 /** Listings scraped within this window count as currently on sale. */
 const ACTIVE = sql`l.last_scraped_at > now() - interval '2 days' AND l.current_price IS NOT NULL`;
@@ -44,7 +51,10 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
            max(i.deal_score)::int AS best_deal,
            (array_agg(i.recommendation ORDER BY l.current_price))[1] AS cheapest_rec,
            coalesce(array_agg(DISTINCT i.demand_cluster)
-                    FILTER (WHERE i.demand_cluster IS NOT NULL), '{}') AS clusters
+                    FILTER (WHERE i.demand_cluster IS NOT NULL), '{}') AS clusters,
+           min(i.pct_vs_fair) AS best_pct,
+           (array_agg(${IMAGE} ORDER BY l.in_stock DESC, l.current_price)
+                FILTER (WHERE ${IMAGE} IS NOT NULL))[1] AS image_url
     FROM canonical_products c
     JOIN merchant_listings l ON l.canonical_product_id = c.id
     LEFT JOIN listing_insights i ON i.listing_id = l.id
@@ -68,6 +78,8 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
     bestDeal: (r.best_deal as number | null) ?? null,
     cheapestRecommendation: (r.cheapest_rec as Recommendation | null) ?? null,
     clusters: r.clusters as DemandCluster[],
+    bestPctVsFair: (r.best_pct as number | null) ?? null,
+    imageUrl: (r.image_url as string | null) ?? null,
   }));
 }
 
@@ -81,7 +93,8 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
            l.current_price::float8 AS price, l.in_stock, l.stock_quantity,
            l.view_count, l.sold_count, l.last_scraped_at,
            i.fair_price::float8 AS fair_price, i.pct_vs_fair, i.deal_score,
-           i.recommendation, i.recommendation_reason, i.demand_cluster, i.sales_per_day
+           i.recommendation, i.recommendation_reason, i.demand_cluster, i.sales_per_day,
+           ${IMAGE} AS image_url
     FROM merchant_listings l
     JOIN merchants m ON m.id = l.merchant_id
     LEFT JOIN listing_insights i ON i.listing_id = l.id
@@ -115,6 +128,7 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
         recommendationReason: (r.recommendation_reason as string | null) ?? null,
         demandCluster: (r.demand_cluster as DemandCluster | null) ?? null,
         salesPerDay: (r.sales_per_day as number | null) ?? null,
+        imageUrl: (r.image_url as string | null) ?? null,
       }),
     ),
   };
@@ -136,6 +150,33 @@ export async function getPriceHistory(id: number): Promise<PricePoint[]> {
     day: (r.day as Date).toISOString(),
     minPrice: r.min_price as number,
   }));
+}
+
+/**
+ * Spec value vs price for every active, linked listing: the points behind the
+ * simple-regression charts. Feature per category mirrors SLR_FEATURES in
+ * ml/train.py. One query; at most a few thousand rows.
+ */
+export async function getSpecPoints(): Promise<SpecPoint[]> {
+  const rows = await sql`
+    SELECT c.category, c.model, l.current_price::float8 AS price,
+           (CASE c.category
+              WHEN 'gpu' THEN c.specs ->> 'vram_gb'
+              WHEN 'cpu' THEN c.specs ->> 'cores'
+              ELSE c.specs ->> 'capacity_gb'
+            END)::float8 AS x
+    FROM merchant_listings l
+    JOIN canonical_products c ON c.id = l.canonical_product_id
+    WHERE ${ACTIVE}
+  `;
+  return rows
+    .filter((r) => r.x !== null)
+    .map((r) => ({
+      category: r.category as Category,
+      model: r.model as string,
+      price: r.price as number,
+      x: r.x as number,
+    }));
 }
 
 export async function getMarketInsights(): Promise<MarketInsight[]> {

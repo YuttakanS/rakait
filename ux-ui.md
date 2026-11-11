@@ -3,8 +3,9 @@
 The design contract for every page of the RakaIT web app (`web/`). Follow it when
 adding or changing a page or component; when the code and this file disagree,
 fix one of them in the same change. Tokens live in `web/src/app/globals.css`,
-formatters and labels in `web/src/lib/format.ts`, shared badges in
-`web/src/components/badges.tsx`.
+formatters, labels and store order in `web/src/lib/format.ts`, shared UI in
+`web/src/components/`. The design review that shaped this version is
+`ui_ux.md`.
 
 ---
 
@@ -13,182 +14,212 @@ formatters and labels in `web/src/lib/format.ts`, shared badges in
 1. **Price first, then evidence.** Every view answers "where is it cheapest right
    now?" before it explains why. ML output (fair price, Deal Score, cluster,
    recommendation) is supporting evidence and is never shown without the price.
-2. **Honest models.** Show the model's quality next to its output (R², MAPE, n,
-   balanced accuracy). When a model is below its usefulness threshold, say so in
+2. **Consumer first, statistics on request.** Pages speak to shoppers: hero
+   numbers, pictures, charts. Model quality (R², MAPE, n, accuracy) stays visible
+   but small (`text-[11px] text-subtle` with an ⓘ tooltip), and full tables,
+   formulas and tree rules live in a collapsed "รายละเอียดทางสถิติ" section.
+3. **Honest models.** When a model is below its usefulness threshold, say so in
    plain Thai and say what is used instead. Never invent a value: missing is `–`.
-3. **Thai first.** UI copy is Thai; model and statistics terms stay in English
-   where Thai readers in the field use them (Deal Score, R², K-Means, MAPE).
-4. **Calm, dense, scannable.** A comparison tool, not a storefront: neutral
-   surfaces, one accent colour, colour reserved for meaning (good/bad/warn, store
-   identity). No banners, carousels, pop-ups or decorative imagery.
-5. **Fast by default.** Server components and server-rendered SVG; client
-   JavaScript only for interaction that cannot be a link or a form.
+4. **Thai first.** UI copy is Thai; model terms stay in English where Thai readers
+   use them (Deal Score, K-Means, R²).
+5. **Calm and modern.** Light grey page, white raised cards with a soft shadow,
+   one navy accent, colour reserved for meaning (status, store identity). No
+   banners, carousels or pop-ups.
+6. **Fast by default.** Server components; client components only for real
+   interaction (chart hover, auto-submitting selects).
 
 ## 2. Voice and copy
 
 | Rule | Do | Don't |
 |---|---|---|
-| Short, factual sentences | ถูกกว่าราคายุติธรรม 12% | ดีลสุดคุ้ม! ห้ามพลาด!! |
-| Numbers carry the claim | ถูกสุดตอนนี้ ฿11,900 ที่ JIB | ราคาดีที่สุดในตลาด |
-| Explain a model in one line under it | Ŷ = β₀ + β₁X · β₁ คือราคาที่เพิ่มขึ้นต่อสเปก 1 หน่วย | Paragraphs of theory |
+| Short, factual sentences | ▼ ถูกกว่าราคายุติธรรม 12% | ดีลสุดคุ้ม! ห้ามพลาด!! |
+| Numbers carry the claim | ราคาต่ำสุดตอนนี้ ฿11,900 ที่ JIB | ราคาดีที่สุดในตลาด |
+| Explain a chart in one line under it | จุดที่อยู่ใต้เส้นมาก ๆ คือได้สเปกเยอะในราคาต่ำกว่าตลาด | Paragraphs of theory |
 | Admit limits | ยังมีข้อมูลยอดขายไม่พอสำหรับจัดกลุ่ม | Hide the section silently |
-| Store names exactly as branded | JIB, IHAVECPU, BaNANA, IT City | Jib, Ihavecpu, Banana, ITCity |
+| Store names exactly as branded | JIB, IHAVECPU, IT City, BaNANA | Jib, Ihavecpu, ITCity |
 
-Never hard-code the number or list of stores in copy ("3 ร้าน"); derive it from
-`MERCHANTS` in `format.ts` so adding a store is a one-line change.
+Never hard-code the number or list of stores ("3 ร้าน"); derive it from
+`MERCHANTS` / `merchantList()` in `format.ts`.
 
 ### Glossary (use these exact strings)
 
-| Concept | UI label | Tooltip / hint |
-|---|---|---|
-| Fair market value (MLR) | ราคายุติธรรม | ประเมินจากสเปกด้วย Multiple Linear Regression |
-| Deal Score | Deal {score} | 0–100 (50 = ราคายุติธรรม) |
-| `buy_now` | ซื้อเลย | |
-| `wait` | รอก่อน | |
-| `fair_price` | ราคาเหมาะสม | |
-| `hidden_gem` | ช้างเผือก | ยอดเข้าชมน้อย แต่ขายดี |
-| `community_favorite` | ขวัญใจชุมชน | คนดูเยอะและซื้อจริง |
-| `overpriced_hype` | กระแสแรง ขายไม่ออก | คนดูเยอะ แต่ยอดขายต่ำ |
-| `niche` | เฉพาะกลุ่ม | ยอดเข้าชมและยอดขายต่ำ |
-| In stock / sold out | มีของ / สินค้าหมด | |
-| Categories | การ์ดจอ · ซีพียู · แรม · SSD | |
+| Concept | UI label | Icon | Hint |
+|---|---|---|---|
+| Fair market value (MLR) | ราคายุติธรรม | | ประเมินจากสเปกด้วย Multiple Linear Regression |
+| Deal Score | Deal {score} | | 0–100 (50 = ราคายุติธรรม) |
+| `buy_now` | ซื้อเลย | ✓ | |
+| `wait` | รอก่อน | ⏳ | |
+| `fair_price` | ราคาเหมาะสม | = | |
+| `hidden_gem` | ช้างเผือก | 🐘 | ยอดเข้าชมน้อย แต่ขายดี |
+| `community_favorite` | ขวัญใจชุมชน | ⭐ | คนดูเยอะและซื้อจริง |
+| `overpriced_hype` | กระแสแรง ขายไม่ออก | 🔥 | คนดูเยอะ แต่ยอดขายต่ำ |
+| `niche` | เฉพาะกลุ่ม | 🎯 | ยอดเข้าชมและยอดขายต่ำ |
+| In stock / sold out | ● มีของ / ○ สินค้าหมด | | |
+| Categories | การ์ดจอ · ซีพียู · แรม · SSD | | |
+| Nav | สินค้า · ภาพรวมตลาด | | |
+
+Icons are decorative (`aria-hidden`); the label always carries the meaning.
 
 ## 3. Design tokens
 
 All colours are CSS variables on `:root`, redefined under
-`@media (prefers-color-scheme: dark)`. Components reference tokens, never raw hex.
+`@media (prefers-color-scheme: dark)` with their own validated steps (not an
+automatic inversion). Tailwind utilities map to them (`bg-surface`,
+`text-muted`, `bg-good-bg` ...). Components never use raw hex.
 
 ### Surfaces and text
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `--background` | `#f7f7f5` | `#121211` | Page background |
-| `--surface` | `#ffffff` | `#1b1b19` | Cards, tables, header, inputs |
-| `--foreground` | `#1c1c1a` | `#ececea` | Body text |
-| `--muted` | `#6b6b66` | `#a0a09a` | Secondary text, captions, axis labels |
-| `--border` | `#e4e4df` | `#2e2e2b` | 1 px borders, table rules, grid lines |
-| `--accent` | `#1f6feb` | `#58a6ff` | Links on hover, active chip, primary button, focus |
+| `--background` | `#f8fafc` | `#0b1120` | Page background |
+| `--surface` | `#ffffff` | `#131c2e` | Cards, header, inputs |
+| `--surface-muted` | `#f1f5f9` | `#1b2538` | Inner stat tiles, image placeholder |
+| `--foreground` | `#0f172a` | `#e2e8f0` | Body text, prices |
+| `--muted` | `#64748b` | `#94a3b8` | Secondary text, axis labels |
+| `--subtle` | `#94a3b8` | `#64748b` | Tertiary text: statistics notes, footer |
+| `--border` | `#e2e8f0` | `#253047` | 1 px borders, grid lines |
+| `--accent` | `#1e3a8a` | `#8fb0ff` | Primary button, active filter, headline price, focus |
+| `--accent-soft` | `#e0e7ff` | `#1e2a4d` | Focus ring, hovered card border |
 
-### Semantic states (text on its own `-bg`)
+### Status (reserved: never a chart series colour)
 
-| Token pair | Meaning | Used by |
+| Token set | Meaning | Used by |
 |---|---|---|
-| `--good` / `--good-bg` | Cheaper than fair, buy now | Deal ≥ 70, ซื้อเลย, "ถูกกว่า x%" |
-| `--bad` / `--bad-bg` | Pricier than fair | Deal ≤ 30 |
-| `--warn` / `--warn-bg` | Wait / caution | รอก่อน, data-quality notes |
-| `--neutral-bg` | Neutral fill | Deal 31–69, ราคาเหมาะสม |
+| `--good`, `--good-strong`, `--good-bg` (emerald) | Cheaper than fair, buy now, cheapest offer | Deal ≥ 70, ซื้อเลย, ▼ ถูกกว่า, DealMeter left arm, "ถูกที่สุด" ring |
+| `--bad`, `--bad-strong`, `--bad-bg` (red) | Pricier than fair | Deal ≤ 30, DealMeter right arm |
+| `--warn`, `--warn-bg` (amber) | Wait | รอก่อน |
+| `--neutral-bg` | Neutral | Deal 31–69, ราคาเหมาะสม, meter track |
 
-### Store identity (charts and store markers only)
+Text tokens on their `-bg` meet WCAG AA in both themes.
 
-| Token | Light | Dark |
-|---|---|---|
-| `--store-jib` | `#2c3d92` | `#8c9eff` |
-| `--store-ihavecpu` | `#d9480f` | `#ff8a50` |
-| `--store-banana` | `#c99700` | `#f2cc4d` |
-| `--store-itcity` | `#c2185b` | `#f48fb1` |
+### Chart colours (dataviz method, validated)
 
-Store colours identify a series; they never signal good or bad. A new store
-needs a token pair in both themes and an entry in `MERCHANT_COLORS`.
+| Token | Light | Dark | Role |
+|---|---|---|---|
+| `--store-jib` | `#2a78d6` | `#3987e5` | Categorical slot 1 (blue) |
+| `--store-ihavecpu` | `#eb6834` | `#d95926` | Slot 2 (orange) |
+| `--store-itcity` | `#1baf7a` | `#199e70` | Slot 3 (aqua) |
+| `--store-banana` | `#eda100` | `#c98500` | Slot 4 (yellow) |
+| `--series-1` | `#2a78d6` | `#3987e5` | Single-series charts (scatter, share bars) |
+| `--div-neg` / `--div-pos` / `--div-mid` | blue / red / grey | | Diverging bars (effect on price) |
+
+- Store colours follow the fixed `MERCHANTS` order and were validated as
+  adjacent pairs in both modes (worst CVD ΔE 9.1 light / 8.4 dark, normal-vision
+  ≥ 19.8). Do not reorder `MERCHANTS` or add a fifth store colour without
+  re-running the validator (`dataviz` skill, `validate_palette.js`).
+- Yellow and aqua are below 3:1 on the light surface, so store identity is
+  never colour-only: every chart has a text legend, tooltips name the store, and
+  the offer list is the table view.
+- Store colours mark identity, never good/bad, and never colour text.
 
 ### Typography
 
-- Family: **Noto Sans Thai** (`--font-thai`, weights 400/500/600/700), Latin
-  included. No second display face.
-- All numbers that are compared (prices, %, counts, scores) use `.tabular`
-  (tabular figures) so columns align.
+- **Noto Sans Thai** (`--font-thai`, 400/500/600/700). No second face.
+- Compared numbers use `.tabular`.
 
-| Role | Tailwind | Example |
+| Role | Classes | Example |
 |---|---|---|
-| Page title (h1) | `text-2xl font-bold` | เทียบราคาอุปกรณ์คอม |
-| Section title (h2) | `font-semibold` | ประวัติราคา |
-| Primary price | `text-xl font-bold tabular` (card), `text-lg` (inline) | ฿11,900 |
-| Body | `text-sm` | Table cells, descriptions |
-| Meta / caption | `text-xs text-muted` | Category · brand, model formulas |
-| Dense code-like output | `text-[11px] leading-tight text-muted` in `<pre>` | Tree rules |
+| Page title | `text-3xl font-bold tracking-tight` | เทียบราคาอุปกรณ์คอม 4 ร้าน |
+| Section title | `text-xl font-semibold` (insights) / `text-lg font-semibold` (cards) | อะไรทำให้ราคาแพงขึ้น |
+| Hero price | `text-4xl font-bold text-accent tabular` | ฿27,090 |
+| Card / row price | `text-2xl font-bold tracking-tight tabular` | ฿16,490 |
+| KPI tile value | `text-3xl font-bold tabular` | ฿4,550 |
+| Product name (card) | `text-base font-semibold`, 2-line clamp | GeForce RTX 5060 Ti 16GB |
+| Body | `text-sm` | |
+| Meta | `text-xs text-muted` | การ์ดจอ · NVIDIA |
+| Statistics note | `text-[11px] text-subtle` + ⓘ | จาก 374 รายการ ⓘ |
 
-### Shape and spacing
+### Shape, depth and spacing
 
-- Radius: `rounded-xl` cards and tables, `rounded-lg` inputs/buttons/inner tiles,
-  `rounded-full` chips and badges.
-- Borders, not shadows: `border border-border`. Hover raises nothing; it changes
-  the border to `hover:border-accent`.
-- Spacing scale: Tailwind 1/1.5/2/3/4/5/6. Page sections `space-y-6`
-  (list page `space-y-5`), card padding `p-4`, inner tiles `p-3`, table cells
-  `px-3 py-2`.
+- Radius: `--radius-card` 12 px (cards, panels), `--radius-control` 8 px
+  (inputs, buttons, inner tiles, images), full for chips and badges.
+- Depth: `.card` = surface + 1 px border + `--shadow-card`. Clickable cards add
+  `.card-interactive`: stronger shadow, soft-accent border and a 2 px lift on
+  hover (disabled under `prefers-reduced-motion`).
+- Spacing: page sections `space-y-8` (list, product) / `space-y-12` (insights);
+  card padding `p-5`–`p-6` (panels), `p-4` (cards, rows); grid gaps `gap-4`–`gap-5`.
 
 ## 4. Layout
 
-- Container: `mx-auto max-w-6xl px-4`, page body `py-6`.
-- Header: logo **Raka<span>IT</span>** (accent on "IT"), nav links, last-updated
-  time right-aligned (`ml-auto text-xs text-muted`). Wraps on narrow screens.
-- Footer: one muted `text-xs` paragraph: data sources, update cadence, models,
-  "โปรเจกต์เพื่อการศึกษา".
-- Grids: product cards `grid gap-3 sm:grid-cols-2 lg:grid-cols-3`; stat tiles
-  `sm:grid-cols-2 lg:grid-cols-4`; per-category panels `lg:grid-cols-2`.
-- Responsive: designed at 360 px first. Wide tables sit in
-  `overflow-x-auto` with a `min-w-[...]`; the page itself never scrolls
-  horizontally.
+- Container `mx-auto max-w-6xl px-4`, body `py-8`.
+- Header: sticky, translucent surface with blur; logo **Raka<span>IT</span>**,
+  nav (สินค้า, ภาพรวมตลาด), last-updated time right-aligned.
+- Footer: one `text-xs text-subtle` paragraph (sources, cadence, "รูปสินค้าเป็นของแต่ละร้าน", models, educational).
+- Grids: product cards `sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`; KPI tiles
+  `sm:grid-cols-2 lg:grid-cols-4`; chart panels `md:grid-cols-2`.
+- Responsive, designed at 360–375 px first: the search field takes the full
+  first row, selects share the second, the button wraps; offer rows stack;
+  wide tables scroll inside `overflow-x-auto`. The page never scrolls sideways.
 
 ## 5. Components
 
-| Component | Where | Rules |
+| Component | File | Rules |
 |---|---|---|
-| **Chip** (filter link) | Home filters | A `<Link>` that rewrites query params; active = `border-accent bg-accent text-white`. Clicking an active cluster chip clears it. Filters are URL state, so every view is shareable and cacheable. |
-| **Search form** | Home | Plain GET `<form action="/">`, keeps current filters in hidden inputs; placeholder gives real examples ("RTX 5060, 7800X3D, DDR5 32GB"); query capped at 80 chars. |
-| **ProductCard** | Home grid | Whole card is the link. Order: meta line (category · manufacturer) + DealScore → model name → price range → footer (offers · stores, RecommendationBadge, ClusterBadges). |
-| **DealScore** | Cards, offer table | Pill `Deal {n}`; ≥ 70 good, ≤ 30 bad, else neutral; `title` explains the scale; `–` when null. |
-| **RecommendationBadge** | Cards, offer table | Pill; buy_now good, wait warn, fair_price neutral. In tables, the reason text sits below in `text-[11px] text-muted`, max ~220 px wide. |
-| **ClusterBadge** | Cards, offer table | Outlined muted pill (clusters are descriptive, not judgements); hint in `title`. |
-| **Offer table** | Product page | One row per listing, cheapest in-stock first. Columns: ร้าน / สินค้า (store bold, merchant title as external link, 2-line clamp) · ราคา · ราคายุติธรรม (+ "ถูกกว่า/แพงกว่า x%") · Deal · คำแนะนำ · สต็อก / ความต้องการ. Show only the demand fields a store publishes; never print `null`. |
-| **PriceChart** | Product page | Server-rendered SVG, one line per store in its store colour, daily minimum price, 3 y-ticks in THB, first/last date on x, native `<title>` tooltips, legend below. Fewer than 2 points → one-line empty state. |
-| **Insight Card** | Insights page | `section` with h2 "A./B./C./D./E. Model: what it tells the shopper", the result (tiles, coefficient table, rules), then a one-line formula/explanation in `text-xs text-muted`. |
-| **Stat tile** | Insights SLR, K-Means | Label (muted xs) → big tabular value → qualifier line with metric and n. |
-| **Empty state** | Any list or model section | Bordered surface box, centred muted text that says what is missing and why. |
-
-New shared UI goes in `web/src/components/`; a component used by one page may
-live in that page file.
+| **Search + filters panel** | `app/page.tsx` | One `.card`. GET `<form action="/">`: search input with a magnifier icon inside (`h-10`), category `<select>`, sort `<select>`, navy `ค้นหา` button (`h-10`). Below a divider: demand-cluster toggle buttons. Filters are URL state. |
+| **AutoSubmitSelect** | `auto-submit-select.tsx` (client) | Native `<select>` that submits its form on change; still works without JS via the button. Custom chevron, `sr-only` label. |
+| **Cluster toggle** | `app/page.tsx` | Pill `<Link>` with icon + label, `aria-pressed`; active = navy fill. Clicking the active one clears it; "ล้างตัวกรอง" appears when set. |
+| **ProductImage** | `product-image.tsx` | Merchant thumbnail hot-linked as served (`loading="lazy"`, `referrerPolicy="no-referrer"`, `object-contain` on white). No image → category glyph on `--surface-muted`. Never proxied or stored. |
+| **ProductCard** | `app/page.tsx` | Whole card is the link (`.card-interactive`). Image (4:3) with **Deal badge in the top-right corner** → meta → name → **price (largest)** + "ถึง ฿max" → ▼/▲ fair delta → footer: store count, recommendation, clusters. |
+| **DealScore** | `badges.tsx` | Pill `Deal {n}`; ≥ 70 good, ≤ 30 bad, else neutral; `prominent` variant for card corners. |
+| **RecommendationBadge** | `badges.tsx` | Icon + word; buy_now good, wait warn, fair neutral. The reason text is a `title` tooltip in rows and a sentence in the product hero. |
+| **ClusterBadge** | `badges.tsx` | Outlined pill with icon; hint in `title`. |
+| **FairDelta** | `badges.tsx` | "▼ ถูกกว่าราคายุติธรรม x%" (good) / "▲ แพงกว่า… x%" (muted). Arrow + words, never colour alone. |
+| **DealMeter** | `deal-meter.tsx` | Diverging bar: grey track, tick at the fair price, green arm left when cheaper, red right when pricier, clamped at ±40%; label and fair price printed above; `role="img"` with a full-sentence label. |
+| **Product hero** | `app/product/[id]/page.tsx` | `.card`, image left (≤ 220 px on mobile), then name, "ราคาต่ำสุดตอนนี้" hero price at store, Deal + recommendation, DealMeter, reason, four stat tiles (ราคาสูงสุด, ประหยัดได้สูงสุด, จำนวนร้าน, มีของ). |
+| **OfferRow** | `app/product/[id]/page.tsx` | One `.card` per offer on a fixed 4-column grid (identity · price · DealMeter · verdict) so columns align; cheapest has a green ring and "ถูกที่สุด"; sold-out rows at 70% opacity. First 6 shown, the rest behind "ดูอีก N รายการ". |
+| **PriceChart** | `price-chart.tsx` (client) | Daily minimum per store; **monotone cubic** curves (smooth without overshooting a recorded price), 2 px lines in store colours, a 22%→0 gradient wash under the store that is cheapest today only, hairline grid with round THB ticks, 5 date ticks, crosshair + one tooltip listing every store at the hovered day, text legend. |
+| **SpecScatter** | `spec-scatter.tsx` (client) | Price vs one spec with the fitted SLR line; axes end at the 97.5th percentile with the hidden count printed; nearest-point hover (≤ 24 px) naming model, spec and price. |
+| **EffectBars** | `effect-bars.tsx` | Diverging horizontal bars of MLR effect (% per SD), sorted by magnitude, value printed on every bar, "← ทำให้ถูกลง / ทำให้แพงขึ้น →" caption. |
+| **KPI tile** | insights | Label → big value → unit line → statistics note with ⓘ. |
+| **StatNote** | insights | `text-[11px] text-subtle` + ⓘ icon; the full statistic in `title`. |
+| **Statistics details** | insights | Native `<details>` card, collapsed by default, chevron rotates when open. |
+| **Empty state** | anywhere | `.card` with centred muted text saying what is missing and why. |
 
 ## 6. Page templates
 
 ### 6.1 Product list (`/`)
 
-1. h1 + one-sentence explanation (how matching and Deal Score work).
-2. Search form.
-3. Filter rows: category chips → demand-cluster chips (labelled "กลุ่มความต้องการ (K-Means):") → sort chips (ดีลดีที่สุด / ราคาต่ำสุด / มีขายหลายร้าน).
-4. Product grid, or empty state "ไม่พบสินค้าที่ตรงกับเงื่อนไข".
+1. h1 (with store count) + two-line explanation of matching and Deal Score.
+2. Search + filters panel.
+3. "พบ N รุ่น" then the product grid, or the empty state.
 
 ### 6.2 Product detail (`/product/[id]`)
 
-1. Back link "← กลับไปหน้ารวม".
-2. Meta line, h1 model name, headline: "ถูกสุดตอนนี้ ฿x ที่ {store}" + max spread between stores.
-3. Offer table.
-4. Price history chart card.
-5. Model-level specs (`dl`, 2–3 columns), labels from `SPEC_LABELS`.
+1. Back link.
+2. Product hero.
+3. "เทียบราคาแต่ละร้าน": OfferRows.
+4. Price history card with "ชี้หรือแตะบนกราฟ…" hint.
+5. Model-level specs (`dl`, 1–3 columns) + note on how specs are reconciled.
 
-### 6.3 Market insights (`/insights`)
+### 6.3 Market insights (`/insights`, nav "ภาพรวมตลาด")
 
-1. h1 + "คำนวณล่าสุด {time}".
-2. Data coverage table (per store: active listings, % linked, history rows, oldest observation).
-3. Record-linkage card: per category rule-linked %, out-of-scope count, calibrated similarity threshold ("ปิด" when none qualifies), its precision and coverage, similarity-linked count, and duplicate-name candidates awaiting review.
-4. One Insight Card per model, in the order of CLAUDE.md §2: A. SLR, B. MLR, C. Regression Tree, D. K-Means (+ hierarchical comparison: ARI, cophenetic r), E. Decision Tree, each with its quality metrics and threshold note.
+1. h1 + one-paragraph purpose + computed time.
+2. **ราคาต่อหน่วยสเปกตอนนี้**: four KPI tiles (GPU per GB VRAM, CPU per core,
+   RAM per GB, SSD per TB) then four SpecScatter panels.
+3. **อะไรทำให้ราคาแพงขึ้น**: EffectBars per category, MAPE as a StatNote.
+4. **กลุ่มความต้องการของตลาด**: one tile per segment name (K-Means clusters
+   sharing a name are merged, size-weighted), icon, share bar, averages.
+5. **คำแนะนำ ซื้อเลย / รอก่อน**: whether the decision tree or the rules drive
+   advice, with the current accuracy vs. the 60% bar.
+6. **รายละเอียดทางสถิติ** (collapsed): data coverage, record linkage, MLR β
+   table, regression-tree rules, K-Means vs Ward, decision-tree rules.
 
 ### 6.4 Adding a page
 
-Start from this skeleton and keep the order: context → primary answer →
-evidence → method note.
+Order: context → primary answer → evidence → statistics (collapsed).
 
 ```tsx
-export const revalidate = 900; // matches the 3-hour scrape; 15 min staleness max
+export const revalidate = 900; // 3-hour scrape; at most 15 min stale
 
 export default async function Page() {
-  const data = await query(); // server-only, typed result from lib/queries.ts
+  const data = await query(); // server-only, typed, from lib/queries.ts
   return (
-    <div className="space-y-6">
-      <section>
-        <h1 className="text-2xl font-bold">…</h1>
-        <p className="mt-1 text-sm text-muted">…</p>
+    <div className="space-y-8">
+      <section className="space-y-2">
+        <h1 className="text-3xl font-bold tracking-tight">…</h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-muted">…</p>
       </section>
-      {/* primary answer, then evidence cards */}
+      <section className="card p-5">{/* primary answer */}</section>
     </div>
   );
 }
@@ -198,50 +229,50 @@ export default async function Page() {
 
 | Data | Format | Helper |
 |---|---|---|
-| Price | `฿12,345`, no decimals, Thai grouping | `formatTHB` |
-| Ratio / delta | `+12%` / `-8%`; in prose "ถูกกว่า 8%", "แพงกว่า 12%" | `formatPct` |
+| Price | `฿12,345`, no decimals | `formatTHB` |
+| Delta vs fair | "▼ ถูกกว่าราคายุติธรรม 8%", "▲ แพงกว่าราคายุติธรรม 12%" | `FairDelta`, `DealMeter` |
 | Date-time | Thai medium date + short time, `Asia/Bangkok` | `formatDateTime` |
-| Chart dates | Thai short month + 2-digit year | in `PriceChart` |
+| Chart dates | Thai short month + 2-digit year (tooltip adds the day) | `PriceChart` |
 | Counts | `toLocaleString("th-TH")` | |
-| Missing | `–` (en dash), never `null`, `NaN`, `0` | |
-| Model metrics | 2 decimals (R², silhouette, ARI); MAPE/accuracy as % with 1 decimal | `fixed` in insights page |
+| Missing | `–`, never `null`, `NaN`, `0` | |
+| Model metrics | 2 decimals (R², silhouette, ARI); MAPE/accuracy as whole % in notes | `fixed` |
 
-- A store that does not publish views or sales (BaNANA, IT City) simply shows no
-  demand fields; do not label it "0 views".
-- Sold-out offers stay visible (they inform the price history) but never become
-  the "cheapest now" headline when an in-stock offer exists.
-- A recommendation from rules rather than the decision tree must say so on the
-  insights page, as it does now.
+- Stores that do not publish views or sales (BaNANA, IT City) show no demand fields.
+- Sold-out offers stay listed (dimmed) but never become the hero price when an
+  in-stock offer exists.
+- Images: only what the merchant serves on its own listing; archive backfills
+  never supply images.
 
 ## 8. Accessibility
 
-- Contrast: text tokens meet WCAG AA (4.5:1) on `--surface` and `--background`
-  in both themes; check any new token pair before merging.
-- Meaning is never colour-only: Deal pills print the number, recommendations
-  print words, chart lines have a text legend and per-point titles.
-- Semantics: one h1 per page, h2 per section, real `<table>` with `<th>`, `<dl>`
-  for specs, `role="img"` + `aria-label` on SVG charts.
-- External merchant links: `target="_blank" rel="noopener noreferrer"`.
-- Focus: rely on visible browser focus rings; do not remove outlines. Tap
-  targets (chips, buttons) at least ~32 px tall.
-- `lang="th"` on `<html>`.
+- Text tokens meet WCAG AA on `--surface` and `--background` in both themes.
+- Never colour-only: Deal pills print the number, recommendations print words
+  and icons, deltas carry ▼/▲ and words, charts have text legends and tooltips.
+- Semantics: one h1, h2 per section, `<table>`/`<th>`, `<dl>` for specs,
+  `role="img"` + `aria-label` on charts, `aria-pressed` on toggles,
+  `sr-only` labels on selects and search.
+- Focus: visible ring (`focus-visible:ring-accent-soft`); tap targets ≥ 36 px.
+- Motion: hover lift disabled under `prefers-reduced-motion`.
+- External links: `target="_blank" rel="noopener noreferrer"`.
 
 ## 9. Performance
 
-- Pages are React Server Components with `revalidate = 900`; data access goes
-  through `lib/queries.ts` (server-only, parameterised SQL, aggregated in
-  Postgres so each page is O(1) round trips).
-- Charts are SVG strings rendered on the server: O(points), zero client JS.
-- No client-side state libraries, no chart libraries, no web fonts beyond
-  Noto Sans Thai via `next/font` (self-hosted, no layout shift).
+- Server components with `revalidate = 900`; data through `lib/queries.ts`
+  (parameterised SQL aggregated in Postgres, O(1) round trips per page).
+- Client JS is limited to `PriceChart`, `SpecScatter` and `AutoSubmitSelect`;
+  charts are hand-written SVG (no chart library), O(points) per render, hover
+  is O(points) per pointer move.
+- Images are lazy, decoded async, hot-linked from merchant CDNs (no proxying).
+- One web font (Noto Sans Thai via `next/font`).
 
 ## 10. Review checklist
 
-- [ ] Uses tokens, not hex; works in light and dark.
-- [ ] Copy is Thai, matches the glossary, no hard-coded store count.
-- [ ] Prices and metrics use the `format.ts` helpers and `.tabular`.
+- [ ] Tokens only (no hex); checked in light and dark.
+- [ ] Thai copy from the glossary; store count/list derived from `MERCHANTS`.
+- [ ] Price is the most prominent number in its block.
+- [ ] Prices and metrics via `format.ts` helpers and `.tabular`.
 - [ ] Missing data renders `–` or a written empty state.
-- [ ] Every ML output shows its quality metric or threshold note nearby.
-- [ ] Usable at 360 px; wide tables scroll inside their container.
-- [ ] Headings, tables and charts are semantic and labelled.
-- [ ] No new client component unless interaction requires it.
+- [ ] Statistics are present but secondary (StatNote or the collapsed section).
+- [ ] Charts: validated colours, legend, tooltip, never colour-only.
+- [ ] Works at 360 px; no sideways page scroll.
+- [ ] New client component only when interaction requires it.

@@ -13,8 +13,7 @@ const notoThai = Noto_Sans_Thai({
 
 export const metadata: Metadata = {
   title: "RakaIT – เทียบราคาอุปกรณ์คอม",
-  description:
-    `เทียบราคาการ์ดจอ ซีพียู แรม และ SSD จาก ${merchantList()} พร้อมราคายุติธรรมจาก Machine Learning`,
+  description: `เทียบราคาการ์ดจอ ซีพียู แรม และ SSD จาก ${merchantList()} พร้อมราคายุติธรรมจาก Machine Learning`,
 };
 
 export default async function RootLayout({
@@ -24,23 +23,23 @@ export default async function RootLayout({
   return (
     <html lang="th">
       <body className={`${notoThai.variable} antialiased`}>
-        <header className="border-b border-border bg-surface">
+        <header className="sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur">
           <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
-            <Link href="/" className="text-lg font-bold tracking-tight">
+            <Link href="/" className="text-xl font-bold tracking-tight text-foreground">
               Raka<span className="text-accent">IT</span>
             </Link>
-            <Link href="/" className="text-sm hover:text-accent">
+            <Link href="/" className="text-sm font-medium text-muted hover:text-accent">
               สินค้า
             </Link>
-            <Link href="/insights" className="text-sm hover:text-accent">
-              Market Insights
+            <Link href="/insights" className="text-sm font-medium text-muted hover:text-accent">
+              ภาพรวมตลาด
             </Link>
             <span className="ml-auto text-xs text-muted">อัปเดตล่าสุด {formatDateTime(updated)}</span>
           </nav>
         </header>
-        <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
-        <footer className="mx-auto max-w-6xl px-4 pb-10 text-xs text-muted">
-          ข้อมูลจาก {merchantList()} เก็บอัตโนมัติทุก 3 ชั่วโมง · ราคายุติธรรมและคำแนะนำคำนวณด้วย
+        <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
+        <footer className="mx-auto max-w-6xl px-4 pb-10 text-xs leading-relaxed text-subtle">
+          ข้อมูลจาก {merchantList()} เก็บอัตโนมัติทุก 3 ชั่วโมง · รูปสินค้าเป็นของแต่ละร้าน · ราคายุติธรรมและคำแนะนำคำนวณด้วย
           Linear Regression, Decision Tree และ K-Means · โปรเจกต์เพื่อการศึกษา
         </footer>
       </body>

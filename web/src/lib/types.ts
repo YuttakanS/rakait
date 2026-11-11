@@ -15,6 +15,9 @@ export interface ProductSummary {
   bestDeal: number | null;
   cheapestRecommendation: Recommendation | null;
   clusters: DemandCluster[];
+  /** Most negative price-vs-fair delta among offers (e.g. -0.12 = 12% below). */
+  bestPctVsFair: number | null;
+  imageUrl: string | null;
 }
 
 export interface Offer {
@@ -37,6 +40,7 @@ export interface Offer {
   recommendationReason: string | null;
   demandCluster: DemandCluster | null;
   salesPerDay: number | null;
+  imageUrl: string | null;
 }
 
 export interface ProductDetail {
@@ -68,4 +72,12 @@ export interface CoverageRow {
   linked: number;
   historyRows: number;
   firstObservation: string | null;
+}
+
+/** One listing on a simple-regression scatter: spec value vs price. */
+export interface SpecPoint {
+  category: Category;
+  x: number;
+  price: number;
+  model: string;
 }

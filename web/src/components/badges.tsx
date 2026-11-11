@@ -1,39 +1,61 @@
 import { CLUSTER_LABELS, RECOMMENDATION_LABELS } from "@/lib/format";
 import type { DemandCluster, Recommendation } from "@/lib/types";
 
-const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap";
+const pill = "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap";
 
-export function DealScore({ score }: { score: number | null }) {
-  if (score === null) return <span className="text-xs text-muted">–</span>;
-  const tone =
-    score >= 70
-      ? "bg-[var(--good-bg)] text-[var(--good)]"
-      : score <= 30
-        ? "bg-[var(--bad-bg)] text-[var(--bad)]"
-        : "bg-[var(--neutral-bg)] text-foreground";
+function dealTone(score: number): string {
+  return score >= 70
+    ? "bg-good-bg text-good"
+    : score <= 30
+      ? "bg-bad-bg text-bad"
+      : "bg-neutral-bg text-foreground";
+}
+
+/** Deal Score pill. `prominent` is the card-corner variant. */
+export function DealScore({ score, prominent = false }: { score: number | null; prominent?: boolean }) {
+  if (score === null) return prominent ? null : <span className="text-xs text-muted">–</span>;
+  const size = prominent ? "px-2.5 py-1 text-sm font-bold shadow-sm" : "";
   return (
-    <span className={`${base} ${tone} tabular`} title="Deal Score 0–100 (50 = ราคายุติธรรม)">
+    <span className={`${pill} ${dealTone(score)} ${size} tabular`} title="Deal Score 0–100 (50 = ราคายุติธรรม)">
       Deal {score}
     </span>
   );
 }
 
+const REC_ICON: Record<Recommendation, string> = { buy_now: "✓", wait: "⏳", fair_price: "=" };
+
 export function RecommendationBadge({ value }: { value: Recommendation | null }) {
   if (value === null) return null;
   const tone =
-    value === "buy_now"
-      ? "bg-[var(--good-bg)] text-[var(--good)]"
-      : value === "wait"
-        ? "bg-[var(--warn-bg)] text-[var(--warn)]"
-        : "bg-[var(--neutral-bg)] text-foreground";
-  return <span className={`${base} ${tone}`}>{RECOMMENDATION_LABELS[value]}</span>;
+    value === "buy_now" ? "bg-good-bg text-good" : value === "wait" ? "bg-warn-bg text-warn" : "bg-neutral-bg text-foreground";
+  return (
+    <span className={`${pill} ${tone}`}>
+      <span aria-hidden>{REC_ICON[value]}</span>
+      {RECOMMENDATION_LABELS[value]}
+    </span>
+  );
 }
 
 export function ClusterBadge({ value }: { value: DemandCluster }) {
-  const { label, hint } = CLUSTER_LABELS[value];
+  const { label, hint, icon } = CLUSTER_LABELS[value];
   return (
-    <span className={`${base} border border-border text-muted`} title={hint}>
+    <span className={`${pill} border border-border bg-surface text-muted`} title={hint}>
+      <span aria-hidden>{icon}</span>
       {label}
+    </span>
+  );
+}
+
+/** "ถูกกว่าราคายุติธรรม 12%" / "แพงกว่า 8%", coloured by direction, never colour-only. */
+export function FairDelta({ pct, className = "" }: { pct: number | null; className?: string }) {
+  if (pct === null || Math.abs(pct) < 0.005) {
+    return pct === null ? null : <span className={`text-xs text-muted ${className}`}>ใกล้เคียงราคายุติธรรม</span>;
+  }
+  const below = pct < 0;
+  const value = `${Math.round(Math.abs(pct) * 100)}%`;
+  return (
+    <span className={`text-xs font-medium ${below ? "text-good" : "text-muted"} ${className}`}>
+      {below ? `▼ ถูกกว่าราคายุติธรรม ${value}` : `▲ แพงกว่าราคายุติธรรม ${value}`}
     </span>
   );
 }

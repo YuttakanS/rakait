@@ -1,54 +1,116 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens (contract: ux-ui.md §3). Components reference these, never hex.
+ * Light values first; dark values are their own validated steps, not a flip.
+ */
 :root {
-  --background: #f7f7f5;
+  color-scheme: light;
+  --background: #f8fafc;
   --surface: #ffffff;
-  --foreground: #1c1c1a;
-  --muted: #6b6b66;
-  --border: #e4e4df;
-  --accent: #1f6feb;
-  --good: #1a7f37;
-  --good-bg: #e6f4ea;
-  --bad: #b42318;
-  --bad-bg: #fdecea;
-  --neutral-bg: #efefeb;
-  --warn: #9a6700;
-  --warn-bg: #fff4d6;
-  --store-jib: #2c3d92;
-  --store-ihavecpu: #d9480f;
-  --store-banana: #c99700;
-  --store-itcity: #c2185b;
+  --surface-muted: #f1f5f9;
+  --foreground: #0f172a;
+  --muted: #64748b;
+  --subtle: #94a3b8;
+  --border: #e2e8f0;
+
+  /* Primary: deep navy; used for actions, active filters and focus. */
+  --accent: #1e3a8a;
+  --accent-hover: #1e40af;
+  --accent-soft: #e0e7ff;
+  --on-accent: #ffffff;
+
+  /* Status (reserved: never reused as a series colour). */
+  --good: #047857;
+  --good-strong: #10b981;
+  --good-bg: #d1fae5;
+  --bad: #b91c1c;
+  --bad-strong: #ef4444;
+  --bad-bg: #fee2e2;
+  --warn: #b45309;
+  --warn-strong: #f59e0b;
+  --warn-bg: #fef3c7;
+  --neutral-bg: #f1f5f9;
+
+  /* Store identity: dataviz reference slots 1-4, validated adjacent-pairs. */
+  --store-jib: #2a78d6;
+  --store-ihavecpu: #eb6834;
+  --store-itcity: #1baf7a;
+  --store-banana: #eda100;
+
+  /* Charts: single-series hue and the diverging pair (blue <-> red, grey mid). */
+  --series-1: #2a78d6;
+  --div-neg: #2a78d6;
+  --div-pos: #e34948;
+  --div-mid: #e2e8f0;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.05), 0 4px 16px rgb(15 23 42 / 0.06);
+  --shadow-card-hover: 0 2px 4px rgb(15 23 42 / 0.06), 0 12px 28px rgb(15 23 42 / 0.1);
+  --radius-card: 12px;
+  --radius-control: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #121211;
-    --surface: #1b1b19;
-    --foreground: #ececea;
-    --muted: #a0a09a;
-    --border: #2e2e2b;
-    --accent: #58a6ff;
-    --good: #56d364;
-    --good-bg: #12261a;
-    --bad: #ff7b72;
-    --bad-bg: #2d1414;
-    --neutral-bg: #262624;
-    --warn: #e3b341;
-    --warn-bg: #2b2210;
-    --store-jib: #8c9eff;
-    --store-ihavecpu: #ff8a50;
-    --store-banana: #f2cc4d;
-    --store-itcity: #f48fb1;
+    color-scheme: dark;
+    --background: #0b1120;
+    --surface: #131c2e;
+    --surface-muted: #1b2538;
+    --foreground: #e2e8f0;
+    --muted: #94a3b8;
+    --subtle: #64748b;
+    --border: #253047;
+
+    --accent: #8fb0ff;
+    --accent-hover: #adc4ff;
+    --accent-soft: #1e2a4d;
+    --on-accent: #0b1120;
+
+    --good: #34d399;
+    --good-strong: #10b981;
+    --good-bg: #0b3326;
+    --bad: #f87171;
+    --bad-strong: #ef4444;
+    --bad-bg: #3b1416;
+    --warn: #fbbf24;
+    --warn-strong: #f59e0b;
+    --warn-bg: #3a2a0a;
+    --neutral-bg: #1b2538;
+
+    --store-jib: #3987e5;
+    --store-ihavecpu: #d95926;
+    --store-itcity: #199e70;
+    --store-banana: #c98500;
+
+    --series-1: #3987e5;
+    --div-neg: #3987e5;
+    --div-pos: #e66767;
+    --div-mid: #334155;
+
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 16px rgb(0 0 0 / 0.25);
+    --shadow-card-hover: 0 2px 4px rgb(0 0 0 / 0.45), 0 12px 28px rgb(0 0 0 / 0.35);
   }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
   --color-border: var(--border);
   --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-neutral-bg: var(--neutral-bg);
   --font-sans: var(--font-thai), ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -60,4 +122,43 @@ body {
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Raised surface: cards, tables, panels. */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.card-interactive {
+  transition:
+    box-shadow 150ms ease,
+    transform 150ms ease,
+    border-color 150ms ease;
+}
+
+.card-interactive:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--accent-soft);
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-interactive,
+  .card-interactive:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* Native <details> used for "for the statistically curious" sections. */
+details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
 }
