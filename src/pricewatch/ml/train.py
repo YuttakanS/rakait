@@ -129,15 +129,58 @@ def mlr_features(specs: pd.DataFrame) -> pd.DataFrame:
     for column in _LOG2_FOR_MLR:
         if column in out:
             out[f"log2_{column}"] = np.log2(out.pop(column).where(lambda v: v > 0))
+    if {"perf_class", "generation"} <= set(out.columns):
+        # Each GPU generation prices its tiers differently (a last-generation
+        # flagship vs a current mid-range card). Under product-grouped CV this
+        # interaction lifted R2 from 0.75 to 0.78; squares and one-hot
+        # generations did not help on 59 models.
+        out["perf_x_gen"] = out["perf_class"] * out["generation"]
     return out
 
 
+def product_key(frame: pd.DataFrame) -> pd.Series:
+    """Canonical product per listing; an unlinked listing is its own product."""
+    own = -frame["listing_id"].astype(float) - 1  # negative: never collides with an id
+    if "canonical_id" not in frame:
+        return own
+    return frame["canonical_id"].astype(float).fillna(own)
+
+
+def model_level(specs: pd.DataFrame, key: pd.Series) -> pd.DataFrame:
+    """Each spec replaced by its median over the listings of the same model.
+
+    Titles disagree on specs of one product (an i9-14900F read as 1.5 GHz base
+    at one store and 5.8 GHz, its boost, at another); a fair price is a
+    property of the product, so it is computed from one reconciled spec row.
+    Medians ignore missing values. O(n) with one groupby.
+    """
+    return specs.groupby(key).transform("median")
+
+
 def demand_features(frame: pd.DataFrame) -> pd.DataFrame:
-    """Demand signals of the specification: log views and log sales velocity."""
+    """Demand signals of the specification, per canonical product.
+
+    Views and sales velocity are summed over every listing of the same model
+    and logged. Product level, not listing level, because only JIB publishes
+    these counters: per listing, "has views" would identify the store, and the
+    same model at the same price would get a different fair price (and Deal
+    Score) at each store. A fair price is a property of the product.
+    Unlinked listings keep their own counters. O(n) with one groupby.
+    """
+    views = numeric(frame, "view_count")
+    sales = numeric(frame, "sales_per_day").clip(lower=0)
+    key = frame["canonical_id"] if "canonical_id" in frame else pd.Series(np.nan, index=frame.index)
+    linked = key.notna()
+
+    def per_product(values: pd.Series) -> pd.Series:
+        # min_count=1: a model no store publishes counters for stays NaN.
+        total = values[linked].groupby(key[linked]).transform(lambda v: v.sum(min_count=1))
+        return total.reindex(frame.index).where(linked, values)
+
     return pd.DataFrame(
         {
-            "log_views": np.log1p(numeric(frame, "view_count")),
-            "log_sales_per_day": np.log1p(numeric(frame, "sales_per_day").clip(lower=0)),
+            "log_views": np.log1p(per_product(views)),
+            "log_sales_per_day": np.log1p(per_product(sales)),
         },
         index=frame.index,
     )
@@ -250,10 +293,12 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
 
         # B. Multiple linear regression -> fair value and Deal Score.
         try:
+            key = product_key(frame)
             mlr = m.fit_fair_value(
-                pd.concat([mlr_features(specs), demand_features(frame)], axis=1),
+                pd.concat([mlr_features(model_level(specs, key)), demand_features(frame)], axis=1),
                 price,
                 required=REQUIRED_FOR_FAIR_VALUE[category],
+                groups=key,
             )
             scores = m.deal_score(mlr.z_residual)
             insights.loc[frame.index, "fair_price"] = mlr.fair_price.round(0)

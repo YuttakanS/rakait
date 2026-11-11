@@ -23,7 +23,7 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, silhouette_score
-from sklearn.model_selection import KFold, cross_val_predict
+from sklearn.model_selection import GroupKFold, KFold, cross_val_predict
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor, export_text
 
@@ -150,6 +150,7 @@ def fit_fair_value(
     price: pd.Series,
     *,
     required: list[str] | None = None,
+    groups: pd.Series | None = None,
     folds: int = 5,
 ) -> FairValueModel:
     """Fit the fair-value MLR and score each row out-of-fold.
@@ -167,6 +168,11 @@ def fit_fair_value(
         features: Numeric feature columns (NaN allowed outside ``required``).
         price: Listing price in THB, aligned with ``features``.
         required: Features a row must have to be scored.
+        groups: Product key per row. When given, folds split by product
+            (GroupKFold): every listing of a model is predicted by a fit that
+            saw none of them, so the fair price of a product is never learned
+            from that product's own prices, and identical listings of it get
+            one identical prediction instead of fold-dependent ones.
         folds: Cross-validation folds.
 
     Returns:
@@ -192,9 +198,16 @@ def fit_fair_value(
     fit_price = price.loc[complete]
     x = StandardScaler().fit_transform(design)
     y = np.log(fit_price.to_numpy(float))
-    folds = max(2, min(folds, len(y) // 5))
-    cv = KFold(n_splits=folds, shuffle=True, random_state=_RNG)
-    oof_log = cross_val_predict(LinearRegression(), x, y, cv=cv)
+    if groups is not None:
+        fit_groups = groups.loc[complete].to_numpy()
+        folds = max(2, min(folds, len(np.unique(fit_groups))))
+        oof_log = cross_val_predict(
+            LinearRegression(), x, y, cv=GroupKFold(n_splits=folds), groups=fit_groups
+        )
+    else:
+        folds = max(2, min(folds, len(y) // 5))
+        cv = KFold(n_splits=folds, shuffle=True, random_state=_RNG)
+        oof_log = cross_val_predict(LinearRegression(), x, y, cv=cv)
     model = LinearRegression().fit(x, y)
 
     resid = y - oof_log

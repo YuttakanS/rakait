@@ -308,3 +308,49 @@ def test_rule_recommendation(row: dict[str, object], expected: str | None) -> No
     label, reason = rule_recommendation(pd.Series(row))
     assert label == expected
     assert reason
+
+
+def test_demand_features_are_per_product_so_stores_get_one_fair_price() -> None:
+    from pricewatch.ml.train import demand_features
+
+    frame = pd.DataFrame(
+        {
+            "canonical_id": [1.0, 1.0, 2.0, np.nan],
+            "view_count": [1000.0, np.nan, np.nan, 50.0],  # only one store publishes views
+            "sales_per_day": [0.5, np.nan, np.nan, np.nan],
+        }
+    )
+    out = demand_features(frame)
+
+    # Both listings of product 1 carry the product's demand, whatever the store.
+    assert out["log_views"].iloc[0] == out["log_views"].iloc[1] == pytest.approx(np.log1p(1000))
+    assert np.isnan(out["log_views"].iloc[2])  # no store publishes views for product 2
+    assert out["log_views"].iloc[3] == pytest.approx(np.log1p(50))  # unlinked: own counter
+
+
+def test_fair_price_is_one_value_per_product_across_stores() -> None:
+    from pricewatch.ml.train import model_level, product_key
+
+    rng = np.random.default_rng(21)
+    rows = []
+    for product in range(40):
+        cores = rng.choice([4, 6, 8, 12, 16])
+        for store in range(3):
+            clock = 3.5 if store != 2 else 5.8  # one store's title gives the boost clock
+            rows.append(
+                {
+                    "listing_id": len(rows),
+                    "canonical_id": float(product),
+                    "log2_cores": np.log2(cores),
+                    "clock": clock,
+                    "price": np.exp(7 + 0.9 * np.log2(cores) + rng.normal(0, 0.05)),
+                }
+            )
+    frame = pd.DataFrame(rows)
+    key = product_key(frame)
+    feats = model_level(frame[["log2_cores", "clock"]], key)
+
+    fit = m.fit_fair_value(feats, frame["price"], required=["log2_cores"], groups=key)
+
+    spread = fit.fair_price.groupby(key).agg(lambda v: v.max() / v.min() - 1)
+    assert spread.max() == pytest.approx(0.0, abs=1e-9)
