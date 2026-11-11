@@ -43,6 +43,9 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Vendored agent skills (.claude/skills/*) keep their upstream style so they
+# can be updated by copying; they are not part of the pricewatch package.
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ANN", "D"]
