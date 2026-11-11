@@ -377,14 +377,45 @@ def test_name_segments_finds_hype_and_requires_a_margin() -> None:
     assert m.name_segments([(0.5, 0.7)]) == [m.FAVORITE]
 
 
+def _rule_row(
+    score: float, pct: float, band: float | None, in_stock: bool = True
+) -> dict[str, object]:
+    return {
+        "deal_score": score,
+        "pct_vs_fair": pct,
+        "fair_error_pct": band,
+        "in_stock": in_stock,
+        "stock_quantity": np.nan,
+    }
+
+
 @pytest.mark.parametrize(
     ("row", "expected"),
     [
-        ({"deal_score": 95, "in_stock": False, "stock_quantity": None}, m.WAIT),  # cannot buy
-        ({"deal_score": 85, "in_stock": True, "stock_quantity": 2}, m.BUY_NOW),
-        ({"deal_score": 70, "in_stock": True, "stock_quantity": None}, m.FAIR),
-        ({"deal_score": 10, "in_stock": True, "stock_quantity": None}, m.WAIT),
-        ({"deal_score": np.nan, "in_stock": True, "stock_quantity": None}, None),  # unscored
+        (_rule_row(95, -0.50, 0.20, in_stock=False), m.WAIT),  # cannot buy
+        (_rule_row(85, -0.30, 0.20) | {"stock_quantity": 2}, m.BUY_NOW),
+        (_rule_row(70, -0.15, 0.20), m.FAIR),
+        (_rule_row(10, 0.30, 0.20), m.WAIT),
+        (_rule_row(np.nan, np.nan, np.nan), None),  # unscored
+        # Criterion 1/2: the gap must clear the "± Y%" band shown beside it.
+        (_rule_row(85, -0.37, 0.45), m.FAIR),  # Ryzen 5 8500G on 2026-11-12
+        (_rule_row(85, -0.20, 0.20), m.FAIR),  # on the edge is still inside
+        (_rule_row(10, 0.25, 0.30), m.FAIR),
+        (_rule_row(10, 0.20, 0.20), m.FAIR),
+        # Criterion 5: no band, no buy / wait from price; sold out still waits.
+        (_rule_row(95, -0.30, np.nan), m.FAIR),
+        (_rule_row(5, 0.30, np.nan), m.FAIR),
+        (_rule_row(95, -0.30, np.nan, in_stock=False), m.WAIT),
+        (_rule_row(np.nan, -0.30, np.nan), None),
+        (_rule_row(95, -0.30, None), m.FAIR),  # a None band is unknown, not an error
+        # Compared as the whole percents the card prints: 20% vs ± 20% is not clear.
+        (_rule_row(92, -0.204, 0.196), m.FAIR),
+        (_rule_row(92, -0.215, 0.196), m.BUY_NOW),
+        (_rule_row(8, 0.204, 0.196), m.FAIR),
+        (_rule_row(8, 0.215, 0.196), m.WAIT),
+        # Clearing the band is not enough without the Deal Score threshold.
+        (_rule_row(70, -0.50, 0.20), m.FAIR),
+        (_rule_row(30, 0.50, 0.20), m.FAIR),
     ],
 )
 def test_rule_recommendation(row: dict[str, object], expected: str | None) -> None:
@@ -393,6 +424,44 @@ def test_rule_recommendation(row: dict[str, object], expected: str | None) -> No
     label, reason = rule_recommendation(pd.Series(row))
     assert label == expected
     assert reason
+    # Criterion 4: "clear" only when the gap is outside the band.
+    assert ("ชัดเจน" in reason) == (label in (m.BUY_NOW, m.WAIT) and row["in_stock"] is not False)
+
+
+def test_rule_reason_inside_band_states_gap_and_band() -> None:
+    from pricewatch.ml.train import rule_recommendation
+
+    _, cheap = rule_recommendation(pd.Series(_rule_row(85, -0.372, 0.448)))
+    _, dear = rule_recommendation(pd.Series(_rule_row(10, 0.254, 0.30)))
+    _, unknown = rule_recommendation(pd.Series(_rule_row(85, -0.30, np.nan)))
+
+    assert cheap == "ถูกกว่าราคายุติธรรม 37% แต่ยังอยู่ในช่วงคลาดเคลื่อน ±45% จึงยังสรุปไม่ได้ว่าถูกกว่าตลาดจริง"
+    assert dear == "แพงกว่าราคายุติธรรม 25% แต่ยังอยู่ในช่วงคลาดเคลื่อน ±30% จึงยังสรุปไม่ได้ว่าแพงกว่าตลาดจริง"
+    assert "30%" in unknown and "ยังไม่ทราบช่วงคลาดเคลื่อน" in unknown
+    assert "ชัดเจน" not in cheap + dear + unknown
+
+
+def test_percents_round_half_up_like_the_web() -> None:
+    from pricewatch.ml.train import gap_within_band_reason, shown_pct
+
+    # JavaScript Math.round, not Python's banker's round (36.5 -> 36).
+    assert [shown_pct(x) for x in (0.365, 0.125, 0.204, 0.196, 0.0)] == [37, 13, 20, 20, 0]
+    assert gap_within_band_reason(-0.365, 0.40).startswith("ถูกกว่าราคายุติธรรม 37% ")
+
+
+def test_run_models_buy_and_wait_only_outside_the_error_band() -> None:
+    ins = run_models(_gpu_catalogue(7), pd.DataFrame(), figures=None).insights
+
+    rec, pct, band = ins["recommendation"], ins["pct_vs_fair"], ins["fair_error_pct"]
+    assert (pct[rec == m.BUY_NOW] < -band[rec == m.BUY_NOW]).all()
+    assert (pct[rec == m.WAIT] > band[rec == m.WAIT]).all()  # all in stock here
+    # Extreme Deal Scores inside the band exist here and fall back to "fair".
+    inside = ((ins["deal_score"] >= 80) & (pct >= -band)) | (
+        (ins["deal_score"] <= 20) & (pct <= band)
+    )
+    assert inside.any() and (rec[inside] == m.FAIR).all()
+    clear = ins["recommendation_reason"].fillna("").str.contains("ชัดเจน")
+    assert rec[clear].isin([m.BUY_NOW, m.WAIT]).all()
 
 
 def test_demand_features_are_per_product_so_stores_get_one_fair_price() -> None:

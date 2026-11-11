@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v4"
+MODEL_VERSION = "2026.11-v5"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -316,25 +317,92 @@ UNCERTAIN_REASON = (
 NO_FAIR_PRICE = "ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ"
 
 
+def shown_pct(fraction: float) -> int:
+    """Whole percent exactly as the web prints a fraction.
+
+    Matches JavaScript ``Math.round(fraction * 100)`` (``formatBand``,
+    ``BelowFairTag``, ``FairDelta``): halves round up, unlike Python's
+    banker's ``round``. O(1).
+
+    Args:
+        fraction: A non-NaN ratio such as 0.365 for 36.5%.
+
+    Returns:
+        The rounded whole percent, e.g. 37.
+    """
+    return math.floor(fraction * 100 + 0.5)
+
+
+def gap_clears_band(pct_vs_fair: float, fair_error_pct: float) -> bool:
+    """Whether the shown gap exceeds the shown "± Y%" band.
+
+    Both sides are compared as the whole percents the shopper reads, so a
+    card never pairs "ถูกกว่า 20%" with "± 20%" under a "ชัดเจน" verdict.
+
+    Args:
+        pct_vs_fair: Non-NaN price / fair - 1 (negative = cheaper).
+        fair_error_pct: Half-width of the 80% interval as a fraction; NaN or
+            None when unknown, which never clears.
+
+    Returns:
+        True only when the band is known and the rounded gap is larger.
+    """
+    if pd.isna(fair_error_pct):
+        return False
+    return shown_pct(abs(pct_vs_fair)) > shown_pct(fair_error_pct)
+
+
+def gap_within_band_reason(pct_vs_fair: float, fair_error_pct: float) -> str:
+    """Reason for a Deal Score extreme whose gap the error band cannot confirm.
+
+    Args:
+        pct_vs_fair: Non-NaN price / fair - 1 (negative = cheaper); the
+            caller filters NaN out first.
+        fair_error_pct: Half-width of the 80% interval as a fraction, or
+            NaN / None when unknown.
+
+    Returns:
+        A shopper-facing Thai sentence naming the gap and the band in whole
+        percents as the web prints them (``shown_pct``), or saying the band
+        is unknown.
+    """
+    side = "ถูกกว่า" if pct_vs_fair < 0 else "แพงกว่า"
+    gap = f"{side}ราคายุติธรรม {shown_pct(abs(pct_vs_fair))}%"
+    if pd.isna(fair_error_pct):
+        return f"{gap} แต่ยังไม่ทราบช่วงคลาดเคลื่อนของราคานี้ จึงยังสรุปไม่ได้ว่า{side}ตลาดจริง"
+    band = shown_pct(fair_error_pct)
+    return f"{gap} แต่ยังอยู่ในช่วงคลาดเคลื่อน ±{band}% จึงยังสรุปไม่ได้ว่า{side}ตลาดจริง"
+
+
 def rule_recommendation(row: pd.Series) -> tuple[str | None, str]:
     """Transparent fallback while the timing tree is not reliable enough.
 
     Deal Score 80 / 20 is about one standard deviation below / above fair
-    value (roughly the cheapest / dearest fifth of listings). A listing
-    without a Deal Score gets no recommendation rather than a "fair price"
-    verdict it has no evidence for.
+    value (roughly the cheapest / dearest fifth of listings). A buy / wait
+    call also needs the gap to exceed the fair price's "± Y%" error band, both
+    as the whole percents the web prints (``gap_clears_band``): otherwise the
+    page would call a 37% gap "clear" beside a ±45% band. Inside the band, or
+    with no band, the listing gets "fair price" with the gap and band spelled
+    out. A listing without a Deal Score gets no recommendation rather than a
+    "fair price" verdict it has no evidence for. O(1) per row.
     """
     score = row.get("deal_score")
+    pct = row.get("pct_vs_fair", np.nan)
+    band = row.get("fair_error_pct", np.nan)
     if row.get("in_stock") is False:
         return m.WAIT, "สินค้าหมดที่ร้านนี้ รอของเข้าหรือดูร้านอื่น"
-    if pd.isna(score):
+    if pd.isna(score) or pd.isna(pct):
         return None, NO_FAIR_PRICE
-    if pd.notna(score) and score >= 80:
-        quantity = row.get("stock_quantity")
-        low = pd.notna(quantity) and quantity <= 3
-        return m.BUY_NOW, "ถูกกว่าราคายุติธรรมของสเปกนี้ชัดเจน" + (" และสต็อกเหลือน้อย" if low else "")
-    if pd.notna(score) and score <= 20:
-        return m.WAIT, "แพงกว่าราคายุติธรรมของสเปกนี้ชัดเจน"
+    if score >= 80:
+        if pct < 0 and gap_clears_band(pct, band):
+            quantity = row.get("stock_quantity")
+            low = pd.notna(quantity) and quantity <= 3
+            return m.BUY_NOW, "ถูกกว่าราคายุติธรรมของสเปกนี้ชัดเจน" + (" และสต็อกเหลือน้อย" if low else "")
+        return m.FAIR, gap_within_band_reason(pct, band)
+    if score <= 20:
+        if pct > 0 and gap_clears_band(pct, band):
+            return m.WAIT, "แพงกว่าราคายุติธรรมของสเปกนี้ชัดเจน"
+        return m.FAIR, gap_within_band_reason(pct, band)
     return m.FAIR, "ราคาใกล้เคียงราคายุติธรรมของสเปกนี้"
 
 

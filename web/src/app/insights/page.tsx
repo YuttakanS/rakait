@@ -66,9 +66,18 @@ const SECTIONS = [
 
 /** The rules behind the badges while the decision tree is below its bar (train.rule_recommendation). */
 const ADVICE_RULES: { value: Recommendation; rule: string }[] = [
-  { value: "buy_now", rule: "Deal Score 80 ขึ้นไป: ถูกกว่าราคายุติธรรมของสเปกนี้ชัดเจน" },
-  { value: "wait", rule: "Deal Score 20 ลงมา (แพงกว่าราคายุติธรรมชัดเจน) หรือสินค้าหมดที่ร้านนั้น" },
-  { value: "fair_price", rule: "อยู่ระหว่างนั้น: ราคาใกล้เคียงราคายุติธรรม ซื้อได้ไม่เสียเปรียบ" },
+  {
+    value: "buy_now",
+    rule: "Deal Score 80 ขึ้นไป และถูกกว่าราคายุติธรรมมากกว่าช่วงคลาดเคลื่อน ± ที่แสดงคู่กัน: ถูกกว่าราคายุติธรรมของสเปกนี้ชัดเจน",
+  },
+  {
+    value: "wait",
+    rule: "Deal Score 20 ลงมา และแพงกว่าราคายุติธรรมมากกว่าช่วงคลาดเคลื่อน ± (แพงกว่าชัดเจน) หรือสินค้าหมดที่ร้านนั้น",
+  },
+  {
+    value: "fair_price",
+    rule: "ที่เหลือที่มี Deal Score: ราคาใกล้เคียงราคายุติธรรม หรือส่วนต่างยังไม่เกินช่วง ± (หรือยังไม่ทราบช่วง) จึงยังสรุปไม่ได้ว่าถูกหรือแพงกว่าตลาดจริง",
+  },
 ];
 
 const num = (v: unknown): number => (typeof v === "number" ? v : Number.NaN);

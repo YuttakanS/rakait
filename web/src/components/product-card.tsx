@@ -6,9 +6,14 @@ import { CATEGORY_LABELS, formatBand, formatTHB } from "@/lib/format";
 import type { ProductSummary } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
 
-/** Fair price worth printing: the headline offer's, while it is in stock. */
+/**
+ * Fair price worth printing: the headline offer's, while it is in stock and
+ * trusted. An uncertain fair price (over 40% from the market) is left off the
+ * card, where "฿X" next to a far lower price would read as a half-price deal;
+ * the product page still shows it with its explanation.
+ */
 export function shownFair(p: ProductSummary): number | null {
-  return p.inStockOffers > 0 ? p.fairPrice : null;
+  return p.inStockOffers > 0 && !p.fairUncertain ? p.fairPrice : null;
 }
 
 /**
@@ -77,7 +82,15 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
 
         {inStock && (
           <div className="space-y-1.5">
-            {p.fairUncertain ? <UncertainTag /> : <BelowFairTag pct={p.bestPctVsFair} />}
+            {p.fairUncertain ? (
+              <>
+                <UncertainTag />
+                {/* Visible, not a tooltip: phones cannot hover. */}
+                <p className="text-xs leading-snug text-muted">ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล</p>
+              </>
+            ) : (
+              <BelowFairTag pct={p.bestPctVsFair} />
+            )}
             <VerdictBadges verdict={verdict} />
           </div>
         )}

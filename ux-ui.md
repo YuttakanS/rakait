@@ -196,7 +196,7 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | **AutoSubmitSelect** | `auto-submit-select.tsx` (client) | Native `<select>` that submits its form on change; still works without JS via the button. Custom chevron, `sr-only` label. |
 | **Cluster toggle** | `app/page.tsx` | Pill `<Link>` with icon + label, `aria-pressed`; active = navy fill. Clicking the active one clears it; "ล้างตัวกรอง" appears when set. |
 | **ProductImage** | `product-image.tsx` (client) | Merchant image hot-linked at the variant `lib/images.ts` picks for its displayed size; `width`/`height` reserve the box; `priority` (first 4 cards, product hero) = eager + `fetchpriority="high"`, everything else lazy; `referrerPolicy="no-referrer"`; on load error, or no image, the category glyph on `--surface-muted`. Never proxied or stored. |
-| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ฿x ± y%" (80% prediction interval, `formatBand`) whenever an in-stock fair price exists, else "สูงสุด ฿max" → BelowFairTag, then `VerdictBadges` (recommendation + the headline offer's cluster, conflict note under them) → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" with N = stores in stock (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out, where the price drops to a small "ราคาล่าสุด ฿x" and no badges show). The fair price is never struck through or presented as a former price, and never shown without its ± band. |
+| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ฿x ± y%" (80% prediction interval, `formatBand`) whenever an in-stock fair price exists and is not `fairUncertain`, else "สูงสุด ฿max" → BelowFairTag (uncertain: the amber "ประเมินไม่แน่นอน" tag plus the visible line "ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล", and no fair-price figure on the card), then `VerdictBadges` (recommendation + the headline offer's cluster, conflict note under them) → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" with N = stores in stock (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out, where the price drops to a small "ราคาล่าสุด ฿x" and no badges show). The fair price is never struck through or presented as a former price, and never shown without its ± band. |
 | **DealTag / BelowFairTag** | `badges.tsx` | Card tags, 6 px radius. DEAL ≥ 70 solid green, ≤ 30 solid red, else white with border; "▼ ถูกกว่าราคายุติธรรม x%" on `good-bg`. |
 | **DealScore** | `badges.tsx` | Pill `Deal {n}`; ≥ 70 good, ≤ 30 bad, else neutral; `prominent` variant for card corners. |
 | **RecommendationBadge** | `badges.tsx` | Icon + word; buy_now good, wait warn, fair neutral. The reason text is a `title` tooltip in rows and a sentence in the product hero. |
@@ -317,7 +317,19 @@ export default async function Page() {
   more than 40% away from its fair price shows the amber "ประเมินไม่แน่นอน"
   tag instead of DEAL / "▼ ถูกกว่า", a DealMeter without a bar, no
   recommendation, and is never ranked as a deal (its Deal Score is null).
-  Every fair price carries "± y%", the half-width of its 80% interval.
+  Its card hides the fair-price figure (the product page keeps it with the
+  explanation). Every other fair price carries "± y%", the half-width of its
+  80% interval.
+- ซื้อเลย / รอก่อน never claim more than the band shows (model 2026.11-v5):
+  ซื้อเลย needs Deal ≥ 80 **and** a gap below fair larger than the "± y%"
+  band; รอก่อน (pricey) needs Deal ≤ 20 **and** a gap above fair larger than
+  the band. Inside the band, or with no band, the offer gets ราคาเหมาะสม and a
+  reason naming both numbers, e.g.
+  "ถูกกว่าราคายุติธรรม 37% แต่ยังอยู่ในช่วงคลาดเคลื่อน ±45% จึงยังสรุปไม่ได้ว่าถูกกว่าตลาดจริง"
+  (whole percentages, as `formatBand` prints them). The comparison itself
+  uses those printed whole percents (`Math.round`, halves up), so "ถูกกว่า 20%"
+  beside "± 20%" is never "ชัดเจน". "…ชัดเจน" appears only in reasons that cleared
+  the band. Sold out still gives รอก่อน.
 - No fair price is estimated when a listing's title lacks a core spec (VRAM and
   chip; cores and threads; capacity and speed; capacity and interface). Such a
   listing shows `–` for Deal Score, no recommendation, and the reason
