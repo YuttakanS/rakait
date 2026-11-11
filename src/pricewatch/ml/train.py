@@ -20,7 +20,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v2"
+MODEL_VERSION = "2026.11-v3"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -132,6 +132,10 @@ def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
                 "shader_cores": numeric(frame, "shader_cores"),
                 "boost_clock_mhz": numeric(frame, "boost_clock_mhz"),
                 "bus_width_bit": numeric(frame, "bus_width_bit"),
+                "is_amd": frame.get("chip", pd.Series(dtype=object, index=frame.index))
+                .astype(str)
+                .str.contains(r"\bRX \d", regex=True)
+                .astype(float),
             },
             index=frame.index,
         )
@@ -191,6 +195,18 @@ REQUIRED_FOR_FAIR_VALUE: dict[Category, list[str]] = {
     Category.CPU: ["log2_cores", "log2_threads"],
     Category.RAM: ["log2_capacity_gb", "speed_mhz"],
     Category.SSD: ["log2_capacity_gb", "nvme"],
+}
+
+
+#: Specs the tier tree may split on but the fair-value MLR leaves out. Shader
+#: counts and clocks are not comparable across vendors (an RX 9070 XT's 4,096
+#: stream processors vs an RTX 5070 Ti's 8,960 CUDA cores; Radeon boost clocks
+#: run ~500 MHz higher), so one slope for both mispriced Radeons by up to 2x.
+#: Product-grouped CV on live GPUs (2026-11-12): R2 0.761 -> 0.930, MAPE
+#: 22.7% -> 14.2%, in-stock listings "over 40% below fair" 19 -> 1, with the
+#: vendor carried by ``is_amd`` instead.
+NOT_IN_MLR: dict[Category, tuple[str, ...]] = {
+    Category.GPU: ("shader_cores", "boost_clock_mhz"),
 }
 
 
@@ -363,7 +379,15 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         try:
             key = product_key(frame)
             mlr = m.fit_fair_value(
-                pd.concat([mlr_features(model_level(specs, key)), demand_features(frame)], axis=1),
+                pd.concat(
+                    [
+                        mlr_features(
+                            model_level(specs.drop(columns=list(NOT_IN_MLR.get(category, ()))), key)
+                        ),
+                        demand_features(frame),
+                    ],
+                    axis=1,
+                ),
                 price,
                 required=REQUIRED_FOR_FAIR_VALUE[category],
                 groups=key,

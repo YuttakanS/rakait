@@ -266,18 +266,29 @@ def test_extrapolated_rows_are_not_scored() -> None:
     assert fit.leverage is not None and (fit.leverage.iloc[1:] <= m.MAX_LEVERAGE).all()
 
 
-def test_run_models_end_to_end_on_synthetic_catalogue() -> None:
-    # Eight products (four chips x two VRAM sizes), so every product shares
-    # each spec value with another: product-grouped CV can price each one
-    # from the rest. With one product per chip it could not, and only the
-    # pseudo-inverse's arbitrary split of a constant column used to hide that.
-    n = 120
-    names = ["GeForce RTX 5060", "GeForce RTX 5070", "Radeon RX 9060 XT", "Radeon RX 9070 XT"]
-    chip_idx = RNG.integers(0, 4, size=n)
-    big = RNG.integers(0, 2, size=n)
+def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
+    rng = np.random.default_rng(seed)  # own stream: independent of test order
+    # Twelve products (six chips, three per vendor, x two VRAM sizes), so
+    # every product shares each spec value with others: product-grouped CV
+    # can price each one from the rest within the leverage limit. With one
+    # product per chip it could not, and only the pseudo-inverse's arbitrary
+    # split of a constant column used to hide that.
+    n = 180
+    names = [
+        "GeForce RTX 5060",
+        "GeForce RTX 5060 Ti",
+        "GeForce RTX 5070",
+        "Radeon RX 9060 XT",
+        "Radeon RX 9070",
+        "Radeon RX 9070 XT",
+    ]
+    chip_idx = rng.integers(0, 6, size=n)
+    big = rng.integers(0, 2, size=n)
     chips = np.array(names)[chip_idx]
     vram = np.where(big == 1, 16, 8)
-    base = np.array([11000, 20000, 12000, 26000])[chip_idx] * np.where(big == 1, 1.15, 1.0)
+    base = np.array([11000, 15000, 20000, 12000, 21000, 26000])[chip_idx] * np.where(
+        big == 1, 1.15, 1.0
+    )
     current = pd.DataFrame(
         {
             "listing_id": np.arange(n),
@@ -286,9 +297,9 @@ def test_run_models_end_to_end_on_synthetic_catalogue() -> None:
             "manufacturer": "NVIDIA",
             "chip": chips,
             "vram_gb": vram,
-            "price": base * RNG.uniform(0.9, 1.1, size=n),
-            "view_count": RNG.lognormal(8, 1.5, size=n),
-            "sales_per_day": RNG.lognormal(-2, 1.5, size=n),
+            "price": base * rng.uniform(0.9, 1.1, size=n),
+            "view_count": rng.lognormal(8, 1.5, size=n),
+            "sales_per_day": rng.lognormal(-2, 1.5, size=n),
             "views_per_day": np.nan,
             "in_stock": True,
             "stock_quantity": np.nan,
@@ -299,10 +310,17 @@ def test_run_models_end_to_end_on_synthetic_catalogue() -> None:
     report = run_models(current, pd.DataFrame(), figures=None)
 
     ins = report.insights
-    assert ins["deal_score"].between(0, 100).all()
-    assert ins["fair_price"].notna().all()
-    assert set(ins["recommendation"]) <= {m.BUY_NOW, m.WAIT, m.FAIR}
-    assert ins["recommendation_reason"].str.startswith("กฎจาก Deal Score").all()  # no history yet
+    scored = ins["fair_price"].notna()
+    # Some folds hold out every high-class Radeon at once; those rows lie
+    # outside what the fold saw (leverage > 1) and are rightly left unscored.
+    assert scored.mean() >= 0.75
+    assert ins.loc[scored, "deal_score"].between(0, 100).all()
+    assert ins.loc[~scored, "deal_score"].isna().all()
+    advised = ins["recommendation"].notna()  # no score and no history: no advice
+    assert advised[scored].all()
+    assert set(ins.loc[advised, "recommendation"]) <= {m.BUY_NOW, m.WAIT, m.FAIR}
+    # No history yet, so every recommendation comes from the Deal Score rules.
+    assert ins.loc[advised, "recommendation_reason"].str.startswith("กฎจาก Deal Score").all()
     assert ("gpu", "simple_regression") in report.market
     assert ("gpu", "fair_value_mlr") in report.market
     assert ("all", "demand_kmeans") in report.market
@@ -499,3 +517,17 @@ def test_indicator_unseen_by_a_fold_does_not_blow_up_the_fair_price() -> None:
     ratio = (fit.fair_price / price).dropna()
     assert ratio.between(0.8, 1.25).all()
     assert fit.r2_cv > 0.9
+
+
+def test_gpu_mlr_leaves_out_vendor_incomparable_specs() -> None:
+    from pricewatch.ml.train import NOT_IN_MLR, spec_features
+    from pricewatch.models import Category
+
+    frame = pd.DataFrame(
+        {"chip": ["Radeon RX 9070 XT", "GeForce RTX 5070 Ti", None], "vram_gb": [16, 16, 8]}
+    )
+    specs = spec_features(frame, Category.GPU)
+
+    assert specs["is_amd"].tolist() == [1.0, 0.0, 0.0]
+    assert {"shader_cores", "boost_clock_mhz"} <= set(NOT_IN_MLR[Category.GPU])
+    assert "is_amd" not in NOT_IN_MLR[Category.GPU]

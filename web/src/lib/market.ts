@@ -147,6 +147,7 @@ export const FACTOR_HINTS: Record<string, string> = {
   x3d: "ซีรีส์ X3D ของ AMD เน้นเล่นเกม",
   unlocked: "รุ่น K / KF / X ที่ปรับแต่งได้",
   is_amd: "เทียบกับ Intel ที่สเปกเท่ากัน",
+  "gpu.is_amd": "Radeon เทียบกับ GeForce ที่สเปกเท่ากัน",
   speed_mhz: "เช่น 5200 → 6000 MHz",
   ddr5: "เทียบกับ DDR4",
   modules: "จำนวนแผงในชุด",
