@@ -158,7 +158,7 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | **Search + filters panel** | `app/page.tsx` | One `.card`. GET `<form action="/">`: search input with a magnifier icon inside (`h-10`), category `<select>`, sort `<select>`, navy `ค้นหา` button (`h-10`). Below a divider: demand-cluster toggle buttons. Filters are URL state. |
 | **AutoSubmitSelect** | `auto-submit-select.tsx` (client) | Native `<select>` that submits its form on change; still works without JS via the button. Custom chevron, `sr-only` label. |
 | **Cluster toggle** | `app/page.tsx` | Pill `<Link>` with icon + label, `aria-pressed`; active = navy fill. Clicking the active one clears it; "ล้างตัวกรอง" appears when set. |
-| **ProductImage** | `product-image.tsx` | Merchant thumbnail hot-linked as served (`loading="lazy"`, `referrerPolicy="no-referrer"`, `object-contain` on white). No image → category glyph on `--surface-muted`. Never proxied or stored. |
+| **ProductImage** | `product-image.tsx` (client) | Merchant image hot-linked at the variant `lib/images.ts` picks for its displayed size; `width`/`height` reserve the box; `priority` (first 4 cards, product hero) = eager + `fetchpriority="high"`, everything else lazy; `referrerPolicy="no-referrer"`; on load error, or no image, the category glyph on `--surface-muted`. Never proxied or stored. |
 | **ProductCard** | `app/page.tsx` | Whole card is the link (`.card-interactive`). Image (4:3) with **Deal badge in the top-right corner** → meta → name → **price (largest)** + "ถึง ฿max" → ▼/▲ fair delta → footer: store count, recommendation, clusters. |
 | **DealScore** | `badges.tsx` | Pill `Deal {n}`; ≥ 70 good, ≤ 30 bad, else neutral; `prominent` variant for card corners. |
 | **RecommendationBadge** | `badges.tsx` | Icon + word; buy_now good, wait warn, fair neutral. The reason text is a `title` tooltip in rows and a sentence in the product hero. |
@@ -262,7 +262,19 @@ export default async function Page() {
 - Client JS is limited to `PriceChart`, `SpecScatter` and `AutoSubmitSelect`;
   charts are hand-written SVG (no chart library), O(points) per render, hover
   is O(points) per pointer move.
-- Images are lazy, decoded async, hot-linked from merchant CDNs (no proxying).
+- Images (see `lib/images.ts`): served straight from the merchants' CDNs at
+  the smallest adequate variant (Cloudinary `c_limit,w_…,f_auto,q_auto` for IT
+  City; BaNANA `-thumbnail` WebP for cards, full only for the hero; JIB
+  `medium`; IHAVECPU `_150`). `<link rel="preconnect">` to the four image
+  origins sits in the root `<head>`. No `next/image` optimizer: the CDNs already
+  resize and re-encode, so Vercel Image Optimization would only add a cold
+  transform hop and per-image quota.
+- Vercel: functions pinned to `syd1` (`web/vercel.json`), the region of the
+  Supabase database, so each query is a same-region round trip. Product pages
+  are ISR (`generateStaticParams` returns `[]` + `revalidate = 900`): rendered
+  once, then served from the edge near the visitor. The insights page is
+  static with the same revalidation; the product list is dynamic (search
+  params) and is the one page that always reaches the database.
 - One web font (Noto Sans Thai via `next/font`).
 
 ## 10. Review checklist

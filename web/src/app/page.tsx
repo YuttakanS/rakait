@@ -123,11 +123,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
             {products.length === 60 && " (แสดง 60 อันดับแรก)"}
           </p>
           <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {products.map((p) => (
+            {products.map((p, index) => (
               <li key={p.id}>
                 <Link href={`/product/${p.id}`} className="card card-interactive flex h-full flex-col overflow-hidden">
                   <div className="relative border-b border-border">
-                    <ProductImage src={p.imageUrl} alt={p.model} category={p.category} className="aspect-[4/3] rounded-none" />
+                    <ProductImage
+                      src={p.imageUrl}
+                      alt={p.model}
+                      category={p.category}
+                      size={200}
+                      priority={index < 4}
+                      className="aspect-[4/3] rounded-none"
+                    />
                     <div className="absolute top-3 right-3">
                       <DealScore score={p.bestDeal} prominent />
                     </div>

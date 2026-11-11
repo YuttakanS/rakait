@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Noto_Sans_Thai } from "next/font/google";
 import Link from "next/link";
+import { IMAGE_ORIGINS } from "@/lib/images";
 import { getLastUpdated } from "@/lib/queries";
 import { formatDateTime, merchantList } from "@/lib/format";
 import "./globals.css";
@@ -22,6 +23,15 @@ export default async function RootLayout({
   const updated = await getLastUpdated().catch(() => null);
   return (
     <html lang="th">
+      <head>
+        {/* Open TLS connections to the merchant image CDNs while the HTML is
+            still parsing, so the first thumbnails skip DNS + TCP + TLS
+            (~100-300 ms per origin). Plain <link> tags: in the initial HTML,
+            not deferred to the RSC payload. */}
+        {IMAGE_ORIGINS.map((origin) => (
+          <link key={origin} rel="preconnect" href={origin} />
+        ))}
+      </head>
       <body className={`${notoThai.variable} antialiased`}>
         <header className="sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur">
           <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">

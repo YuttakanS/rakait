@@ -11,6 +11,15 @@ import type { Offer } from "@/lib/types";
 
 export const revalidate = 900;
 
+/**
+ * Incremental static regeneration: no product is pre-built, each is rendered
+ * on its first request and then served from the CDN edge for 15 minutes, so
+ * repeat visitors in Thailand never wait on the Sydney database round trip.
+ */
+export function generateStaticParams(): { id: string }[] {
+  return [];
+}
+
 const SPEC_LABELS: Record<string, string> = {
   chip: "ชิป",
   vram_gb: "VRAM (GB)",
@@ -134,7 +143,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
       {/* Hero: the answer first: cheapest price, where, and how it compares. */}
       <section className="card grid gap-6 p-5 sm:p-6 md:grid-cols-[260px_1fr]">
-        <ProductImage src={image} alt={product.model} category={product.category} className="mx-auto aspect-square w-full max-w-[220px] border border-border md:max-w-none" />
+        <ProductImage
+          src={image}
+          alt={product.model}
+          category={product.category}
+          size={260}
+          priority
+          className="mx-auto aspect-square w-full max-w-[220px] border border-border md:max-w-none" />
         <div className="flex flex-col gap-4">
           <div className="space-y-1">
             <p className="text-xs text-muted">
