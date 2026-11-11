@@ -157,3 +157,32 @@ def test_reconcile_specs_takes_median_and_fills_gaps() -> None:
 )
 def test_itcity_title_conventions(category: Category, title: str, model: str) -> None:
     assert extract(category, title).model == model
+
+
+@pytest.mark.parametrize(
+    ("category", "title"),
+    [
+        (Category.GPU, "VGA (การ์ดแสดงผล) LEADTEK NVIDIA RTX PRO 6000 BLACKWELL - 96GB GDDR7"),
+        (Category.GPU, "VGA (การ์ดแสดงผล) SAPPHIRE AMD RADEON AI PRO R9700 32GB GDDR6"),
+        (Category.GPU, "VGA (การ์ดแสดงผล) INTEL ARC PRO B70 - 32GB GDDR6"),
+        (Category.GPU, "VGA (การ์ดแสดงผล) LEADTEK NVIDIA T400 4GB - 4GB GDDR6"),
+        (Category.GPU, "การ์ดจอ AMD VGA RADEON PRO WX2100 2GB GDDR5 64-bit"),
+        (Category.RAM, "RAM NOTEBOOK (แรมโน้ตบุ๊ค) CRUCIAL 16GB DDR5-4800 SODIMM CL40"),
+        (Category.RAM, "8GB (8GBx1) DDR3L 1600MHz RAM (หน่วยความจำ) KINGSTON VALUE RAM"),
+        (Category.RAM, "2 GB RAM PC DDR2/800 KINGMAX"),
+    ],
+)
+def test_out_of_scope_listings_are_marked_excluded(category: Category, title: str) -> None:
+    ex = extract(category, title)
+    assert ex.excluded and ex.model is None
+
+
+def test_consumer_parts_are_not_excluded() -> None:
+    assert not extract(Category.GPU, "ASUS DUAL RTX 5060 8GB GDDR7").excluded
+    assert not extract(Category.RAM, "CORSAIR 32GB (16GBx2) DDR5 6000MHz").excluded
+
+
+def test_ssd_line_spacing_is_canonical() -> None:
+    a = extract(Category.SSD, "SANDISK OPTIMUS GX 7100 1TB M.2 PCIe 4 NVMe").model
+    b = extract(Category.SSD, "SANDISK OPTIMUS GX7100 1TB M.2 PCIe 4 NVMe").model
+    assert a == b == "SanDisk OPTIMUS GX7100 1TB"

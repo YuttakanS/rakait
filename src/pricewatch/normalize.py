@@ -85,12 +85,16 @@ class Extracted:
         model: Canonical model name; listings sharing it are the same product
             for comparison purposes. ``None`` when the title is not understood.
         specs: Numeric/categorical attributes for the ML feature matrix.
+        excluded: The listing is deliberately out of scope (workstation GPU,
+            notebook RAM), as opposed to merely not understood: neither rules
+            nor similarity matching may link it.
     """
 
     brand: str | None
     manufacturer: str | None
     model: str | None
     specs: dict[str, Any] = field(default_factory=dict)
+    excluded: bool = False
 
 
 def find_brand(text: str) -> str | None:
@@ -126,7 +130,13 @@ _MEMTYPE_RE = re.compile(r"\b(GDDR\dX?)\b", re.IGNORECASE)
 _BUS_RE = re.compile(r"\b(\d{2,3})\s*-?\s*BIT\b", re.IGNORECASE)
 _CUDA_RE = re.compile(r"(?:CUDA|Stream)[^:\n]*:\s*([\d,]{3,6})", re.IGNORECASE)
 _BOOST_RE = re.compile(r"Boost(?:\s*Clock)?\s*:?\s*(\d{3,4})\s*MHz", re.IGNORECASE)
-_WORKSTATION_RE = re.compile(r"QUADRO|RADEON\s*PRO|\bRTX\s*A\d{3,4}\b|\bW\d{4}\b", re.IGNORECASE)
+# Workstation / pro cards: priced for certification and support, not specs, so
+# they would distort the consumer fair-value model. Explicitly excluded.
+_WORKSTATION_RE = re.compile(
+    r"QUADRO|RADEON\s*(?:AI\s*)?PRO|\bWX\s*\d{3,4}\b|\bW\d{4}\b|\bRTX\s*(?:PRO|A\d{3,4})\b"
+    r"|\bARC\s*PRO\b|\bNVIDIA\s+(?:A\d{3,4}|T\d{3,4}|P\d{4})\b",
+    re.IGNORECASE,
+)
 
 
 def extract_gpu(title: str, spec_text: str | None = None) -> Extracted:
@@ -147,7 +157,7 @@ def extract_gpu(title: str, spec_text: str | None = None) -> Extracted:
         specs["vram_gb"] = int(vram.group(1))
 
     if _WORKSTATION_RE.search(title):
-        return Extracted(brand, None, None, specs)
+        return Extracted(brand, None, None, specs, excluded=True)
 
     chip: str | None = None
     maker: str | None = None
@@ -246,12 +256,18 @@ _SPEED_BARE_RE = re.compile(
     r"\b(2133|2400|2666|2933|3000|3200|3600|4000|4800|5200|5600|6000|6400|6800|7200|7600|8000)\b"
 )
 _CL_RE = re.compile(r"\bCL\s*(\d{2})\b", re.IGNORECASE)
+# Laptop modules and pre-DDR4 generations are out of scope: desktop kits only.
+_RAM_OUT_OF_SCOPE_RE = re.compile(
+    r"SO-?DIMM|NOTEBOOK|โน้ตบุ๊ค|โน้ตบุ๊ก|\bNB\b|\bDDR[12]\b|\bDDR3L?\b", re.IGNORECASE
+)
 
 
 def extract_ram(title: str, spec_text: str | None = None) -> Extracted:
     """Parse a memory kit listing into DDR generation, layout and speed."""
     text = f"{title}\n{spec_text or ''}"
     brand = find_brand(title)
+    if _RAM_OUT_OF_SCOPE_RE.search(title):
+        return Extracted(brand, brand, None, {}, excluded=True)
     specs: dict[str, Any] = {}
     ddr = _DDR_RE.search(text)
     total = _TOTAL_GB_RE.search(title)
@@ -316,7 +332,10 @@ _SSD_CODE_STOP = re.compile(
 def _ssd_line(title: str, brand: str) -> str | None:
     """Return the product line: a known name, else the first plausible code."""
     if (line := _SSD_LINE_RE.search(title)) is not None:
-        return re.sub(r"\s+", " ", line.group(1).upper())
+        name = re.sub(r"\s+", " ", line.group(1).upper())
+        # "OPTIMUS GX 7100" and "OPTIMUS GX7100" are one line (found by the
+        # similarity duplicate report): glue short letter prefixes to digits.
+        return re.sub(r"\b([A-Z]{1,3}) (\d)", r"\1\2", name)
     brand_end = 0
     for regex, name in _BRAND_RES:
         if name == brand and (match := regex.search(title)) is not None:
