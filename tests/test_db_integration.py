@@ -299,11 +299,18 @@ async def test_train_persists_insights(conn, tmp_path) -> None:
 
     await apply_migrations(conn)
     rng = np.random.default_rng(1)
-    chips = {"5060": (8, 11000), "5070": (12, 20000), "5080": (16, 38000)}
+    # Nine products (three chips x three VRAM sizes) so product-grouped CV
+    # can price each one from products sharing its chip or VRAM. With one
+    # product per chip every fold extrapolates (fair prices off by 97-220%),
+    # and those rows are rightly flagged fair_uncertain with no Deal Score.
+    products = [
+        (chip, vram, round(base * (1.15 if vram == 16 else 1.0)))
+        for chip, base in (("5060", 11000), ("5060 Ti", 14000), ("5070", 20000))
+        for vram in (8, 12, 16)
+    ]
     listings = []
     for i in range(60):
-        chip = list(chips)[i % 3]
-        vram, base = chips[chip]
+        chip, vram, base = products[i % len(products)]
         listings.append(
             ScrapedListing(
                 merchant=["jib", "ihavecpu", "banana"][i % 3],
@@ -327,6 +334,12 @@ async def test_train_persists_insights(conn, tmp_path) -> None:
     assert (
         await conn.fetchval(
             "SELECT count(*) FROM listing_insights WHERE deal_score BETWEEN 0 AND 100"
+        )
+        == 60
+    )
+    assert (
+        await conn.fetchval(
+            "SELECT count(*) FROM listing_insights WHERE fair_error_pct > 0 AND NOT fair_uncertain"
         )
         == 60
     )
