@@ -20,6 +20,12 @@ jobs:
     # install it with scripts/setup-runner.ps1. While that machine is off,
     # runs queue and start when it comes back (GitHub drops them after 24 h).
     runs-on: [self-hosted, Windows, pricewatch]
+    defaults:
+      run:
+        # Windows PowerShell's default execution policy (Restricted) refuses
+        # the temporary .ps1 the runner writes per step; cmd needs no policy
+        # change on the host and every step is a single command.
+        shell: cmd
     timeout-minutes: 45
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
