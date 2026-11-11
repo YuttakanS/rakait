@@ -119,6 +119,8 @@ _NVIDIA_RE = re.compile(
 _AMD_GPU_RE = re.compile(r"\bRX\s*-?\s*(\d{4})\s*(XTX|XT|GRE)?\b", re.IGNORECASE)
 _INTEL_GPU_RE = re.compile(r"\bARC\s*([AB]\d{3})\b", re.IGNORECASE)
 _VRAM_RE = re.compile(r"\b(\d{1,2})\s*G(?:B)?\s*(?:GDDR|-?\s*GDDR)", re.IGNORECASE)
+# ASUS part-number style "O8G" / "O16G" (factory OC, 8 GB): "DUAL-RTX5060-O8G".
+_VRAM_ASUS_RE = re.compile(r"\bO(\d{1,2})G\b", re.IGNORECASE)
 _VRAM_FALLBACK_RE = re.compile(r"\b(\d{1,2})\s*GB?\b", re.IGNORECASE)
 _MEMTYPE_RE = re.compile(r"\b(GDDR\dX?)\b", re.IGNORECASE)
 _BUS_RE = re.compile(r"\b(\d{2,3})\s*-?\s*BIT\b", re.IGNORECASE)
@@ -140,7 +142,7 @@ def extract_gpu(title: str, spec_text: str | None = None) -> Extracted:
         specs["boost_clock_mhz"] = int(boost.group(1))
     if (mem := _MEMTYPE_RE.search(text)) is not None:
         specs["memory_type"] = mem.group(1).upper()
-    vram = _VRAM_RE.search(text) or _VRAM_FALLBACK_RE.search(title)
+    vram = _VRAM_RE.search(text) or _VRAM_ASUS_RE.search(title) or _VRAM_FALLBACK_RE.search(title)
     if vram is not None and 1 <= int(vram.group(1)) <= 48:
         specs["vram_gb"] = int(vram.group(1))
 
@@ -174,7 +176,8 @@ _INTEL_CORE_RE = re.compile(r"\bCORE\s*I([3579])\s*-?\s*(\d{4,5}[A-Z]{0,3})\b", 
 _INTEL_ULTRA_RE = re.compile(r"\bCORE\s*ULTRA\s*([3579])\s*-?\s*(\d{3}[A-Z]{0,3})\b", re.IGNORECASE)
 _INTEL_OTHER_RE = re.compile(r"\b(PENTIUM|CELERON)\s*(?:GOLD\s*)?(G?\d{4}[A-Z]?)\b", re.IGNORECASE)
 _RYZEN_RE = re.compile(
-    r"\bRYZEN\s*(THREADRIPPER\s*(?:PRO\s*)?|[3579]\s*(?:PRO\s*)?)?(\d{4}[A-Z0-9]{0,4})\b",
+    # "RYZEN 7 AI 8700G" (IT City) names the desktop 8700G; the "AI" is marketing.
+    r"\bRYZEN\s*(THREADRIPPER\s*(?:PRO\s*)?|[3579]\s*(?:PRO\s*)?)?(?:AI\s*)?(\d{4}[A-Z0-9]{0,4})\b",
     re.IGNORECASE,
 )
 _CORES_THREADS_RE = re.compile(r"\b(\d{1,3})\s*C\s*[/\s]\s*(\d{1,3})\s*T\b", re.IGNORECASE)
@@ -230,10 +233,18 @@ def extract_cpu(title: str, spec_text: str | None = None) -> Extracted:
 # --------------------------------------------------------------------- RAM --
 
 _DDR_RE = re.compile(r"\bDDR([345])\b", re.IGNORECASE)
-_KIT_RE = re.compile(r"\(\s*(\d{1,3})\s*(?:GB)?\s*[xX×]\s*(\d{1,3})\s*(?:GB)?\s*\)")
+# "(2x8GB)", "(16GBx2)" and IT City's "(8X2/3200)" (module GB x count / speed).
+_KIT_RE = re.compile(
+    r"\(\s*(\d{1,3})\s*(?:GB)?\s*[xX×]\s*(\d{1,3})\s*(?:GB)?\s*(?:/\s*\d{4}\s*)?\)"
+)
 _TOTAL_GB_RE = re.compile(r"\b(\d{1,3})\s*GB\b", re.IGNORECASE)
 _SPEED_RE = re.compile(r"\b(\d{4})\s*(?:MHz|MT/?s|Mbps)", re.IGNORECASE)
 _SPEED_SLASH_RE = re.compile(r"/\s*(\d{4})\b")
+# A bare JEDEC/XMP data rate ("DDR4 16GB 3200 (16x1)"); restricted to the
+# standard bins so model codes and capacities are never mistaken for a speed.
+_SPEED_BARE_RE = re.compile(
+    r"\b(2133|2400|2666|2933|3000|3200|3600|4000|4800|5200|5600|6000|6400|6800|7200|7600|8000)\b"
+)
 _CL_RE = re.compile(r"\bCL\s*(\d{2})\b", re.IGNORECASE)
 
 
@@ -244,7 +255,7 @@ def extract_ram(title: str, spec_text: str | None = None) -> Extracted:
     specs: dict[str, Any] = {}
     ddr = _DDR_RE.search(text)
     total = _TOTAL_GB_RE.search(title)
-    speed = _SPEED_RE.search(title) or _SPEED_SLASH_RE.search(title)
+    speed = _SPEED_RE.search(title) or _SPEED_SLASH_RE.search(title) or _SPEED_BARE_RE.search(title)
     if ddr is not None:
         specs["ddr"] = int(ddr.group(1))
     if speed is not None:
@@ -276,7 +287,8 @@ def extract_ram(title: str, spec_text: str | None = None) -> Extracted:
 
 # --------------------------------------------------------------------- SSD --
 
-_CAPACITY_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(TB|GB)\b", re.IGNORECASE)
+# "512G" / "1T" without the B occur too (HIKSEMI on IT City).
+_CAPACITY_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(TB?|GB?)\b", re.IGNORECASE)
 _PCIE_GEN_RE = re.compile(
     r"(?:GEN\s*|PCI\s*-?\s*e\s*(?:GEN\s*)?)([345])(?:\.0)?(?:\s*x\s*\d)?", re.I
 )
@@ -318,7 +330,7 @@ def _ssd_line(title: str, brand: str) -> str | None:
 
 def _capacity_gb(text: str) -> float | None:
     for match in _CAPACITY_RE.finditer(text):
-        value = _num(match.group(1)) * (1000 if match.group(2).upper() == "TB" else 1)
+        value = _num(match.group(1)) * (1000 if match.group(2).upper().startswith("T") else 1)
         if 120 <= value <= 16000:  # Ignores "R5000MB/s" style throughput figures.
             return value
     return None
@@ -352,6 +364,8 @@ def extract_ssd(title: str, spec_text: str | None = None) -> Extracted:
     return Extracted(brand, brand, f"{brand} {line_name} {size}", specs)
 
 
+_TRADEMARKS_RE = re.compile(r"[™®©]")
+
 EXTRACTORS = {
     Category.GPU: extract_gpu,
     Category.CPU: extract_cpu,
@@ -361,5 +375,9 @@ EXTRACTORS = {
 
 
 def extract(category: Category, title: str, spec_text: str | None = None) -> Extracted:
-    """Dispatch to the extractor for ``category``."""
-    return EXTRACTORS[category](title, spec_text)
+    """Dispatch to the extractor for ``category``.
+
+    Trademark signs are dropped first: "GeForce RTX™ 5070" must read as
+    "RTX 5070" for the chip patterns' word boundaries to hold.
+    """
+    return EXTRACTORS[category](_TRADEMARKS_RE.sub("", title), spec_text)

@@ -120,3 +120,40 @@ def test_reconcile_specs_takes_median_and_fills_gaps() -> None:
         ]
     )
     assert merged == {"cores": 8, "base_clock_ghz": 4.7, "socket": "AM5"}
+
+
+@pytest.mark.parametrize(
+    ("category", "title", "model"),
+    [
+        # IT City writes kits as "(module GB x count / speed)".
+        (
+            Category.RAM,
+            "CORSAIR VENGEANCE LPX 16GB(16X1/3200) DDR4 BK (CMK16GX4M1E3200C16)",
+            "Corsair DDR4 16GB (1x16GB) 3200MHz",
+        ),
+        (
+            Category.RAM,
+            "KINGSTON FURY BEAST 32GB (2x16/5600) DDR5 (KF556C40BBK2-32) Ram",
+            "Kingston DDR5 32GB (2x16GB) 5600MHz",
+        ),
+        (
+            Category.RAM,
+            "APACER NOX WHITE DDR4 16GB 3200 (16x1) AH4U16G32C28YMWAA-1 Ram",
+            "Apacer DDR4 16GB (1x16GB) 3200MHz",
+        ),
+        (Category.GPU, "ASUS DUAL GEFORCE RTX 5060 O8G GDDR7 GPU", "GeForce RTX 5060 8GB"),
+        (
+            Category.GPU,
+            "ASUS TUF Gaming GeForce RTX™ 5070 Ti OC Edition 16GB GDDR7 (3Y) GPU",
+            "GeForce RTX 5070 Ti 16GB",
+        ),
+        (Category.CPU, "AMD RYZEN 7 AI 8700G (8Cores/16Threads) AM5 (3Y) CPU", "Ryzen 7 8700G"),
+        (
+            Category.SSD,
+            "HIKSEMI FUTURE 512G M.2 NVMe PCIE4 : HS-SSD-FUTURE 512G (5Y)",
+            "Hiksemi FUTURE 512GB",
+        ),
+    ],
+)
+def test_itcity_title_conventions(category: Category, title: str, model: str) -> None:
+    assert extract(category, title).model == model
