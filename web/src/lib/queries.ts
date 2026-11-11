@@ -35,19 +35,23 @@ export interface ProductFilter {
  * Canonical products currently on sale, aggregated across merchants in one
  * grouped query (one round trip; the planner uses the canonical index).
  *
- * Price, Deal Score and fair-price delta come from in-stock offers whenever
- * the model has any: a sold-out listing keeps its last price, often months
- * stale (a sold-out RTX 5060 Ti 16GB still read ฿16,490 against ฿27,000+ in
- * stock), and must not headline the card. Only a model sold out everywhere
- * falls back to all offers.
+ * The card describes one offer: the cheapest in-stock one (price, Deal
+ * Score, fair-price delta and recommendation all from it, so they never
+ * contradict each other). A sold-out listing keeps its last price, often
+ * months stale (a sold-out RTX 5060 Ti 16GB still read ฿16,490 against
+ * ฿27,000+ in stock), so it only headlines a model sold out everywhere.
  */
 export async function listProducts(filter: ProductFilter): Promise<ProductSummary[]> {
+  // Buyable first under every sort: a model sold out everywhere carries only
+  // stale last prices, so its "deal" cannot be acted on. (An output alias
+  // cannot appear inside an ORDER BY expression, hence the aggregate.)
+  const buyable = sql`bool_or(l.in_stock) DESC`;
   const order =
     filter.sort === "price"
-      ? sql`min_price ASC`
+      ? sql`${buyable}, min_price ASC`
       : filter.sort === "stores"
-        ? sql`stores DESC, best_deal DESC NULLS LAST`
-        : sql`best_deal DESC NULLS LAST, stores DESC`;
+        ? sql`${buyable}, stores DESC, best_deal DESC NULLS LAST`
+        : sql`${buyable}, best_deal DESC NULLS LAST, stores DESC`;
   const rows = await sql`
     SELECT c.id, c.category, c.manufacturer, c.model,
            count(*)::int AS offers,
@@ -57,11 +61,11 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
                AS min_price,
            coalesce(max(l.current_price) FILTER (WHERE l.in_stock), max(l.current_price))::float8
                AS max_price,
-           coalesce(max(i.deal_score) FILTER (WHERE l.in_stock), max(i.deal_score))::int AS best_deal,
+           (array_agg(i.deal_score ORDER BY l.in_stock DESC, l.current_price))[1]::int AS best_deal,
            (array_agg(i.recommendation ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_rec,
            coalesce(array_agg(DISTINCT i.demand_cluster)
                     FILTER (WHERE i.demand_cluster IS NOT NULL), '{}') AS clusters,
-           coalesce(min(i.pct_vs_fair) FILTER (WHERE l.in_stock), min(i.pct_vs_fair)) AS best_pct,
+           (array_agg(i.pct_vs_fair ORDER BY l.in_stock DESC, l.current_price))[1] AS best_pct,
            (array_agg(${IMAGE} ORDER BY l.in_stock DESC, l.current_price)
                 FILTER (WHERE ${IMAGE} IS NOT NULL))[1] AS image_url
     FROM canonical_products c

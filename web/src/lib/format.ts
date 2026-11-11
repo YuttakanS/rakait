@@ -60,6 +60,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   log2_vram_gb: "ขนาด VRAM",
   log2_capacity_gb: "ความจุ",
   perf_class: "ระดับชิป (รุ่น)",
+  perf_x_gen: "ระดับชิป × รุ่นปี",
   generation: "รุ่นปีที่ออก (generation)",
   shader_cores: "จำนวนคอร์กราฟิก",
   boost_clock_mhz: "Boost clock",

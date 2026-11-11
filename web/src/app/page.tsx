@@ -136,7 +136,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                       className="aspect-[4/3] rounded-none"
                     />
                     <div className="absolute top-3 right-3">
-                      <DealScore score={p.bestDeal} prominent />
+                      <DealScore score={p.inStockOffers > 0 ? p.bestDeal : null} prominent />
                     </div>
                   </div>
                   <div className="flex flex-1 flex-col gap-2 p-4">
@@ -150,7 +150,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                         <span className="ml-1 text-xs text-muted">ถึง {formatTHB(p.maxPrice)}</span>
                       )}
                     </div>
-                    <FairDelta pct={p.bestPctVsFair} />
+                    {p.inStockOffers > 0 && <FairDelta pct={p.bestPctVsFair} />}
                     <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-2">
                       <span className="mr-auto text-xs text-muted">
                         {p.inStockOffers > 0 ? `${p.stores} ร้าน` : "หมดทุกร้าน · ราคาล่าสุด"}
