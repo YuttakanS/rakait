@@ -6,9 +6,11 @@ Run once after migration 0011, with the owner connection in ``DATABASE_URL``::
 
 It generates a random password, runs ``ALTER ROLE web_reader WITH LOGIN
 PASSWORD ...`` and writes ``web/.env.production.local`` (git-ignored) holding a
-``DATABASE_URL`` for that role through Supabase's transaction pooler (port
-6543: one short connection per serverless invocation). The password is never
-printed. Re-running rotates it.
+``DATABASE_URL`` for that role on the owner URL's host and port. Keep the
+session pooler (5432): through the transaction pooler (6543) the Next.js
+build, which prerenders pages concurrently, hung past its 60 s page limit and
+got rows of the wrong query back. The password is never printed. Re-running
+rotates it.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ OUT = Path(__file__).resolve().parents[1] / "web" / ".env.production.local"
 
 
 def reader_url(owner_url: str, password: str) -> str:
-    """Owner URL with the reader's credentials and the transaction-pooler port.
+    """Owner URL with the reader's credentials (same host and port).
 
     Supabase pooler user names carry the project ref (``postgres.<ref>``); the
     reader keeps the same suffix (``web_reader.<ref>``).
@@ -35,7 +37,7 @@ def reader_url(owner_url: str, password: str) -> str:
     user = parts.username or ""
     suffix = user[user.index(".") :] if "." in user else ""
     host = parts.hostname or ""
-    port = 6543 if host.endswith("pooler.supabase.com") else parts.port
+    port = parts.port
     netloc = f"{ROLE}{suffix}:{quote(password, safe='')}@{host}" + (f":{port}" if port else "")
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 

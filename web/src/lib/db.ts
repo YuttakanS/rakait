@@ -6,9 +6,11 @@ import postgres from "postgres";
  * module imports "server-only", so bundling it into a client component fails
  * the build.
  *
- * On serverless hosts each function instance keeps at most one connection,
- * and prepared statements are disabled so Supabase's transaction pooler
- * (port 6543) works as well as the session pooler.
+ * On serverless hosts each function instance keeps at most one connection.
+ * Use Supabase's session pooler (port 5432): through the transaction pooler
+ * (6543) the build's concurrent prerendering hung and returned rows of the
+ * wrong query. Prepared statements stay disabled so either pooler is safe
+ * for plain queries.
  */
 const globalForDb = globalThis as unknown as { sql?: ReturnType<typeof postgres> };
 
