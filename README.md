@@ -14,10 +14,11 @@ full specification.
 | JIB history backfill from the Wayback Machine | done (`pricewatch backfill`) |
 | Scheduled scraping (GitHub Actions, every 3 h) + `scrape_runs` log | live on Supabase since 2026-11-11 |
 | Data-quality warnings (empty runs, missing prices, count drops) | done (`pricewatch.quality`) |
-| Record linkage (rule-based spec extraction) | done (`pricewatch link`) |
+| Record linkage: rules + calibrated TF-IDF similarity fallback | done (`pricewatch link`, `pricewatch.similarity`) |
 | ML pipeline (SLR, MLR fair value, trees, K-Means) | done (`pricewatch train`, figures in `reports/figures/`) |
 | Web app (Next.js) | done (`web/`) |
-| Vector-similarity linkage, hierarchical clustering, API service | not started |
+| ML pipeline: hierarchical clustering (Ward) vs K-Means | done |
+| API service (FastAPI / ONNX) | not started |
 
 ## Setup
 

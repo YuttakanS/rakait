@@ -370,7 +370,8 @@ async def persist(conn: asyncpg.Connection, report: TrainReport) -> int:
             col("sales_per_day"),
             col("views_per_day"),
         )
-        await conn.execute("DELETE FROM market_insights")
+        # linkage_quality belongs to `pricewatch link`, which runs before train.
+        await conn.execute("DELETE FROM market_insights WHERE kind <> 'linkage_quality'")
         await conn.executemany(
             "INSERT INTO market_insights (category, kind, computed_at, payload) "
             "VALUES ($1, $2, $3, $4)",

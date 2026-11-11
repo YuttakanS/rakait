@@ -5,6 +5,16 @@ import type { Category, DemandCluster, MarketInsight } from "@/lib/types";
 export const revalidate = 900;
 
 type Coefficient = { feature: string; beta: number; pct_effect_per_sd: number };
+type CurvePoint = { threshold: number; coverage: number; precision: number | null };
+type CategoryLinkage = {
+  listings: number;
+  rule_linked: number;
+  excluded: number;
+  products: number;
+  similarity_linked?: number;
+  evaluation?: { threshold: number | null; curve: CurvePoint[] };
+  duplicate_candidates?: { a: string; b: string; cosine: number }[];
+};
 type Centroid = {
   cluster: number;
   label: DemandCluster;
@@ -36,7 +46,9 @@ export default async function InsightsPage() {
   const kmeans = find(insights, "all", "demand_kmeans");
   const hierarchy = find(insights, "all", "demand_hierarchical");
   const timing = find(insights, "all", "timing_tree");
-  const computedAt = insights[0]?.computedAt ?? null;
+  const linkage = find(insights, "all", "linkage_quality") as Record<string, CategoryLinkage> | undefined;
+  // linkage_quality is written by the link step, not training: exclude it from "computed at".
+  const computedAt = insights.find((i) => i.kind !== "linkage_quality")?.computedAt ?? null;
 
   return (
     <div className="space-y-6">
@@ -73,6 +85,67 @@ export default async function InsightsPage() {
           </table>
         </div>
       </Card>
+
+      {linkage && (
+        <Card title="การจับคู่สินค้า: กฎ Regex + TF-IDF Similarity">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead className="text-left text-xs text-muted">
+                <tr>
+                  <th className="py-1 font-medium">หมวด</th>
+                  <th className="py-1 text-right font-medium">จับคู่ด้วยกฎ</th>
+                  <th className="py-1 text-right font-medium">ไม่อยู่ในขอบเขต</th>
+                  <th className="py-1 text-right font-medium">threshold (cosine)</th>
+                  <th className="py-1 text-right font-medium">precision · coverage</th>
+                  <th className="py-1 text-right font-medium">จับคู่ด้วย similarity</th>
+                </tr>
+              </thead>
+              <tbody className="tabular">
+                {categories.map((c) => {
+                  const l = linkage[c];
+                  if (!l) return null;
+                  const t = l.evaluation?.threshold ?? null;
+                  const point = l.evaluation?.curve.find((p) => p.threshold === t);
+                  return (
+                    <tr key={c} className="border-t border-border">
+                      <td className="py-1">{CATEGORY_LABELS[c]}</td>
+                      <td className="py-1 text-right">
+                        {l.listings ? `${Math.round((l.rule_linked / l.listings) * 100)}%` : "–"}
+                      </td>
+                      <td className="py-1 text-right">{l.excluded}</td>
+                      <td className="py-1 text-right">{t === null ? "ปิด" : fixed(t)}</td>
+                      <td className="py-1 text-right">
+                        {point ? `${fixed(num(point.precision) * 100, 1)}% · ${fixed(point.coverage * 100, 0)}%` : "–"}
+                      </td>
+                      <td className="py-1 text-right">{l.similarity_linked ?? 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-muted">
+            ชื่อสินค้าแปลงเป็นเวกเตอร์ TF-IDF ของ character 3–5-gram แล้ววัด cosine similarity กับสินค้าที่กฎจับคู่ไว้แล้ว
+            โดยสเปกหลัก (VRAM, ความจุ, DDR ฯลฯ) ต้องไม่ขัดกัน · threshold เลือกจากการทดสอบแบบ leave-one-out
+            เทียบกับผลของกฎ ให้ขอบล่าง 95% ของ precision ไม่ต่ำกว่า 95% · “ปิด” = ยังไม่มี threshold ที่ผ่านเกณฑ์
+            ระบบจึงไม่เดา · การ์ดจอ workstation และแรมโน้ตบุ๊กไม่อยู่ในขอบเขตโดยตั้งใจ
+          </p>
+          {categories.some((c) => (linkage[c]?.duplicate_candidates ?? []).length > 0) && (
+            <div className="text-xs">
+              <div className="font-medium">รุ่นที่อาจเป็นสินค้าเดียวกัน (รอตรวจ ไม่รวมอัตโนมัติ)</div>
+              <ul className="mt-1 space-y-0.5 text-muted">
+                {categories.flatMap((c) =>
+                  (linkage[c]?.duplicate_candidates ?? []).map((d) => (
+                    <li key={`${c}-${d.a}-${d.b}`} className="tabular">
+                      {d.a} ↔ {d.b} (cosine {fixed(d.cosine)})
+                    </li>
+                  )),
+                )}
+              </ul>
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card title="A. Simple Linear Regression: ราคาต่อหน่วยสเปก">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

@@ -169,7 +169,8 @@ live in that page file.
 
 1. h1 + "คำนวณล่าสุด {time}".
 2. Data coverage table (per store: active listings, % linked, history rows, oldest observation).
-3. One Insight Card per model, in the order of CLAUDE.md §2: A. SLR, B. MLR, C. Regression Tree, D. K-Means (+ hierarchical comparison: ARI, cophenetic r), E. Decision Tree, each with its quality metrics and threshold note.
+3. Record-linkage card: per category rule-linked %, out-of-scope count, calibrated similarity threshold ("ปิด" when none qualifies), its precision and coverage, similarity-linked count, and duplicate-name candidates awaiting review.
+4. One Insight Card per model, in the order of CLAUDE.md §2: A. SLR, B. MLR, C. Regression Tree, D. K-Means (+ hierarchical comparison: ARI, cophenetic r), E. Decision Tree, each with its quality metrics and threshold note.
 
 ### 6.4 Adding a page
 

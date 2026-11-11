@@ -278,6 +278,14 @@ async def test_link_listings_groups_merchants_under_one_canonical_product(conn) 
         ("3", "Galax", "GeForce RTX 5060 8GB", "NVIDIA", "8"),
         ("4", "Leadtek", None, None, None),
     ]
+    methods = await conn.fetch(
+        "SELECT merchant_sku, link_method FROM merchant_listings ORDER BY merchant_sku"
+    )
+    assert [tuple(r) for r in methods] == [("1", "rule"), ("2", "rule"), ("3", "rule"), ("4", None)]
+    report = await conn.fetchval(
+        "SELECT payload FROM market_insights WHERE category = 'all' AND kind = 'linkage_quality'"
+    )
+    assert '"excluded": 1' in report  # the workstation card
     # Idempotent: a second pass reuses the same canonical product.
     assert (await link_listings(conn)).products == 1
     assert await conn.fetchval("SELECT count(*) FROM canonical_products") == 1
@@ -324,5 +332,6 @@ async def test_train_persists_insights(conn, tmp_path) -> None:
     )
     kinds = {r[0] for r in await conn.fetch("SELECT kind FROM market_insights")}
     assert {"simple_regression", "fair_value_mlr", "tier_tree"} <= kinds
+    assert "linkage_quality" in kinds  # written by link, kept by train
     assert report.market[("gpu", "simple_regression")]["slope_thb_per_unit"] > 0
     assert (tmp_path / "gpu_simple_regression.png").exists()

@@ -143,7 +143,8 @@ async def _link() -> int:
     share = summary.linked / summary.listings if summary.listings else 0.0
     print(
         f"linked {summary.linked}/{summary.listings} listings ({share:.0%}) "
-        f"to {summary.products} canonical products"
+        f"to {summary.products} canonical products "
+        f"({summary.by_similarity} by similarity fallback)"
     )
     return 0
 
