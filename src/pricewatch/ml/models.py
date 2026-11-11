@@ -279,6 +279,14 @@ def _oof_predict(
     predicts all of its held-out rows. Leverage per held-out row is
     ``x0' (X'X)^+ x0`` (intercept included), computed for the whole fold in
     one einsum. O(folds * (n p^2 + p^3)).
+
+    A column constant over a fold's training rows (a gap indicator whose only
+    1 is held out) is collinear with the intercept. The pseudo-inverse would
+    split the intercept onto it and its leverage would ignore that direction,
+    so a held-out row differing there got an arbitrary prediction (e^-9 of
+    the price) at ordinary leverage. Such columns are dropped from the fold's
+    fit, and held-out rows that differ on one get infinite leverage: the fold
+    has no data on that direction, so it cannot price them.
     """
     x1 = np.column_stack([np.ones(len(x)), x])
     pred = np.full(len(y), np.nan)
@@ -287,10 +295,15 @@ def _oof_predict(
         train = train[fit_rows[train]]
         if len(train) <= x1.shape[1]:
             continue
-        gram_inv = np.linalg.pinv(x1[train].T @ x1[train])
-        beta = gram_inv @ (x1[train].T @ y[train])
-        pred[test] = x1[test] @ beta
-        lev[test] = np.einsum("ij,jk,ik->i", x1[test], gram_inv, x1[test])
+        xt = x1[train]
+        varies = np.ptp(xt, axis=0) > 1e-12
+        varies[0] = True  # intercept
+        unseen = (np.abs(x1[test][:, ~varies] - xt[0, ~varies]) > 1e-12).any(axis=1)
+        xt, xs = xt[:, varies], x1[test][:, varies]
+        gram_inv = np.linalg.pinv(xt.T @ xt)
+        beta = gram_inv @ (xt.T @ y[train])
+        pred[test] = xs @ beta
+        lev[test] = np.where(unseen, np.inf, np.einsum("ij,jk,ik->i", xs, gram_inv, xs))
     return pred, lev
 
 
@@ -400,7 +413,7 @@ def fit_fair_value(
         fair_price=pd.Series(fair, index=design.index).reindex(features.index),
         z_residual=pd.Series(z, index=design.index).reindex(features.index),
         leverage=pd.Series(lev, index=design.index).reindex(features.index),
-        extrapolated=int((np.isfinite(lev) & (lev > MAX_LEVERAGE)).sum()),
+        extrapolated=int((lev > MAX_LEVERAGE).sum()),  # NaN compares False
         diagnostics=regression_diagnostics(x[fit_rows], y[fit_rows], model, columns),
     )
 

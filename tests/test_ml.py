@@ -267,17 +267,22 @@ def test_extrapolated_rows_are_not_scored() -> None:
 
 
 def test_run_models_end_to_end_on_synthetic_catalogue() -> None:
-    n = 90
-    chips = RNG.choice(["GeForce RTX 5060", "GeForce RTX 5070", "Radeon RX 9070 XT"], size=n)
-    vram = np.where(chips == "GeForce RTX 5060", 8, 16)
-    base = np.select(
-        [chips == "GeForce RTX 5060", chips == "GeForce RTX 5070"], [11000, 20000], 26000
-    )
+    # Eight products (four chips x two VRAM sizes), so every product shares
+    # each spec value with another: product-grouped CV can price each one
+    # from the rest. With one product per chip it could not, and only the
+    # pseudo-inverse's arbitrary split of a constant column used to hide that.
+    n = 120
+    names = ["GeForce RTX 5060", "GeForce RTX 5070", "Radeon RX 9060 XT", "Radeon RX 9070 XT"]
+    chip_idx = RNG.integers(0, 4, size=n)
+    big = RNG.integers(0, 2, size=n)
+    chips = np.array(names)[chip_idx]
+    vram = np.where(big == 1, 16, 8)
+    base = np.array([11000, 20000, 12000, 26000])[chip_idx] * np.where(big == 1, 1.15, 1.0)
     current = pd.DataFrame(
         {
             "listing_id": np.arange(n),
             "category": "gpu",
-            "canonical_id": pd.Series(chips).astype("category").cat.codes,
+            "canonical_id": chip_idx * 2 + big,
             "manufacturer": "NVIDIA",
             "chip": chips,
             "vram_gb": vram,
@@ -471,3 +476,26 @@ def test_constant_required_feature_still_scores() -> None:
 
     assert fit.fair_price.notna().all()
     assert "generation" not in fit.features
+
+
+def test_indicator_unseen_by_a_fold_does_not_blow_up_the_fair_price() -> None:
+    # One product is the only one missing an optional spec, so its gap
+    # indicator is constant (all zero) in the fold that holds it out. The
+    # pseudo-inverse used to split the intercept onto that column and
+    # predict the product at e^-9 of its price; Duan's smearing then
+    # multiplied every fair price in the category by ~70 (live CPUs, 2026-11).
+    n = 120
+    rng = np.random.default_rng(3)
+    cores = rng.choice([6.0, 8.0, 12.0, 16.0], size=n)
+    sales = rng.uniform(0, 3, size=n)
+    sales[0] = np.nan
+    features = pd.DataFrame({"log2_cores": np.log2(cores), "log_sales": sales})
+    price = pd.Series(np.exp(8 + 0.8 * np.log2(cores) + rng.normal(0, 0.05, size=n)))
+    groups = pd.Series(np.arange(n, dtype=float))
+
+    fit = m.fit_fair_value(features, price, required=["log2_cores"], groups=groups)
+
+    assert np.isnan(fit.fair_price.iloc[0])  # outside every span its fold saw
+    ratio = (fit.fair_price / price).dropna()
+    assert ratio.between(0.8, 1.25).all()
+    assert fit.r2_cv > 0.9
