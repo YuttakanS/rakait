@@ -269,8 +269,20 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             "centroids": seg.centroids,
             "n": int(seg.labels.notna().sum()),
         }
+        if seg.hierarchy is not None:
+            h = seg.hierarchy
+            report.market[("all", "demand_hierarchical")] = {
+                "linkage": "ward",
+                "k": h.k,
+                "silhouette": h.silhouette,
+                "ari_vs_kmeans": h.ari_vs_kmeans,
+                "cophenetic_corr": h.cophenetic_corr,
+                "n": int(len(h.linkage) + 1),
+            }
         if figures:
             _plot_kmeans(figures, current, seg)
+            if seg.hierarchy is not None:
+                _plot_dendrogram(figures, seg.hierarchy)
     except ValueError as exc:
         report.notes.append(f"demand clustering: {exc}")
 
@@ -477,4 +489,28 @@ def _plot_kmeans(out: Path, current: pd.DataFrame, seg: m.DemandSegments) -> Non
     ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(out / "demand_kmeans.png", dpi=150)
+    plt.close(fig)
+
+
+def _plot_dendrogram(out: Path, h: m.HierarchyComparison) -> None:
+    from scipy.cluster.hierarchy import dendrogram
+
+    plt = _plt()
+    fig, ax = plt.subplots(figsize=(7, 4))
+    # Only the last 30 merges: thousands of leaves are unreadable, and the
+    # top of the tree is where the k-cluster cut is decided.
+    dendrogram(h.linkage, truncate_mode="lastp", p=30, ax=ax, no_labels=True)
+    cut = (h.linkage[-h.k, 2] + h.linkage[-h.k + 1, 2]) / 2 if h.k > 1 else None
+    if cut is not None:
+        ax.axhline(cut, color="grey", linestyle="--", linewidth=1, label=f"cut at k={h.k}")
+        ax.legend(fontsize=8)
+    ax.set(
+        ylabel="Ward merge distance",
+        title=(
+            f"Demand hierarchy (ARI vs K-Means={h.ari_vs_kmeans:.2f}, "
+            f"cophenetic r={h.cophenetic_corr:.2f})"
+        ),
+    )
+    fig.tight_layout()
+    fig.savefig(out / "demand_hierarchical.png", dpi=150)
     plt.close(fig)

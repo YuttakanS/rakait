@@ -8,6 +8,7 @@ Complexities use n = rows, p = features, k = clusters, d = tree depth:
 * Regression / classification tree: O(p n log n) per level, depth <= 4.
 * K-Means: O(i n k p) for i Lloyd iterations; silhouette O(n^2) is the cost
   driver when choosing k, acceptable at catalogue scale (n < 10^4).
+* Hierarchical (Ward): O(n^2) time and memory for the distance matrix.
 """
 
 from __future__ import annotations
@@ -268,6 +269,72 @@ def name_segments(centers: list[tuple[float, float]]) -> list[str]:
     return names
 
 
+#: Ward linkage keeps an O(n^2) condensed distance matrix (8 bytes per pair):
+#: 5,000 points is ~100 MB, the most a scheduled CI runner should spend.
+MAX_HIERARCHICAL_N = 5_000
+
+
+@dataclass(frozen=True)
+class HierarchyComparison:
+    """Agglomerative (Ward) clustering of the same matrix, cut at K-Means' k.
+
+    Attributes:
+        k: Number of clusters the dendrogram was cut into.
+        silhouette: Silhouette of the hierarchical partition.
+        ari_vs_kmeans: Adjusted Rand index against the K-Means labels: 1 is
+            the same partition, ~0 is chance agreement.
+        cophenetic_corr: Correlation between pairwise distances and the
+            dendrogram heights at which pairs merge; how faithfully the tree
+            represents the geometry (> 0.7 is commonly read as good).
+        linkage: SciPy linkage matrix, ``(n - 1) x 4``, for the dendrogram.
+    """
+
+    k: int
+    silhouette: float
+    ari_vs_kmeans: float
+    cophenetic_corr: float
+    linkage: np.ndarray
+
+
+def compare_hierarchical(x: np.ndarray, kmeans_labels: np.ndarray, k: int) -> HierarchyComparison:
+    """Fit Ward-linkage agglomerative clustering and compare it with K-Means.
+
+    Ward merges, at every step, the pair of clusters whose union least
+    increases total within-cluster variance, the same objective K-Means
+    minimises, so agreement (high ARI) means the K-Means partition is not an
+    artefact of its random initialisation. Cost: O(n^2) memory and O(n^2)
+    time with SciPy's nearest-neighbour chain algorithm.
+
+    Args:
+        x: Standardised feature matrix, ``n x p``.
+        kmeans_labels: K-Means cluster index per row.
+        k: Cluster count to cut the dendrogram at.
+
+    Returns:
+        The comparison.
+
+    Raises:
+        ValueError: If ``n`` exceeds :data:`MAX_HIERARCHICAL_N`.
+    """
+    from scipy.cluster.hierarchy import cophenet, fcluster, linkage
+    from scipy.spatial.distance import pdist
+    from sklearn.metrics import adjusted_rand_score
+
+    if len(x) > MAX_HIERARCHICAL_N:
+        raise ValueError(f"{len(x)} points exceed the hierarchical limit of {MAX_HIERARCHICAL_N}")
+    distances = pdist(x)  # condensed, contiguous float64: computed once, reused twice
+    tree = linkage(distances, method="ward")
+    labels = fcluster(tree, t=k, criterion="maxclust")
+    cophenetic, _ = cophenet(tree, distances)
+    return HierarchyComparison(
+        k=k,
+        silhouette=float(silhouette_score(x, labels)) if len(set(labels)) > 1 else float("nan"),
+        ari_vs_kmeans=float(adjusted_rand_score(kmeans_labels, labels)),
+        cophenetic_corr=float(cophenetic),
+        linkage=tree,
+    )
+
+
 @dataclass(frozen=True)
 class DemandSegments:
     """K-Means over ``[log(views+1), log(sales/day+1), normalised price]``."""
@@ -277,6 +344,7 @@ class DemandSegments:
     centroids: list[dict[str, float | str]]
     labels: pd.Series
     silhouette_by_k: dict[int, float] = field(default_factory=dict)
+    hierarchy: HierarchyComparison | None = None
 
 
 def segment_demand(
@@ -345,7 +413,10 @@ def segment_demand(
         )
     labels = pd.Series(None, index=views.index, dtype="object")
     labels[raw.index] = [names[i] for i in km.labels_]
-    return DemandSegments(best_k, scores[best_k], centroids, labels, scores)
+    hierarchy = (
+        compare_hierarchical(x, km.labels_, best_k) if len(x) <= MAX_HIERARCHICAL_N else None
+    )
+    return DemandSegments(best_k, scores[best_k], centroids, labels, scores, hierarchy)
 
 
 # ------------------------------------------ E. Buy / Wait decision tree

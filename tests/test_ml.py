@@ -85,6 +85,18 @@ def test_segment_demand_names_clusters_from_centroids() -> None:
     assert seg.labels.iloc[60] == "hidden_gem"
     assert seg.labels.iloc[90] == "niche"
     assert seg.silhouette > 0.5
+    # Four well-separated blobs: Ward recovers the K-Means partition exactly.
+    assert seg.hierarchy is not None
+    assert seg.hierarchy.k == 4
+    assert seg.hierarchy.ari_vs_kmeans == pytest.approx(1.0)
+    assert seg.hierarchy.cophenetic_corr > 0.7
+    assert seg.hierarchy.linkage.shape == (len(data) - 1, 4)
+
+
+def test_compare_hierarchical_refuses_oversized_inputs() -> None:
+    x = np.zeros((m.MAX_HIERARCHICAL_N + 1, 2))
+    with pytest.raises(ValueError, match="hierarchical limit"):
+        m.compare_hierarchical(x, np.zeros(len(x), dtype=int), 2)
 
 
 def _history(paths: dict[int, list[tuple[int, float, bool]]]) -> pd.DataFrame:
