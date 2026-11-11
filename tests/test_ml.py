@@ -354,3 +354,50 @@ def test_fair_price_is_one_value_per_product_across_stores() -> None:
 
     spread = fit.fair_price.groupby(key).agg(lambda v: v.max() / v.min() - 1)
     assert spread.max() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_vif_matches_auxiliary_regression() -> None:
+    from sklearn.linear_model import LinearRegression
+
+    rng = np.random.default_rng(5)
+    a = rng.normal(size=500)
+    b = 0.9 * a + rng.normal(scale=0.3, size=500)  # strongly collinear with a
+    c = rng.normal(size=500)
+    x = np.column_stack([a, b, c])
+
+    vif = m.variance_inflation(x, ["a", "b", "c"])
+
+    r2_b = LinearRegression().fit(x[:, [0, 2]], b).score(x[:, [0, 2]], b)
+    assert vif["b"] == pytest.approx(1 / (1 - r2_b), rel=1e-6)
+    assert vif["b"] > 5
+    assert vif["c"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_diagnostics_detect_heteroscedasticity_and_accept_normal_noise() -> None:
+    from sklearn.linear_model import LinearRegression
+
+    rng = np.random.default_rng(9)
+    x = rng.uniform(0, 1, size=(800, 1))
+    y_hom = 1 + 2 * x[:, 0] + rng.normal(scale=0.1, size=800)
+    y_het = 1 + 2 * x[:, 0] + rng.normal(size=800) * (0.02 + 0.5 * x[:, 0])
+
+    hom = m.regression_diagnostics(x, y_hom, LinearRegression().fit(x, y_hom), ["x"])
+    het = m.regression_diagnostics(x, y_het, LinearRegression().fit(x, y_het), ["x"])
+
+    assert hom.breusch_pagan_p > 0.01
+    assert hom.jarque_bera_p > 0.01
+    assert het.breusch_pagan_p < 1e-6
+    assert hom.residual.mean() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_fair_value_model_carries_diagnostics() -> None:
+    n = 100
+    features = pd.DataFrame({"a": RNG.normal(size=n), "b": RNG.normal(size=n)})
+    price = pd.Series(np.exp(8 + 0.3 * features["a"] + RNG.normal(0, 0.05, n)))
+
+    fit = m.fit_fair_value(features, price)
+
+    assert fit.diagnostics is not None
+    summary = fit.diagnostics.summary()
+    assert set(summary["vif"]) == set(fit.features)
+    assert summary["n"] == n

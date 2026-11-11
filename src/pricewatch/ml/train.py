@@ -314,9 +314,12 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "n": mlr.n,
                 "required": REQUIRED_FOR_FAIR_VALUE[category],
                 "unscored": int(len(frame) - mlr.n),
+                "diagnostics": mlr.diagnostics.summary() if mlr.diagnostics else None,
             }
             if figures:
                 _plot_mlr(figures, category, price, mlr)
+                if mlr.diagnostics is not None:
+                    _plot_mlr_diagnostics(figures, category, mlr.diagnostics)
         except ValueError as exc:
             report.notes.append(f"{category.value} fair-value model: {exc}")
 
@@ -539,6 +542,80 @@ def _plot_mlr(out: Path, category: Category, price: pd.Series, mlr: m.FairValueM
     fig.suptitle(f"{category.value.upper()} fair-value MLR")
     fig.tight_layout()
     fig.savefig(out / f"{category.value}_fair_value_mlr.png", dpi=150)
+    plt.close(fig)
+
+
+#: Single-series report figures: one mark hue, grey reference lines.
+_MARK = "#2a6fdb"
+_REF = "#6b7280"
+_VIF_WARN = 10.0
+
+
+def _plot_mlr_diagnostics(out: Path, category: Category, d: m.RegressionDiagnostics) -> None:
+    """Residual-vs-fitted, normal Q-Q and VIF panels for one fair-value model."""
+    from scipy import stats
+
+    plt = _plt()
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.5))
+    for ax in (ax1, ax2, ax3):
+        ax.grid(color="#e5e7eb", linewidth=0.6)
+        ax.set_axisbelow(True)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+
+    # 1. Residual vs fitted: a funnel means heteroscedasticity, a curve a
+    # missing non-linear term. A rolling median makes the trend visible.
+    ax1.scatter(d.fitted, d.residual, s=10, alpha=0.5, color=_MARK, linewidths=0)
+    ax1.axhline(0, color=_REF, linewidth=1)
+    order = np.argsort(d.fitted)
+    window = max(5, len(order) // 15)
+    trend = pd.Series(d.residual[order]).rolling(window, center=True, min_periods=3).median()
+    ax1.plot(d.fitted[order], trend, color="black", linewidth=1.5, label="rolling median")
+    ax1.legend(fontsize=8, frameon=False)
+    ax1.set(
+        xlabel="fitted log(price)",
+        ylabel="residual",
+        title=f"Residual vs fitted (Breusch-Pagan p={d.breusch_pagan_p:.3g})",
+    )
+
+    # 2. Normal Q-Q of standardised residuals against the 45-degree line.
+    z = (d.residual - d.residual.mean()) / (d.residual.std(ddof=1) or 1.0)
+    (theory, sample), _ = stats.probplot(z, dist="norm")
+    ax2.scatter(theory, sample, s=10, alpha=0.6, color=_MARK, linewidths=0)
+    lim = [float(min(theory.min(), sample.min())), float(max(theory.max(), sample.max()))]
+    ax2.plot(lim, lim, color=_REF, linewidth=1)
+    ax2.set(
+        xlabel="theoretical normal quantile",
+        ylabel="standardised residual",
+        title=(
+            f"Normal Q-Q (skew={d.skew:.2f}, excess kurt={d.excess_kurtosis:.2f}, "
+            f"JB p={d.jarque_bera_p:.3g})"
+        ),
+    )
+    ax2.title.set_fontsize(9)
+
+    # 3. VIF per feature, log scale (interaction terms reach the hundreds).
+    names = list(d.vif)
+    values = np.array([d.vif[n] for n in names])
+    ax3.barh(names, values, color=_MARK, height=0.6)
+    ax3.axvline(_VIF_WARN, color=_REF, linestyle="--", linewidth=1, label="VIF = 10")
+    ax3.set_xscale("log")
+    # VIF >= 1 by definition: anchor bars at 1 and label round values only
+    # (default log minor-tick labels collide).
+    ticks = [t for t in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000) if t <= values.max() * 1.5]
+    ax3.set_xlim(1, max(values.max(), _VIF_WARN) * 1.5)
+    ax3.set_xticks(ticks, [str(t) for t in ticks])
+    ax3.xaxis.set_minor_formatter(plt.NullFormatter())
+    ax3.invert_yaxis()
+    ax3.legend(fontsize=8, frameon=False)
+    ax3.set(xlabel="variance inflation factor (log scale)", title="Collinearity (VIF)")
+    ax3.tick_params(axis="y", labelsize=7)
+
+    fig.suptitle(
+        f"{category.value.upper()} fair-value MLR diagnostics (in-sample, n={len(d.residual)})"
+    )
+    fig.tight_layout()
+    fig.savefig(out / f"{category.value}_mlr_diagnostics.png", dpi=150)
     plt.close(fig)
 
 

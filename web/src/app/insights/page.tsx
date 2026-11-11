@@ -8,6 +8,13 @@ import type { Category, DemandCluster, MarketInsight } from "@/lib/types";
 export const revalidate = 900;
 
 type Coefficient = Effect & { beta: number };
+type Diagnostics = {
+  max_vif: number;
+  skew: number;
+  excess_kurtosis: number;
+  jarque_bera_p: number;
+  breusch_pagan_p: number;
+};
 type Centroid = {
   cluster: number;
   label: DemandCluster;
@@ -66,6 +73,17 @@ function mergeByLabel(centroids: Centroid[]): Centroid[] {
 
 function find(insights: MarketInsight[], category: string, kind: string) {
   return insights.find((i) => i.category === category && i.kind === kind)?.payload;
+}
+
+/** One-line OLS assumption checks under an MLR coefficient table. */
+function DiagnosticsLine({ d }: { d: Diagnostics }) {
+  const p = (v: number): string => (v < 0.001 ? "<0.001" : fixed(v, 3));
+  return (
+    <p className="tabular mt-2 border-t border-border pt-2 text-xs text-muted">
+      max VIF {fixed(d.max_vif, 1)} · skew {fixed(d.skew)} · excess kurt {fixed(d.excess_kurtosis)} · JB p{" "}
+      {p(d.jarque_bera_p)} · BP p {p(d.breusch_pagan_p)}
+    </p>
+  );
 }
 
 function Section({
@@ -364,10 +382,16 @@ export default async function InsightsPage() {
                         ))}
                       </tbody>
                     </table>
+                    {p.diagnostics ? <DiagnosticsLine d={p.diagnostics as Diagnostics} /> : null}
                   </div>
                 );
               })}
             </div>
+            <p className="text-xs text-muted">
+              ตรวจสมมติฐาน OLS บน residual ในตัวอย่าง: VIF &gt; 10 = ตัวแปรซ้อนกัน (เทอม interaction ซ้อนกับตัวแม่โดยธรรมชาติ) ·
+              Jarque–Bera / Breusch–Pagan p &lt; 0.05 = residual ไม่ปกติ / ความแปรปรวนไม่คงที่ จึงตีความ Deal Score เป็นอันดับเทียบกัน
+              ไม่ใช่ความน่าจะเป็นแม่นยำ
+            </p>
           </div>
 
           <div className="space-y-3">

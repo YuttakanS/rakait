@@ -18,6 +18,7 @@ full specification.
 | ML pipeline (SLR, MLR fair value, trees, K-Means) | done (`pricewatch train`, figures in `reports/figures/`) |
 | Web app (Next.js) | done (`web/`) |
 | ML pipeline: hierarchical clustering (Ward) vs K-Means | done |
+| ML pipeline: MLR residual diagnostics (VIF, Q-Q, residual vs fitted, Jarque-Bera, Breusch-Pagan) | done (`reports/figures/*_mlr_diagnostics.png`) |
 | API service (FastAPI / ONNX) | not started |
 
 ## Setup

@@ -5,6 +5,8 @@ each can be unit-tested on synthetic data with a known answer.
 
 Complexities use n = rows, p = features, k = clusters, d = tree depth:
 * OLS (simple and multiple): O(n p^2) via a least-squares solve.
+* MLR diagnostics: VIF O(n p^2 + p^3) from one correlation-matrix inverse;
+  Breusch-Pagan one more O(n p^2) auxiliary regression.
 * Regression / classification tree: O(p n log n) per level, depth <= 4.
 * K-Means: O(i n k p) for i Lloyd iterations; silhouette O(n^2) is the cost
   driver when choosing k, acceptable at catalogue scale (n < 10^4).
@@ -79,6 +81,112 @@ def simple_regression(x: pd.Series, y: pd.Series, feature: str) -> SimpleRegress
 
 
 @dataclass(frozen=True)
+class RegressionDiagnostics:
+    """Classical OLS assumption checks on the in-sample fit of log(price).
+
+    Diagnostics use the in-sample residuals of the final model (the textbook
+    definition); the Deal Score uses out-of-fold residuals instead, which
+    answer a different question (how far a listing sits from a fit that never
+    saw its product).
+
+    Attributes:
+        vif: Variance inflation factor per feature, ``1 / (1 - R_j^2)``.
+            Above 10 is the usual collinearity warning; interaction terms and
+            their parents are collinear by construction.
+        fitted: In-sample fitted log(price) per row.
+        residual: In-sample residual log(price) - fitted per row.
+        skew: Sample skewness of the residuals (0 under normality).
+        excess_kurtosis: Sample excess kurtosis (0 under normality).
+        jarque_bera: JB statistic, ``n/6 (S^2 + K^2/4)``, chi^2(2) under H0.
+        jarque_bera_p: Its p-value.
+        breusch_pagan: LM statistic ``n R^2`` of e^2 regressed on X,
+            chi^2(p) under homoscedasticity.
+        breusch_pagan_p: Its p-value.
+    """
+
+    vif: dict[str, float]
+    fitted: np.ndarray
+    residual: np.ndarray
+    skew: float
+    excess_kurtosis: float
+    jarque_bera: float
+    jarque_bera_p: float
+    breusch_pagan: float
+    breusch_pagan_p: float
+
+    def summary(self) -> dict[str, Any]:
+        """JSON-ready scalars (the per-row arrays are left out)."""
+        return {
+            "vif": self.vif,
+            "max_vif": max(self.vif.values(), default=float("nan")),
+            "skew": self.skew,
+            "excess_kurtosis": self.excess_kurtosis,
+            "jarque_bera": self.jarque_bera,
+            "jarque_bera_p": self.jarque_bera_p,
+            "breusch_pagan": self.breusch_pagan,
+            "breusch_pagan_p": self.breusch_pagan_p,
+            "n": int(len(self.residual)),
+        }
+
+
+def variance_inflation(x: np.ndarray, names: list[str]) -> dict[str, float]:
+    """VIF of every column at once: the diagonal of the inverse correlation matrix.
+
+    ``VIF_j = 1 / (1 - R_j^2) = [R^{-1}]_{jj}``, so one ``p x p`` inverse
+    replaces p auxiliary regressions: O(n p^2) to form R plus O(p^3) to invert.
+    A pseudo-inverse keeps exactly collinear columns finite (they show as very
+    large values instead of an exception).
+    """
+    if x.shape[1] == 1:
+        return {names[0]: 1.0}
+    corr = np.corrcoef(x, rowvar=False)
+    diag = np.diag(np.linalg.pinv(corr))
+    return {n: float(v) for n, v in zip(names, diag, strict=True)}
+
+
+def regression_diagnostics(
+    x: np.ndarray, y: np.ndarray, model: LinearRegression, names: list[str]
+) -> RegressionDiagnostics:
+    """Residual normality, homoscedasticity and collinearity checks for an OLS fit.
+
+    Args:
+        x: Design matrix the model was fitted on, ``n x p``.
+        y: Target it was fitted on.
+        model: The fitted regression.
+        names: Column names of ``x``.
+
+    Returns:
+        The diagnostics.
+    """
+    from scipy import stats
+
+    fitted = model.predict(x)
+    resid = y - fitted
+    n, p = x.shape
+    skew = float(stats.skew(resid))
+    kurt = float(stats.kurtosis(resid))  # Fisher: excess kurtosis
+    jb = n / 6 * (skew**2 + kurt**2 / 4)
+    # Breusch-Pagan (Koenker's studentised form): regress e^2 on the same
+    # regressors; under constant variance n * R^2 ~ chi^2(p).
+    sq = resid**2
+    aux = LinearRegression().fit(x, sq)
+    ss_tot = float(((sq - sq.mean()) ** 2).sum())
+    r2_aux = 1 - float(((sq - aux.predict(x)) ** 2).sum()) / ss_tot if ss_tot > 0 else 0.0
+    bp = n * r2_aux
+    return RegressionDiagnostics(
+        vif=variance_inflation(x, names),
+        fitted=fitted,
+        residual=resid,
+        skew=skew,
+        excess_kurtosis=kurt,
+        jarque_bera=float(jb),
+        jarque_bera_p=float(stats.chi2.sf(jb, 2)),
+        breusch_pagan=float(bp),
+        breusch_pagan_p=float(stats.chi2.sf(bp, p)),
+    )
+
+
+@dataclass(frozen=True)
 class FairValueModel:
     """Log-linear multiple regression of price on specs and demand.
 
@@ -105,6 +213,7 @@ class FairValueModel:
     n: int
     fair_price: pd.Series
     z_residual: pd.Series
+    diagnostics: RegressionDiagnostics | None = None
 
     def coefficient_table(self) -> list[dict[str, float | str]]:
         """Coefficients with their % effect per standard deviation."""
@@ -226,6 +335,7 @@ def fit_fair_value(
         n=len(y),
         fair_price=pd.Series(fair, index=design.index).reindex(features.index),
         z_residual=pd.Series(resid / sigma, index=design.index).reindex(features.index),
+        diagnostics=regression_diagnostics(x, y, model, columns),
     )
 
 
