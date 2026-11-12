@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v7"
+MODEL_VERSION = "2026.11-v8"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -269,6 +269,61 @@ def demand_features(frame: pd.DataFrame) -> pd.DataFrame:
         },
         index=frame.index,
     )
+
+
+def model_demand(frame: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
+    """Demand-clustering inputs per product model (SPEC round 8).
+
+    One model gets one demand group, so the K-Means rows are models, not
+    listings (store x model). Per model (``product_key``; an unlinked listing
+    is a model of its own):
+
+    * ``views``: sum of ``view_count`` over the stores that publish it, NaN
+      when none does (such a model gets no group);
+    * ``sales_per_day``: sum over the stores that publish it (negative rates
+      clipped to 0), NaN when none does;
+    * ``normalized_price``: the lowest in-stock price (every listing's when
+      none is in stock) over the median price of all the model's listings.
+
+    Pure ``groupby`` reductions over contiguous float columns (Cython, no
+    per-row Python): O(n) hashing into O(#models) groups, plus the medians.
+
+    Args:
+        frame: Current listings with ``listing_id``, ``price`` and optionally
+            ``canonical_id``, ``view_count``, ``sales_per_day``, ``in_stock``.
+
+    Returns:
+        ``(key, models)``: the model key per listing (aligned with ``frame``)
+        and one row per model indexed by that key, with the three columns
+        above.
+    """
+    key = product_key(frame)
+    price = frame["price"].astype(float)
+    in_stock = (
+        frame["in_stock"].fillna(False).astype(bool)
+        if "in_stock" in frame
+        else pd.Series(True, index=frame.index)
+    )
+    columns = pd.DataFrame(
+        {
+            "views": numeric(frame, "view_count"),
+            "sales_per_day": numeric(frame, "sales_per_day").clip(lower=0),
+            "price": price,
+            "in_stock_price": price.where(in_stock),
+        },
+        index=frame.index,
+    )
+    grouped = columns.groupby(key)
+    lowest = grouped["in_stock_price"].min().fillna(grouped["price"].min())
+    models = pd.DataFrame(
+        {
+            # min_count=1: a model no store publishes counters for stays NaN.
+            "views": grouped["views"].sum(min_count=1),
+            "sales_per_day": grouped["sales_per_day"].sum(min_count=1),
+            "normalized_price": lowest / grouped["price"].median(),
+        }
+    )
+    return key, models
 
 
 def current_timing_features(history: pd.DataFrame, current: pd.DataFrame) -> pd.DataFrame:
@@ -563,25 +618,24 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         except ValueError as exc:
             report.notes.append(f"{category.value} tier tree: {exc}")
 
-    # D. K-Means over listings that publish demand (all categories together;
-    # price normalised within each canonical model so categories are comparable).
-    model_median = current.groupby(current["canonical_id"].fillna(-current["listing_id"]))[
-        "price"
-    ].transform("median")
+    # D. K-Means over product models that publish demand (all categories
+    # together; price normalised within each model so categories are
+    # comparable). One model, one group: every listing of a model gets its
+    # model's label, so the web's filter and card badge agree (SPEC round 8).
+    model_key, models = model_demand(current)
     try:
-        seg = m.segment_demand(
-            numeric(current, "view_count"),
-            numeric(current, "sales_per_day"),
-            current["price"] / model_median,
-        )
-        insights["demand_cluster"] = seg.labels
+        seg = m.segment_demand(models["views"], models["sales_per_day"], models["normalized_price"])
+        insights["demand_cluster"] = model_key.map(seg.labels)
         report.market[("all", "demand_kmeans")] = {
+            # Rows clustered: product models (2026.11-v8+); earlier payloads
+            # have no "unit" and counted listings.
+            "unit": "model",
             "k": seg.k,
             "silhouette": seg.silhouette,
             "silhouette_by_k": seg.silhouette_by_k,
             "centroids": seg.centroids,
-            # Per listing label, from the listings (best-seller clusters are
-            # split by views, so a centroid no longer equals one label).
+            # Per label, from the models (best-seller clusters are split by
+            # views, so a centroid no longer equals one label).
             "segments": seg.segments,
             "split_views": seg.split_views,
             "n": int(seg.labels.notna().sum()),
@@ -597,7 +651,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "n": int(len(h.linkage) + 1),
             }
         if figures:
-            _plot_kmeans(figures, current, seg)
+            _plot_kmeans(figures, models, seg)
             if seg.hierarchy is not None:
                 _plot_dendrogram(figures, seg.hierarchy)
     except ValueError as exc:
@@ -868,15 +922,16 @@ def _plot_tree(
     plt.close(fig)
 
 
-def _plot_kmeans(out: Path, current: pd.DataFrame, seg: m.DemandSegments) -> None:
+def _plot_kmeans(out: Path, models: pd.DataFrame, seg: m.DemandSegments) -> None:
+    """Scatter of the clustered models (``model_demand`` rows), one hue per label."""
     plt = _plt()
     labelled = seg.labels.dropna()
     fig, ax = plt.subplots(figsize=(6, 4.5))
     for label in sorted(labelled.unique()):
         idx = labelled[labelled == label].index
         ax.scatter(
-            np.log1p(numeric(current, "view_count")[idx]),
-            np.log1p(numeric(current, "sales_per_day")[idx].clip(lower=0)),
+            np.log1p(models.loc[idx, "views"]),
+            np.log1p(models.loc[idx, "sales_per_day"]),
             s=12,
             alpha=0.7,
             label=label,
@@ -892,7 +947,7 @@ def _plot_kmeans(out: Path, current: pd.DataFrame, seg: m.DemandSegments) -> Non
     ax.set(
         xlabel="log(views + 1)",
         ylabel="log(sales per day + 1)",
-        title=f"Demand segments (k={seg.k}, silhouette={seg.silhouette:.2f})",
+        title=f"Demand segments per model (k={seg.k}, silhouette={seg.silhouette:.2f})",
     )
     ax.legend(fontsize=8)
     fig.tight_layout()

@@ -719,7 +719,12 @@ def segment_demand(
     *,
     k_range: range = range(4, 7),
 ) -> DemandSegments:
-    """Cluster listings by demand and label each listing.
+    """Cluster rows by demand and label each row.
+
+    Training passes one row per product model (``train.model_demand``: views
+    and sales summed over stores), so every listing of a model shares one
+    label; the function itself is agnostic to what a row is, and docstrings
+    below say "listing" for a row.
 
     k is chosen by silhouette score within ``k_range``; the floor of 4 follows
     the specification's three demand profiles plus a remainder segment.
@@ -733,7 +738,8 @@ def segment_demand(
         k_range: Candidate cluster counts.
 
     Returns:
-        The segmentation; listings with missing inputs get no label.
+        The segmentation, indexed like ``views``; rows with missing inputs get
+        no label.
     """
     raw = pd.DataFrame(
         {
@@ -743,7 +749,7 @@ def segment_demand(
         }
     ).dropna()
     if len(raw) < max(k_range.start * 5, 15):
-        raise ValueError(f"only {len(raw)} listings have demand data; too few to cluster")
+        raise ValueError(f"only {len(raw)} rows have demand data; too few to cluster")
     scaler = StandardScaler()
     x = scaler.fit_transform(raw)
 

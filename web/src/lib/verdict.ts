@@ -1,6 +1,10 @@
 import type { DemandCluster, Recommendation } from "@/lib/types";
 
-/** The badges one offer may show, after sold-out and conflict rules. */
+/**
+ * The badges one offer may show, after sold-out and conflict rules. The
+ * cluster passed in is the model's demand group (one per model), the
+ * recommendation the offer's own.
+ */
 export interface Verdict {
   /** False: show "หมด" and no price verdict at all. */
   inStock: boolean;
@@ -23,22 +27,26 @@ export interface Verdict {
  * "รอก่อน" (clearly above fair) beside "ขายดี แต่คนดูน้อย" (hidden_gem, read
  * as a value find) keeps รอก่อน. Pairs not listed here are
  * compatible (a popular part can still be overpriced at one store).
+ *
+ * The sentence names the group the model is in, so a card in a `?cluster=`
+ * result whose badge is withheld still says why it is listed there.
+ * `NoteText` keeps the quoted name on one line on a narrow card.
  */
 const CONFLICTS: Partial<Record<Recommendation, Partial<Record<DemandCluster, string>>>> = {
   buy_now: {
     overpriced_hype:
-      "ไม่แสดงป้าย “คนดูเยอะ แต่ขายน้อย” เพราะราคานี้ถูกกว่าราคายุติธรรมชัดเจน ราคาบอกความคุ้มได้ตรงกว่ายอดเข้าชมและยอดขาย",
+      "รุ่นนี้อยู่ในกลุ่ม “คนดูเยอะ\u00a0แต่ขายน้อย” แต่ไม่แสดงป้าย เพราะราคานี้ถูกกว่าราคายุติธรรมชัดเจน ราคาบอกความคุ้มได้ตรงกว่ายอดเข้าชมและยอดขาย",
   },
   wait: {
     hidden_gem:
-      "ไม่แสดงป้าย “ขายดี แต่คนดูน้อย” เพราะร้านนี้ตั้งราคาสูงกว่าราคายุติธรรมชัดเจน แม้รุ่นนี้จะขายดี",
+      "รุ่นนี้อยู่ในกลุ่ม “ขายดี\u00a0แต่คนดูน้อย” แต่ไม่แสดงป้าย เพราะราคานี้แพงกว่าราคายุติธรรมชัดเจน แม้รุ่นนี้จะขายดี",
   },
 };
 
 /**
  * Resolve the badges for one offer. A sold-out offer shows no verdict: its
- * price is a stale last-known one, so neither a deal nor a demand label
- * built on it can be acted on. O(1).
+ * price is a stale last-known one, so no deal built on it can be acted on.
+ * (A card sold out at every store prints the model's group itself.) O(1).
  */
 export function resolveVerdict(offer: {
   inStock: boolean;

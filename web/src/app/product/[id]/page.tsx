@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { DealScore, SoldOutTag, VerdictBadges } from "@/components/badges";
+import { ClusterBadge, DealScore, NoteText, SoldOutTag, VerdictBadges } from "@/components/badges";
 import { DealMeter } from "@/components/deal-meter";
 import { PriceChart } from "@/components/price-chart";
 import { ProductImage } from "@/components/product-image";
 import { CATEGORY_LABELS, formatTHB } from "@/lib/format";
 import { getPriceHistory, getProduct } from "@/lib/queries";
-import type { Offer } from "@/lib/types";
+import type { DemandCluster, Offer } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
 
 export const revalidate = 900;
@@ -61,8 +61,12 @@ function Stat({ label, value, tone = "" }: { label: string; value: string; tone?
 
 const VISIBLE_OFFERS = 6;
 
-function verdictOf(o: Offer) {
-  return resolveVerdict({ inStock: o.inStock, recommendation: o.recommendation, cluster: o.demandCluster });
+/**
+ * An offer's badges. The demand group belongs to the model, so only the
+ * product hero passes it; store rows show no group (SPEC round 8).
+ */
+function verdictOf(o: Offer, cluster: DemandCluster | null = null) {
+  return resolveVerdict({ inStock: o.inStock, recommendation: o.recommendation, cluster });
 }
 
 /**
@@ -129,7 +133,9 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
           </div>
           {verdict.note && (
             // Full row width: the verdict column is too narrow for a sentence.
-            <p className="text-xs leading-snug text-muted md:col-span-4 md:text-right">{verdict.note}</p>
+            <p className="text-xs leading-snug text-muted md:col-span-4 md:text-right">
+              <NoteText text={verdict.note} />
+            </p>
           )}
         </>
       ) : (
@@ -212,7 +218,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                   uncertain={cheapest.fairUncertain}
                 />
               </div>
-              <VerdictBadges verdict={verdictOf(cheapest)} className="max-w-xl" />
+              <VerdictBadges verdict={verdictOf(cheapest, product.demandCluster)} className="max-w-xl" />
               {cheapest.recommendationReason && (
                 <p className="text-sm text-muted">{cheapest.recommendationReason}</p>
               )}
@@ -230,7 +236,10 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             </>
           ) : lastKnown ? (
             <div className="space-y-2">
-              <SoldOutTag label="หมดทุกร้าน" />
+              <div className="flex flex-wrap gap-1.5">
+                <SoldOutTag label="หมดทุกร้าน" />
+                {product.demandCluster && <ClusterBadge value={product.demandCluster} />}
+              </div>
               <p className="tabular text-sm text-muted">
                 ราคาล่าสุด <span className="font-semibold">{formatTHB(lastKnown.price)}</span> ที่ {lastKnown.merchantName} ·
                 ไม่มีราคาต่ำสุดหรือส่วนลดให้เทียบ จนกว่าจะมีของเข้า

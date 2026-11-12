@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { DealTag, FairGapTag, UncertainTag, VerdictBadges } from "@/components/badges";
+import { ClusterBadge, DealTag, FairGapTag, UncertainTag, VerdictBadges } from "@/components/badges";
 import { ProductImage } from "@/components/product-image";
 import { cardReason } from "@/lib/card-reason";
 import { CATEGORY_LABELS, formatBand, formatTHB } from "@/lib/format";
@@ -37,7 +37,8 @@ function reasonLine(p: ProductSummary): ReactNode {
 export function ProductCard({ p, priority = false }: { p: ProductSummary; priority?: boolean }) {
   const inStock = p.inStockOffers > 0;
   const fair = shownFair(p);
-  const verdict = resolveVerdict({ inStock, recommendation: p.cheapestRecommendation, cluster: p.cheapestCluster });
+  // The cluster is the model's group, the one `?cluster=` filters on.
+  const verdict = resolveVerdict({ inStock, recommendation: p.cheapestRecommendation, cluster: p.modelCluster });
   return (
     <Link
       href={`/product/${p.id}`}
@@ -109,6 +110,13 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
               <FairGapTag pct={p.bestPctVsFair} />
             )}
             <VerdictBadges verdict={verdict} reason={reasonLine(p)} />
+          </div>
+        )}
+        {/* Sold out everywhere: no price verdict, but the demand group is the
+            model's, not a stale price's, so it still shows. */}
+        {!inStock && p.modelCluster && (
+          <div className="flex flex-wrap gap-1.5">
+            <ClusterBadge value={p.modelCluster} />
           </div>
         )}
 

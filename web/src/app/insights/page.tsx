@@ -13,7 +13,7 @@ import {
   salesRate,
   tierLabel,
 } from "@/lib/market";
-import { getCoverage, getMarketInsights, getSpecPoints } from "@/lib/queries";
+import { countModelsByCluster, getCoverage, getMarketInsights, getSpecPoints } from "@/lib/queries";
 import type { Category, DemandCluster, MarketInsight, Recommendation } from "@/lib/types";
 
 export const revalidate = 900;
@@ -26,7 +26,10 @@ type Diagnostics = {
   jarque_bera_p: number;
   breusch_pagan_p: number;
 };
-/** One shopper-facing demand segment: listing count and averages. */
+/**
+ * One shopper-facing demand segment as stored: size and averages over the
+ * clustered rows (product models from 2026.11-v8, listings before).
+ */
 type Segment = {
   label: DemandCluster;
   size: number;
@@ -182,7 +185,12 @@ const hint = (c: Category, feature: string): string | undefined =>
   FACTOR_HINTS[`${c}.${feature}`] ?? FACTOR_HINTS[feature];
 
 export default async function InsightsPage() {
-  const [insights, coverage, points] = await Promise.all([getMarketInsights(), getCoverage(), getSpecPoints()]);
+  const [insights, coverage, points, modelCounts] = await Promise.all([
+    getMarketInsights(),
+    getCoverage(),
+    getSpecPoints(),
+    countModelsByCluster(),
+  ]);
   const categories = Object.keys(CATEGORY_LABELS) as Category[];
   const kmeans = find(insights, "all", "demand_kmeans");
   const hierarchy = find(insights, "all", "demand_hierarchical");
@@ -190,8 +198,13 @@ export default async function InsightsPage() {
   const linkage = find(insights, "all", "linkage_quality") as Record<string, CategoryLinkage> | undefined;
   // linkage_quality is written by the link step, not training: exclude it from "computed at".
   const computedAt = insights.find((i) => i.kind !== "linkage_quality")?.computedAt ?? null;
-  const segments = demandSegments(kmeans);
-  const clustered = segments.reduce((s, c) => s + c.size, 0);
+  // Tiles count models exactly as "/?cluster=…" does (live query, one group
+  // per model), so a tile's number is the list's "พบ X รุ่น"; averages come
+  // from the training payload. A group with no model on sale gets no tile.
+  const segments = demandSegments(kmeans).filter((c) => (modelCounts[c.label] ?? 0) > 0);
+  const clustered = segments.reduce((s, c) => s + (modelCounts[c.label] ?? 0), 0);
+  // 2026.11-v8+ clusters product models (views and sales summed over stores).
+  const perModel = kmeans?.unit === "model";
   // Views at which best sellers are split into community_favorite / hidden_gem (2026.11-v7+).
   const splitViews = num(kmeans?.split_views);
   // Group names quoted inside the split sentence; nowrap so a name never breaks across lines.
@@ -369,12 +382,13 @@ export default async function InsightsPage() {
       <Section
         id="demand"
         title="ของที่คนซื้อจริง"
-        subtitle="จัดกลุ่มสินค้าจากยอดเข้าชมและยอดขายจริงด้วย K-Means · ใช้ข้อมูลเฉพาะร้านที่เปิดเผยตัวเลขเหล่านี้"
+        subtitle={`จัดกลุ่มรุ่นสินค้าจากยอดเข้าชมและยอดขายจริง${perModel ? "ของทุกร้านรวมกัน" : ""}ด้วย K-Means รุ่นหนึ่งอยู่กลุ่มเดียว · ใช้ข้อมูลเฉพาะร้านที่เปิดเผยตัวเลขเหล่านี้`}
       >
         {segments.length > 0 ? (
           <div className={`grid gap-4 sm:grid-cols-2 ${segments.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-4"}`}>
             {segments.map((c) => {
-              const share = clustered ? c.size / clustered : 0;
+              const models = modelCounts[c.label] ?? 0;
+              const share = clustered ? models / clustered : 0;
               return (
                 <Link
                   key={c.label}
@@ -385,19 +399,23 @@ export default async function InsightsPage() {
                     <div className="display text-xl">{CLUSTER_LABELS[c.label].label}</div>
                     <div className="text-xs text-muted">{CLUSTER_LABELS[c.label].hint}</div>
                   </div>
-                  <dl className="grid grid-cols-2 gap-2 text-xs">
+                  {/* Two stat tiles side by side while each fits "~1 ชิ้น / NNN วัน" on
+                      one line (9rem = 119 px of text + padding; values are nowrap),
+                      stacked on narrower cards (4-up desktop). Same width per row of
+                      cards, so tiles stack alike. */}
+                  <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-2 text-xs">
                     <div className="border-2 border-border p-2.5">
                       <dt className="text-muted">คนดูเฉลี่ย</dt>
                       <dd className="tabular text-sm font-semibold">{Math.round(c.views).toLocaleString("th-TH")} ครั้ง</dd>
                     </div>
                     <div className="border-2 border-border p-2.5">
                       <dt className="text-muted">ขายได้</dt>
-                      <dd className="tabular text-sm font-semibold">{salesRate(c.sales_per_day)}</dd>
+                      <dd className="tabular text-sm font-semibold whitespace-nowrap">{salesRate(c.sales_per_day)}</dd>
                     </div>
                   </dl>
                   <div className="mt-auto flex items-baseline justify-between gap-2 text-xs text-muted">
                     <span className="tabular">
-                      {c.size.toLocaleString("th-TH")} รายการ ({Math.round(share * 100)}%)
+                      {models.toLocaleString("th-TH")} รุ่น ({Math.round(share * 100)}%)
                     </span>
                     <span className="font-bold text-foreground underline underline-offset-2">ดูสินค้า →</span>
                   </div>
@@ -638,7 +656,7 @@ export default async function InsightsPage() {
               <h3 className="display text-base">K-Means และ Hierarchical Clustering</h3>
               <p className="tabular text-xs text-muted">
                 X = [log(Views+1), log(SalesVelocity+1), NormalizedPrice] (StandardScaler) · k={String(kmeans.k)} เลือกจาก
-                silhouette = {fixed(kmeans.silhouette)} · n={String(kmeans.n)}
+                silhouette = {fixed(kmeans.silhouette)} · n={String(kmeans.n)} {perModel ? "รุ่น (รวมรายการที่ยังจับคู่รุ่นไม่ได้ รายการละหนึ่งรุ่น)" : "รายการ"}
                 {hierarchy &&
                   ` · Ward (k=${String(hierarchy.k)}): silhouette ${fixed(hierarchy.silhouette)}, ARI กับ K-Means ${fixed(hierarchy.ari_vs_kmeans)}, cophenetic r ${fixed(hierarchy.cophenetic_corr)}`}
               </p>

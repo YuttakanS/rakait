@@ -102,7 +102,8 @@ async def _train() -> int:
     ins = report.insights
     print(f"insights for {len(ins)} listings; figures in {FIGURES_DIR}")
     print(f"  fair price: {int(ins['fair_price'].notna().sum())} listings")
-    print(f"  demand cluster: {int(ins['demand_cluster'].notna().sum())} listings")
+    models = report.market.get(("all", "demand_kmeans"), {}).get("n", 0)
+    print(f"  demand cluster: {models} models, {int(ins['demand_cluster'].notna().sum())} listings")
     print(f"  recommendations: {ins['recommendation'].value_counts().to_dict()}")
     for (category, kind), payload in sorted(report.market.items()):
         headline = {

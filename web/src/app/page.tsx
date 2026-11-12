@@ -129,7 +129,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const cluster = pick(params.cluster, CLUSTERS);
   const sort = pick(params.sort, ["deal", "price", "stores"] as const) ?? "deal";
   const query = params.q?.trim().slice(0, 80) || undefined;
-  const products = await listProducts({ category, cluster, query, sort });
+  const { products, total } = await listProducts({ category, cluster, query, sort });
   const landing = !category && !cluster && !query && !params.sort;
   const hero = landing ? heroDeal(products) : null;
   const heading = query
@@ -141,6 +141,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         : landing
           ? "ดีลแนะนำวันนี้"
           : "สินค้าทั้งหมด";
+  // The group's name goes on the count line unless the heading already is it.
+  const headingIsCluster = cluster !== undefined && !query && !category;
 
   return (
     <div className="space-y-8">
@@ -162,8 +164,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
               {heading}
             </h2>
             <p className="mt-1 text-sm text-muted">
-              พบ <span className="tabular font-semibold text-foreground">{products.length}</span> รุ่น
-              {products.length === 60 && " (แสดง 60 อันดับแรก)"} · Deal เกิน 50 แปลว่าถูกกว่าราคายุติธรรม
+              พบ <span className="tabular font-semibold text-foreground">{total.toLocaleString("th-TH")}</span> รุ่น
+              {cluster && !headingIsCluster && (
+                <>
+                  {" "}ในกลุ่ม <span className="whitespace-nowrap">“{CLUSTER_LABELS[cluster].label}”</span>
+                </>
+              )}
+              {total > products.length && ` (แสดง ${products.length} อันดับแรก)`} · Deal เกิน 50
+              แปลว่าถูกกว่าราคายุติธรรม
             </p>
           </div>
           <form action="/" className="flex w-full flex-wrap gap-2 sm:w-auto">

@@ -21,8 +21,11 @@ export interface ProductSummary {
   cheapestRecommendation: Recommendation | null;
   /** That offer's recommendation_reason ("Decision Tree: …" from the timing tree). */
   cheapestReason: string | null;
-  /** Demand cluster of that same headline offer (not another store's). */
-  cheapestCluster: DemandCluster | null;
+  /**
+   * The model's demand group: one per model (2026.11-v8+), the value the
+   * `?cluster=` filter selects on. Not tied to the headline offer.
+   */
+  modelCluster: DemandCluster | null;
   /** Price-vs-fair delta of the headline offer (e.g. -0.12 = 12% below). */
   bestPctVsFair: number | null;
   /** Fair price of the headline offer (one value per model). */
@@ -32,6 +35,13 @@ export interface ProductSummary {
   /** Price over 40% away from fair: shown for reference, never ranked. */
   fairUncertain: boolean;
   imageUrl: string | null;
+}
+
+/** One page of the product list plus the number of models matching in all. */
+export interface ProductList {
+  products: ProductSummary[];
+  /** Matching models before the page limit. */
+  total: number;
 }
 
 export interface Offer {
@@ -54,7 +64,6 @@ export interface Offer {
   fairUncertain: boolean;
   recommendation: Recommendation | null;
   recommendationReason: string | null;
-  demandCluster: DemandCluster | null;
   salesPerDay: number | null;
   imageUrl: string | null;
 }
@@ -65,6 +74,8 @@ export interface ProductDetail {
   manufacturer: string;
   model: string;
   specs: Record<string, string | number | boolean | null>;
+  /** The model's demand group (shown once, in the product hero). */
+  demandCluster: DemandCluster | null;
   offers: Offer[];
 }
 

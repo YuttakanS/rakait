@@ -8,7 +8,7 @@ import type {
   Offer,
   PricePoint,
   ProductDetail,
-  ProductSummary,
+  ProductList,
   Recommendation,
   SortKey,
   SpecPoint,
@@ -23,6 +23,16 @@ const IMAGE = sql`to_jsonb(l) ->> 'image_url'`;
 /** Listings scraped within this window count as currently on sale. */
 const ACTIVE = sql`l.last_scraped_at > now() - interval '2 days' AND l.current_price IS NOT NULL`;
 
+/**
+ * A product model's demand group, over its active listings (needs `i` =
+ * listing_insights). Model 2026.11-v8+ gives every listing of a model the same
+ * label, so this is that label. Older runs labelled each listing; the most
+ * common label stands for the model (ties: the first alphabetically), so the
+ * card badge, the `?cluster=` filter, the product page and the /insights
+ * counts still name one group per model. NULLs are ignored.
+ */
+const MODEL_CLUSTER = sql`mode() WITHIN GROUP (ORDER BY i.demand_cluster)`;
+
 export interface ProductFilter {
   category?: Category;
   cluster?: DemandCluster;
@@ -36,12 +46,17 @@ export interface ProductFilter {
  * grouped query (one round trip; the planner uses the canonical index).
  *
  * The card describes one offer: the cheapest in-stock one (price, Deal
- * Score, fair-price delta, recommendation and demand cluster all from it, so
- * they never contradict each other). A sold-out listing keeps its last price, often
+ * Score, fair-price delta and recommendation all from it, so they never
+ * contradict each other). A sold-out listing keeps its last price, often
  * months stale (a sold-out RTX 5060 Ti 16GB still read ฿16,490 against
- * ฿27,000+ in stock), so it only headlines a model sold out everywhere.
+ * ฿27,000+ in stock), so it only headlines a model sold out everywhere. The
+ * demand group is the model's (`MODEL_CLUSTER`), the same value the
+ * `?cluster=` filter selects on, so every filtered card carries that group.
+ *
+ * `total` counts every matching model before the LIMIT (a window over the
+ * grouped rows, same query), so "พบ X รุ่น" and the /insights tiles agree.
  */
-export async function listProducts(filter: ProductFilter): Promise<ProductSummary[]> {
+export async function listProducts(filter: ProductFilter): Promise<ProductList> {
   // Buyable first under every sort: a model sold out everywhere carries only
   // stale last prices, so its "deal" cannot be acted on. (An output alias
   // cannot appear inside an ORDER BY expression, hence the aggregate.)
@@ -66,12 +81,13 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
            (array_agg(i.recommendation ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_rec,
            (array_agg(i.recommendation_reason ORDER BY l.in_stock DESC, l.current_price))[1]
                AS cheapest_reason,
-           (array_agg(i.demand_cluster ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_cluster,
+           ${MODEL_CLUSTER} AS model_cluster,
            (array_agg(i.pct_vs_fair ORDER BY l.in_stock DESC, l.current_price))[1] AS best_pct,
            (array_agg(i.fair_price ORDER BY l.in_stock DESC, l.current_price))[1]::float8 AS fair_price,
            (array_agg(i.fair_error_pct ORDER BY l.in_stock DESC, l.current_price))[1] AS fair_error_pct,
            coalesce((array_agg(i.fair_uncertain ORDER BY l.in_stock DESC, l.current_price))[1], false)
                AS fair_uncertain,
+           count(*) OVER ()::int AS total,
            (array_agg(${IMAGE} ORDER BY l.in_stock DESC, l.current_price)
                 FILTER (WHERE ${IMAGE} IS NOT NULL))[1] AS image_url
     FROM canonical_products c
@@ -81,11 +97,11 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
       ${filter.category ? sql`AND c.category = ${filter.category}` : sql``}
       ${filter.query ? sql`AND (c.model ILIKE ${"%" + filter.query + "%"} OR l.title ILIKE ${"%" + filter.query + "%"})` : sql``}
     GROUP BY c.id
-    ${filter.cluster ? sql`HAVING bool_or(i.demand_cluster = ${filter.cluster})` : sql``}
+    ${filter.cluster ? sql`HAVING ${MODEL_CLUSTER} = ${filter.cluster}` : sql``}
     ORDER BY ${order}
     LIMIT ${filter.limit ?? 60}
   `;
-  return rows.map((r) => ({
+  const products = rows.map((r) => ({
     id: Number(r.id),
     category: r.category as Category,
     manufacturer: r.manufacturer as string,
@@ -99,18 +115,47 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
     bestDeal: (r.best_deal as number | null) ?? null,
     cheapestRecommendation: (r.cheapest_rec as Recommendation | null) ?? null,
     cheapestReason: (r.cheapest_reason as string | null) ?? null,
-    cheapestCluster: (r.cheapest_cluster as DemandCluster | null) ?? null,
+    modelCluster: (r.model_cluster as DemandCluster | null) ?? null,
     bestPctVsFair: (r.best_pct as number | null) ?? null,
     fairPrice: (r.fair_price as number | null) ?? null,
     fairErrorPct: (r.fair_error_pct as number | null) ?? null,
     fairUncertain: r.fair_uncertain as boolean,
     imageUrl: (r.image_url as string | null) ?? null,
   }));
+  return { products, total: rows.length ? (rows[0].total as number) : 0 };
+}
+
+/**
+ * Models per demand group, counted exactly as the product list counts them
+ * (canonical products with an active listing, `MODEL_CLUSTER`), so an
+ * /insights tile and "พบ X รุ่น" on `/?cluster=…` show the same number.
+ * One grouped scan of the active listings.
+ */
+export async function countModelsByCluster(): Promise<Partial<Record<DemandCluster, number>>> {
+  const rows = await sql`
+    SELECT cluster, count(*)::int AS models
+    FROM (
+      SELECT ${MODEL_CLUSTER} AS cluster
+      FROM canonical_products c
+      JOIN merchant_listings l ON l.canonical_product_id = c.id
+      LEFT JOIN listing_insights i ON i.listing_id = l.id
+      WHERE ${ACTIVE}
+      GROUP BY c.id
+    ) AS per_model
+    WHERE cluster IS NOT NULL
+    GROUP BY cluster
+  `;
+  return Object.fromEntries(rows.map((r) => [r.cluster as DemandCluster, r.models as number]));
 }
 
 export async function getProduct(id: number): Promise<ProductDetail | null> {
   const [product] = await sql`
-    SELECT id, category, manufacturer, model, specs FROM canonical_products WHERE id = ${id}
+    SELECT c.id, c.category, c.manufacturer, c.model, c.specs,
+           (SELECT ${MODEL_CLUSTER}
+            FROM merchant_listings l
+            LEFT JOIN listing_insights i ON i.listing_id = l.id
+            WHERE l.canonical_product_id = c.id AND ${ACTIVE}) AS demand_cluster
+    FROM canonical_products c WHERE c.id = ${id}
   `;
   if (!product) return null;
   const offers = await sql`
@@ -119,7 +164,7 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
            l.view_count, l.sold_count, l.last_scraped_at,
            i.fair_price::float8 AS fair_price, i.pct_vs_fair, i.deal_score,
            i.fair_error_pct, coalesce(i.fair_uncertain, false) AS fair_uncertain,
-           i.recommendation, i.recommendation_reason, i.demand_cluster, i.sales_per_day,
+           i.recommendation, i.recommendation_reason, i.sales_per_day,
            ${IMAGE} AS image_url
     FROM merchant_listings l
     JOIN merchants m ON m.id = l.merchant_id
@@ -133,6 +178,7 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
     manufacturer: product.manufacturer as string,
     model: product.model as string,
     specs: product.specs as ProductDetail["specs"],
+    demandCluster: (product.demand_cluster as DemandCluster | null) ?? null,
     offers: offers.map(
       (r): Offer => ({
         listingId: Number(r.id),
@@ -154,7 +200,6 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
         fairUncertain: r.fair_uncertain as boolean,
         recommendation: (r.recommendation as Recommendation | null) ?? null,
         recommendationReason: (r.recommendation_reason as string | null) ?? null,
-        demandCluster: (r.demand_cluster as DemandCluster | null) ?? null,
         salesPerDay: (r.sales_per_day as number | null) ?? null,
         imageUrl: (r.image_url as string | null) ?? null,
       }),

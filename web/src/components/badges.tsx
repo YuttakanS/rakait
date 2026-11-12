@@ -125,6 +125,26 @@ export function SoldOutTag({ label = "หมด" }: { label?: string }) {
 }
 
 /**
+ * A withheld-badge note with every quoted group name (“…”) kept on one line,
+ * so a narrow card never splits a name between its words. O(length).
+ */
+export function NoteText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(“[^”]*”)/).map((part, i) =>
+        part.startsWith("“") ? (
+          <span key={i} className="whitespace-nowrap">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+/**
  * One offer's status badges after `resolveVerdict`: "หมด" when sold out,
  * otherwise the recommendation and the demand cluster that survived the
  * conflict rules, with the reason for any withheld badge printed underneath
@@ -161,7 +181,11 @@ export function VerdictBadges({
         {verdict.cluster && <ClusterBadge value={verdict.cluster} />}
       </div>
       {verdict.recommendation && reason && <p className="line-clamp-2 text-xs leading-snug text-muted">{reason}</p>}
-      {showNote && verdict.note && <p className="text-xs leading-snug text-muted">{verdict.note}</p>}
+      {showNote && verdict.note && (
+        <p className="text-xs leading-snug text-muted">
+          <NoteText text={verdict.note} />
+        </p>
+      )}
     </div>
   );
 }

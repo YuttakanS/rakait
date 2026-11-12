@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pricewatch.ml import models as m
-from pricewatch.ml.train import gpu_class, run_models
+from pricewatch.ml.train import gpu_class, model_demand, run_models
 
 RNG = np.random.default_rng(0)
 
@@ -339,9 +339,11 @@ def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
     assert clear.any() and ins.loc[clear, "recommendation_reason"].str.contains(numbered).all()
     assert ("gpu", "simple_regression") in report.market
     assert ("gpu", "fair_value_mlr") in report.market
-    kmeans = report.market[("all", "demand_kmeans")]
-    assert {s["label"] for s in kmeans["segments"]} <= set(m.SEGMENT_LABELS)
-    assert sum(s["size"] for s in kmeans["segments"]) == kmeans["n"]
+    # Demand groups are per model (SPEC round 8): twelve models are too few
+    # to cluster, so no listing gets a group (the catalogue tests below cover it).
+    assert ("all", "demand_kmeans") not in report.market
+    assert ins["demand_cluster"].isna().all()
+    assert any(note.startswith("demand clustering: only 12 rows") for note in report.notes)
     assert any("timing tree" in note for note in report.notes)
 
 
@@ -447,6 +449,123 @@ def test_split_best_sellers_pools_clusters_and_ties_go_to_hidden_gem() -> None:
     labels, split = m.split_best_sellers(names, np.array([1.0, 2.0, 2.0, 5.0, 9.0]))
     assert split == 2.0
     assert labels.tolist() == [m.HIDDEN_GEM, m.HIDDEN_GEM, m.HIDDEN_GEM, m.FAVORITE, m.NICHE]
+
+
+def test_model_demand_sums_stores_per_model_and_keeps_unlinked_listings_apart() -> None:
+    nan = np.nan
+    frame = pd.DataFrame(
+        {
+            "listing_id": [1, 2, 3, 4, 5, 6, 7, 8],
+            "canonical_id": [10, 10, 10, 10, nan, 20, 30, 30],
+            "view_count": [100, 300, nan, nan, 50, nan, 10, 5],
+            "sales_per_day": [0.5, 0.1, nan, nan, 0.2, nan, -0.3, 0.0],
+            "price": [1000, 800, 1200, 1300, 500, 200, 300, 400],
+            "in_stock": [True, False, True, True, True, True, False, False],
+        }
+    )
+
+    key, models = model_demand(frame)
+
+    # Listings 1-4 share model 10; the unlinked listing 5 is a model of its own.
+    assert key.iloc[:4].nunique() == 1 and key.iloc[4] not in {10.0, 20.0, 30.0}
+    assert len(models) == 4
+    # Several stores add up; a store that publishes no counters adds nothing.
+    assert models.loc[10.0, "views"] == 400
+    assert models.loc[10.0, "sales_per_day"] == pytest.approx(0.6)
+    # Lowest in-stock price (1000, not the sold-out 800) over the median of
+    # every listing of the model (1100).
+    assert models.loc[10.0, "normalized_price"] == pytest.approx(1000 / 1100)
+    # No store publishes views: no demand row, so no group.
+    assert np.isnan(models.loc[20.0, "views"])
+    # Sold out everywhere: every listing's lowest price; negative rates clip to 0.
+    assert models.loc[30.0, "normalized_price"] == pytest.approx(300 / 350)
+    assert models.loc[30.0, "views"] == 15 and models.loc[30.0, "sales_per_day"] == 0
+    unlinked = models.loc[key.iloc[4]]
+    assert (unlinked["views"], unlinked["normalized_price"]) == (50, 1.0)
+
+
+def _multi_store_catalogue(seed: int) -> pd.DataFrame:
+    """Linked models at three stores (one without counters) plus unlinked listings.
+
+    Category "other" keeps sections A-C out of the way: only demand
+    clustering and the rule recommendations run.
+    """
+    rng = np.random.default_rng(seed)
+    blobs = [(20_000, 0.01), (300, 0.01), (2_000, 0.002), (5_000, 3.0)]
+    rows = []
+    listing_id = 0
+    for model in range(80):
+        views, sales = blobs[model % 4]
+        model_views = rng.lognormal(np.log(views), 0.6)
+        model_sales = rng.normal(sales, sales * 0.05)
+        for store, share in (("jib", 0.7), ("ihavecpu", 0.3), ("banana", None)):
+            rows.append(
+                {
+                    "listing_id": listing_id,
+                    "category": "other",
+                    "merchant": store,
+                    "canonical_id": model,
+                    "price": 1000 * rng.uniform(0.9, 1.1),
+                    "view_count": np.nan if share is None else model_views * share,
+                    "sales_per_day": np.nan if share is None else model_sales * share,
+                    "views_per_day": np.nan,
+                    "in_stock": True,
+                    "stock_quantity": np.nan,
+                    "age_days": 30,
+                }
+            )
+            listing_id += 1
+    for _ in range(8):  # unlinked: each one its own model
+        rows.append(
+            rows[0]
+            | {
+                "listing_id": listing_id,
+                "canonical_id": np.nan,
+                "view_count": 400.0,
+                "sales_per_day": 0.01,
+            }
+        )
+        listing_id += 1
+    return pd.DataFrame(rows)
+
+
+def test_every_listing_of_a_model_gets_the_model_label() -> None:
+    current = _multi_store_catalogue(seed=8)
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    labels = report.insights["demand_cluster"]
+    linked = current["canonical_id"].notna()
+    # One group per model, including the store that publishes no counters.
+    per_model = (
+        labels[linked]
+        .groupby(current.loc[linked, "canonical_id"])
+        .agg(lambda v: v.nunique(dropna=False))
+    )
+    assert (per_model == 1).all()
+    assert labels[linked].notna().all()
+    assert labels[~linked].notna().all()
+    assert set(labels) <= set(m.SEGMENT_LABELS)
+
+
+def test_demand_segments_count_models_not_listings() -> None:
+    current = _multi_store_catalogue(seed=9)
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    kmeans = report.market[("all", "demand_kmeans")]
+    models = 80 + 8  # linked models + unlinked listings, each a model
+    assert kmeans["unit"] == "model"
+    assert kmeans["n"] == models
+    assert sum(s["size"] for s in kmeans["segments"]) == models
+    assert sum(c["size"] for c in kmeans["centroids"]) == models
+    hierarchy = report.market[("all", "demand_hierarchical")]
+    assert hierarchy["n"] == models
+    # Segment sizes are model counts of the labels the listings carry.
+    model_key = current["canonical_id"].fillna(-current["listing_id"] - 1)
+    labelled = report.insights.assign(model=model_key).drop_duplicates("model")
+    counts = labelled["demand_cluster"].value_counts()
+    assert {s["label"]: s["size"] for s in kmeans["segments"]} == counts.to_dict()
 
 
 def _rule_row(
