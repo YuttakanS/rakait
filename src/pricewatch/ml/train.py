@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v9"
+MODEL_VERSION = "2026.11-v10"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -242,30 +242,86 @@ def model_level(specs: pd.DataFrame, key: pd.Series) -> pd.DataFrame:
     return specs.groupby(key).transform("median")
 
 
-def demand_features(frame: pd.DataFrame) -> pd.DataFrame:
-    """Demand signals of the specification, per canonical product.
+def store_sales_percentiles(frame: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
+    """Within-store sales percentiles per product model (SPEC rounds 9 and 12).
 
-    Views and sales velocity are summed over every listing of the same model
-    and logged. Product level, not listing level, because only JIB publishes
-    these counters: per listing, "has views" would identify the store, and the
+    Stores measure sales differently: JIB's rate comes from its published
+    sold counter, IHAVECPU's from warehouse stock drawdown (tens of units a
+    day for bulk stock), so only ranks are comparable across stores. Each
+    listing's rate is ranked within its own store (``merchant``; one store
+    when absent), counting only the store's listings that have a rate:
+
+    * ``sales_rank_pct``: average rank for ties, as a percentile in (0, 1];
+    * ``sales_beats_pct``: share of the store's listings (with a rate) that
+      sold strictly less, ``(min rank - 1) / count``.
+
+    Both are averaged per store first, then across the stores that have one,
+    so several listings of a model at one store do not outweigh another
+    store. NaN when no store has a rate for the model. Grouped ranks are a
+    per-store sort, O(n log n); the two means hash into O(#models) groups.
+
+    Args:
+        frame: Listings with ``listing_id`` and optionally ``canonical_id``,
+            ``merchant`` and ``sales_per_day`` (negative rates count as 0).
+
+    Returns:
+        ``(key, percentiles)``: the model key per listing (``product_key``,
+        aligned with ``frame``) and one row per model indexed by that key.
+    """
+    key = product_key(frame)
+    store = frame["merchant"] if "merchant" in frame else pd.Series("", index=frame.index)
+    sales = numeric(frame, "sales_per_day").clip(lower=0)
+    # NaN rates keep NaN ranks and are not counted in the store's percentile.
+    by_store = sales.groupby(store)
+    percentiles = pd.DataFrame(
+        {
+            "sales_rank_pct": by_store.rank(method="average", pct=True),
+            "sales_beats_pct": (by_store.rank(method="min") - 1) / by_store.transform("count"),
+        },
+        index=frame.index,
+    )
+    # Store first, then model: mean skips NaN, so only stores with a rate
+    # count, each once; a model no store has a rate for stays NaN.
+    return key, percentiles.groupby([key, store]).mean().groupby(level=0).mean()
+
+
+def demand_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Demand signals of the fair-value regression, per product model.
+
+    Product level, not listing level, because only some stores publish these
+    counters: per listing, "has views" would identify the store, and the
     same model at the same price would get a different fair price (and Deal
     Score) at each store. A fair price is a property of the product.
-    Unlinked listings keep their own counters. O(n) with one groupby.
+
+    * ``log_views``: ``log1p`` of the views summed over the model's listings
+      (only JIB publishes views, so the sum is one store's counter);
+    * ``sales_rank_pct``: the model's within-store sales percentile
+      (:func:`store_sales_percentiles`, ranked among the stores' listings in
+      ``frame``, i.e. within the category the regression is fitted on).
+      Until 2026.11-v9 this was ``log1p`` of the sales rates summed over
+      stores, which added JIB's sold counter (at most ~2 a day) to
+      IHAVECPU's stock drawdown (up to ~90 a day), so its coefficient
+      mostly measured "is stocked at IHAVECPU" (SPEC round 12).
+
+    Unlinked listings are models of their own. NaN where no store publishes
+    the counter (the regression adds a missingness indicator). O(n log n)
+    for the per-store ranks, O(n) for the groupbys.
+
+    Args:
+        frame: Listings of one category with ``listing_id`` and optionally
+            ``canonical_id``, ``merchant``, ``view_count``, ``sales_per_day``.
+
+    Returns:
+        ``log_views`` and ``sales_rank_pct`` per listing, aligned with ``frame``.
     """
     views = numeric(frame, "view_count")
-    sales = numeric(frame, "sales_per_day").clip(lower=0)
-    key = frame["canonical_id"] if "canonical_id" in frame else pd.Series(np.nan, index=frame.index)
-    linked = key.notna()
-
-    def per_product(values: pd.Series) -> pd.Series:
-        # min_count=1: a model no store publishes counters for stays NaN.
-        total = values[linked].groupby(key[linked]).transform(lambda v: v.sum(min_count=1))
-        return total.reindex(frame.index).where(linked, values)
-
+    key, percentiles = store_sales_percentiles(frame)
+    # min_count=1: a model no store publishes views for stays NaN.
+    total_views = views.groupby(key).sum(min_count=1)
     return pd.DataFrame(
         {
-            "log_views": np.log1p(per_product(views)),
-            "log_sales_per_day": np.log1p(per_product(sales)),
+            "log_views": np.log1p(key.map(total_views)),
+            "sales_rank_pct": key.map(percentiles["sales_rank_pct"]),
         },
         index=frame.index,
     )
@@ -284,20 +340,15 @@ def model_demand(frame: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
       clipped to 0), NaN when none does. For reporting only: it adds up
       metrics the stores measure differently, so it is neither clustered nor
       shown as a cross-store rate;
-    * ``sales_rank_pct``: the clustered sales signal (SPEC round 9). Each
-      listing's rate is ranked within its own store (``merchant``; average
-      rank for ties, percentile over the store's listings that have a rate).
-      JIB's rate comes from its published sold counter, IHAVECPU's from
-      warehouse stock drawdown (tens of units a day for bulk stock), so only
-      ranks are comparable across stores. NaN when no store has a rate (such
-      a model gets no group);
+    * ``sales_rank_pct``: the clustered sales signal (SPEC round 9), the
+      model's within-store sales percentile from
+      :func:`store_sales_percentiles` (ranked over every category, as the
+      clustering does). NaN when no store has a rate (such a model gets no
+      group);
     * ``sales_beats_pct``: the shopper-facing share of the store's listings
-      (with a rate) that sold strictly less, ``(min rank - 1) / count``. Not
-      the average rank: with many zero-sales ties the average rank of a zero
-      is mid-table (7 zeros of 10 rank 0.4), while it beats nobody (0);
-    * both percentiles are averaged per store first, then across the stores
-      that have one, so several listings of a model at one store do not
-      outweigh another store;
+      (with a rate) that sold strictly less. Not the average rank: with many
+      zero-sales ties the average rank of a zero is mid-table (7 zeros of 10
+      rank 0.4), while it beats nobody (0);
     * ``normalized_price``: the lowest in-stock price (every listing's when
       none is in stock) over the median price of all the model's listings.
 
@@ -322,20 +373,8 @@ def model_demand(frame: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
         if "in_stock" in frame
         else pd.Series(True, index=frame.index)
     )
-    store = frame["merchant"] if "merchant" in frame else pd.Series("", index=frame.index)
     sales = numeric(frame, "sales_per_day").clip(lower=0)
-    # NaN rates keep NaN ranks and are not counted in the store's percentile.
-    by_store = sales.groupby(store)
-    percentiles = pd.DataFrame(
-        {
-            "sales_rank_pct": by_store.rank(method="average", pct=True),
-            "sales_beats_pct": (by_store.rank(method="min") - 1) / by_store.transform("count"),
-        },
-        index=frame.index,
-    )
-    # Store first, then model: mean skips NaN, so only stores with a rate
-    # count, each once; a model no store has a rate for stays NaN.
-    per_model = percentiles.groupby([key, store]).mean().groupby(level=0).mean()
+    _, per_model = store_sales_percentiles(frame)
     columns = pd.DataFrame(
         {
             "views": numeric(frame, "view_count"),

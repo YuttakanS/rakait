@@ -490,8 +490,11 @@ in `lib/market.ts`.
    single-hue importance bar relative to factor 1, and direction in words
    (▲ ยิ่งสูง ยิ่งแพง / ▲ ราคาสูงกว่า for yes/no features). Model plumbing is
    excluded here (missing-spec flags, the generation × tier interaction,
-   demand signals, `nvme` which `pcie_gen` already carries); the signed
-   EffectBars (% per SD) live in the statistics section.
+   demand signals: `log_views` and the sales signal, `sales_rank_pct` = the
+   within-store sales percentile from model 2026.11-v10, `log_sales_per_day`
+   up to v9; `nvme` which `pcie_gen` already carries); the signed
+   EffectBars (% per SD, Thai labels via `featureLabel`) live in the
+   statistics section.
 4. **ของที่คนซื้อจริง** (`#demand`): one clickable tile per segment name that
    has listings, in the fixed chip order, linking to `/?cluster=…`; typical
    views ("คนดูโดยทั่วไป" = the segment's `views_median`, the mean only for

@@ -102,7 +102,8 @@ export function mainFactors(coefficients: { feature: string; pct_effect_per_sd: 
       // nvme coefficient is a collinear residue whose sign reads backwards.
       c.feature !== "nvme" &&
       c.feature !== "log_views" &&
-      c.feature !== "log_sales_per_day" &&
+      c.feature !== "log_sales_per_day" && // payloads up to 2026.11-v9
+      c.feature !== "sales_rank_pct" && // 2026.11-v10+
       Math.abs(c.pct_effect_per_sd) >= 0.01,
   );
   const sorted = hardware.sort((a, b) => Math.abs(b.pct_effect_per_sd) - Math.abs(a.pct_effect_per_sd));

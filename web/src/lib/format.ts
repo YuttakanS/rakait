@@ -132,7 +132,11 @@ export const FEATURE_LABELS: Record<string, string> = {
   pcie_gen: "PCIe รุ่น",
   read_mbps: "ความเร็วอ่าน",
   log_views: "ยอดเข้าชม",
+  // Model 2026.11-v9 and earlier: sales rates summed over stores.
   log_sales_per_day: "ยอดขายต่อวัน",
+  // 2026.11-v10+: the model's sales percentile within each store, averaged
+  // over stores (stores measure sales differently, so only ranks compare).
+  sales_rank_pct: "อันดับยอดขายในร้าน",
 };
 
 /** "JIB, IHAVECPU, BaNANA และ IT City" */

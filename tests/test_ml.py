@@ -872,9 +872,11 @@ def test_demand_features_are_per_product_so_stores_get_one_fair_price() -> None:
 
     frame = pd.DataFrame(
         {
+            "listing_id": [1, 2, 3, 4],
             "canonical_id": [1.0, 1.0, 2.0, np.nan],
+            "merchant": ["jib", "ihavecpu", "ihavecpu", "jib"],
             "view_count": [1000.0, np.nan, np.nan, 50.0],  # only one store publishes views
-            "sales_per_day": [0.5, np.nan, np.nan, np.nan],
+            "sales_per_day": [0.5, np.nan, np.nan, 0.1],
         }
     )
     out = demand_features(frame)
@@ -883,6 +885,30 @@ def test_demand_features_are_per_product_so_stores_get_one_fair_price() -> None:
     assert out["log_views"].iloc[0] == out["log_views"].iloc[1] == pytest.approx(np.log1p(1000))
     assert np.isnan(out["log_views"].iloc[2])  # no store publishes views for product 2
     assert out["log_views"].iloc[3] == pytest.approx(np.log1p(50))  # unlinked: own counter
+    # Sales enter as the within-store percentile (JIB: 0.1 < 0.5), per product.
+    assert out["sales_rank_pct"].iloc[0] == out["sales_rank_pct"].iloc[1] == pytest.approx(1.0)
+    assert np.isnan(out["sales_rank_pct"].iloc[2])  # no store has a rate for product 2
+    assert out["sales_rank_pct"].iloc[3] == pytest.approx(0.5)  # unlinked: own rank
+    assert "log_sales_per_day" not in out
+
+
+def test_mlr_sales_feature_is_store_relative_so_a_100x_larger_scale_gives_the_same_value() -> None:
+    from pricewatch.ml.train import demand_features
+
+    out = demand_features(_two_store_frame(scale=100.0))
+    sales = out["sales_rank_pct"].to_numpy()
+
+    # Same order at each store, rates 100x apart: identical MLR feature.
+    assert sales[5:10] == pytest.approx(sales[0:5])
+    # Listed at both stores: the mean of two equal percentiles, same value again.
+    assert sales[10:20] == pytest.approx(np.repeat(sales[0:5], 2))
+    # Rescaling a store does not move the feature at all.
+    assert demand_features(_two_store_frame(scale=1.0))["sales_rank_pct"].to_numpy() == (
+        pytest.approx(sales)
+    )
+    # The same percentile the demand clustering uses (one helper for both).
+    key, models = model_demand(_two_store_frame(scale=100.0))
+    assert sales == pytest.approx(key.map(models["sales_rank_pct"]).to_numpy())
 
 
 def test_fair_price_is_one_value_per_product_across_stores() -> None:
