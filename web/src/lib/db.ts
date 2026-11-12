@@ -29,6 +29,12 @@ import postgres from "postgres";
  * page's `Promise.all`), the transaction pooler never answered and every later
  * query on that connection hung. Concurrent queries of one instance therefore
  * run one after another, one extra same-region round trip each.
+ * Type fetching is off (`fetch_types: false`): by default postgres.js queries
+ * pg_type on every new connection to learn the OIDs of array types so it can
+ * parse arrays of custom types. No query here sends or returns an array
+ * (queries.ts only indexes `array_agg(...)[1]` down to a scalar) and the
+ * schema has no custom types or enums (migrations/), so that round trip on
+ * each cold connection bought nothing.
  * Never log the URL: it carries the password.
  */
 const BUILD_PHASE = "phase-production-build";
@@ -80,6 +86,7 @@ function createClient(): ReturnType<typeof postgres> {
     connect_timeout: 10,
     prepare: false,
     max_pipeline: 0,
+    fetch_types: false,
   };
   return postgres(resolveDatabaseUrl(process.env), options);
 }

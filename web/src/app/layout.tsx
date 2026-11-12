@@ -96,8 +96,11 @@ export default async function RootLayout({
               </span>
             </Link>
 
-            <nav aria-label="ทางลัด" className="col-start-2 justify-self-end lg:col-start-3">
-              <ul className="flex items-center">
+            {/* min-w-0 + flex-wrap: below ~340 px the three shortcuts do not fit
+                beside the logo, so the last one drops to a second line instead
+                of pushing the page sideways (SPEC round 11). */}
+            <nav aria-label="ทางลัด" className="col-start-2 min-w-0 justify-self-end lg:col-start-3">
+              <ul className="flex flex-wrap items-center justify-end">
                 {SHORTCUTS.map((s) => (
                   <li key={s.href}>
                     <Link
@@ -111,7 +114,7 @@ export default async function RootLayout({
               </ul>
             </nav>
 
-            <div className="col-span-2 lg:col-span-1 lg:col-start-2 lg:row-start-1">
+            <div className="col-span-2 min-w-0 lg:col-span-1 lg:col-start-2 lg:row-start-1">
               <Suspense fallback={<SearchForm />}>
                 <HeaderSearch />
               </Suspense>

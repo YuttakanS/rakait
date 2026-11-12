@@ -17,7 +17,7 @@ export function SearchForm({ query = "", category = "" }: { query?: string; cate
   return (
     <form action="/" role="search" className="flex w-full">
       {category && <input type="hidden" name="category" value={category} />}
-      <label className="flex flex-1 items-center">
+      <label className="flex min-w-0 flex-1 items-center">
         <span className="sr-only">ค้นหาสินค้า</span>
         <input
           name="q"

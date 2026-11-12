@@ -2,6 +2,7 @@ import Link from "next/link";
 import { RecommendationBadge } from "@/components/badges";
 import { EffectBars, type Effect } from "@/components/effect-bars";
 import { SpecScatter } from "@/components/spec-scatter";
+import { StatNote } from "@/components/stat-note";
 import { CATEGORY_LABELS, CLUSTER_LABELS, featureLabel, formatDateTime, formatTHB } from "@/lib/format";
 import {
   BOOLEAN_FEATURES,
@@ -33,7 +34,13 @@ type Diagnostics = {
 type Segment = {
   label: DemandCluster;
   size: number;
+  /** Mean views per row of the group. */
   views: number;
+  /**
+   * Median views per row (every payload with `segments`, 2026.11-v7+): the
+   * tile's "คนดูโดยทั่วไป", since a few very popular models pull the mean up.
+   */
+  views_median?: number;
   /**
    * Raw rate summed over stores. From 2026.11-v9 it adds up store metrics
    * that are not comparable (SPEC round 9), so it is shown only for older
@@ -183,18 +190,6 @@ function Section({
       </div>
       {children}
     </section>
-  );
-}
-
-/** Small grey statistic with the full detail in a native tooltip, marked "(i)". */
-function StatNote({ text, detail }: { text: string; detail: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 text-xs text-subtle" title={detail}>
-      {text}{" "}
-      <span aria-hidden className="tabular">
-        (i)
-      </span>
-    </span>
   );
 }
 
@@ -417,6 +412,9 @@ export default async function InsightsPage() {
               // (strictly), as a whole percent; not sales_rank_pct, whose
               // average rank puts tied zero sellers mid-table.
               const beatsPct = num(c.sales_beats_pct);
+              // Median when the payload has it (SPEC round 11), else the mean
+              // of an older payload's merged centroids.
+              const typicalViews = Number.isFinite(num(c.views_median)) ? num(c.views_median) : c.views;
               return (
                 <Link
                   key={c.label}
@@ -433,8 +431,10 @@ export default async function InsightsPage() {
                       width per row of cards, so tiles stack alike. */}
                   <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-2 text-xs">
                     <div className="border-2 border-border p-2.5">
-                      <dt className="text-muted">คนดูเฉลี่ย</dt>
-                      <dd className="tabular text-sm font-semibold">{Math.round(c.views).toLocaleString("th-TH")} ครั้ง</dd>
+                      <dt className="text-muted">คนดูโดยทั่วไป</dt>
+                      <dd className="tabular text-sm font-semibold">
+                        {Math.round(typicalViews).toLocaleString("th-TH")} ครั้ง
+                      </dd>
                     </div>
                     {Number.isFinite(beatsPct) ? (
                       <div className="border-2 border-border p-2.5">
@@ -469,7 +469,8 @@ export default async function InsightsPage() {
             {favoriteName} และ {hiddenGemName} คือสินค้าที่ขายดีกว่าค่าเฉลี่ยชัดเจนทั้งคู่
             {rankedSales && " (เทียบอันดับยอดขายภายในร้าน)"} แล้วแยกกันด้วยยอดเข้าชม: คนดูมากกว่า{" "}
             <span className="tabular whitespace-nowrap">{Math.round(splitViews).toLocaleString("th-TH")} ครั้ง</span>{" "}
-            (มัธยฐานของกลุ่มขายดี) เป็น {favoriteName} ไม่เกินนั้นเป็น {hiddenGemName}
+            (ค่ากลางของรุ่นขายดี) เป็น {favoriteName} ไม่เกินนั้นเป็น {hiddenGemName} · เส้นแบ่งนี้ใช้แยกเฉพาะ 2
+            กลุ่มขายดีเท่านั้น กลุ่มที่ขายน้อยไม่ได้แบ่งด้วยเส้นนี้
           </p>
         )}
         {rankedSales && (

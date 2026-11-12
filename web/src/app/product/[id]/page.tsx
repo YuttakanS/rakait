@@ -4,7 +4,8 @@ import { ClusterBadge, DealScore, NoteText, SoldOutTag, VerdictBadges } from "@/
 import { DealMeter } from "@/components/deal-meter";
 import { PriceChart } from "@/components/price-chart";
 import { ProductImage } from "@/components/product-image";
-import { CATEGORY_LABELS, formatTHB } from "@/lib/format";
+import { CATEGORY_LABELS, formatSpecValue, formatTHB } from "@/lib/format";
+import { salesRate } from "@/lib/market";
 import { getPriceHistory, getProduct } from "@/lib/queries";
 import type { DemandCluster, Offer } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
@@ -44,10 +45,19 @@ const SPEC_LABELS: Record<string, string> = {
   read_mbps: "อ่าน (MB/s)",
 };
 
-function specValue(v: unknown): string {
-  if (typeof v === "boolean") return v ? "ใช่" : "ไม่";
-  if (v === null || v === undefined || v === "") return "–";
-  return String(v);
+/**
+ * An offer's sales rate, named by how its store measures it (SPEC round 11):
+ * IHAVECPU's rate is stock drawdown (may include wholesale or branch
+ * transfers), JIB's comes from the sold count the store publishes. The two
+ * are not comparable, so each row says which one it is. Nothing at all when
+ * the rate is unknown; a rate of zero reads as no sales (or, at IHAVECPU, no
+ * stock drawdown) seen lately.
+ */
+function salesText(merchant: string, perDay: number | null): string | null {
+  if (perDay === null || !Number.isFinite(perDay)) return null;
+  const drawdown = merchant === "ihavecpu";
+  if (perDay <= 0) return drawdown ? "สต็อกยังไม่ลดลงช่วงนี้" : "ยังไม่เห็นยอดขายช่วงนี้";
+  return `${drawdown ? "สต็อกลดลง" : "ขายได้"} ${salesRate(perDay)}`;
 }
 
 function Stat({ label, value, tone = "" }: { label: string; value: string; tone?: string }) {
@@ -78,6 +88,7 @@ function verdictOf(o: Offer, cluster: DemandCluster | null = null) {
  */
 function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
   const verdict = verdictOf(o);
+  const sales = salesText(o.merchant, o.salesPerDay);
   return (
     <li
       className={`card grid items-center gap-x-6 gap-y-3 p-4 md:grid-cols-[minmax(0,1fr)_8.5rem_minmax(200px,16rem)_7.5rem] ${
@@ -108,11 +119,11 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
             ↗
           </span>
         </a>
-        {(o.viewCount !== null || o.soldCount !== null) && (
+        {(o.viewCount !== null || o.soldCount !== null || sales !== null) && (
           <div className="flex flex-wrap gap-x-3 text-xs text-subtle">
-            {o.viewCount !== null && <span>{o.viewCount.toLocaleString("th-TH")} views</span>}
-            {o.soldCount !== null && <span>ขายแล้ว {o.soldCount.toLocaleString("th-TH")}</span>}
-            {o.salesPerDay !== null && <span>~{o.salesPerDay.toFixed(2)} ชิ้น/วัน</span>}
+            {o.viewCount !== null && <span>คนดู {o.viewCount.toLocaleString("th-TH")} ครั้ง</span>}
+            {o.soldCount !== null && <span>ขายแล้ว {o.soldCount.toLocaleString("th-TH")} ชิ้น</span>}
+            {sales !== null && <span>{sales}</span>}
           </div>
         )}
       </div>
@@ -291,7 +302,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             {specs.map(([k, v]) => (
               <div key={k} className="flex justify-between gap-2 border-b-2 border-border py-2 text-sm">
                 <dt className="text-muted">{SPEC_LABELS[k]}</dt>
-                <dd className="tabular font-medium">{specValue(v)}</dd>
+                <dd className="tabular font-medium">{formatSpecValue(v)}</dd>
               </div>
             ))}
           </dl>

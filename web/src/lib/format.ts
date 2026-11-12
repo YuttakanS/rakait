@@ -48,21 +48,50 @@ export const RECOMMENDATION_LABELS: Record<Recommendation, string> = {
   fair_price: "ราคาเหมาะสม",
 };
 
+/**
+ * Group names and plain-Thai hints (SPEC round 11: no statistics words such
+ * as "มัธยฐาน" or "K-Means"; the exact rules live in the insights page's
+ * statistics section). Same meaning as the labelling rule in
+ * `pricewatch.ml.models`: best sellers (clearly above their stores' average
+ * rank) split by views at the best sellers' median; the rest are hype (views
+ * clearly above what sales suggest) or niche.
+ */
 export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string }> = {
   hidden_gem: {
     label: "ขายดี แต่คนดูน้อย",
-    hint: "อันดับยอดขายในร้านสูงกว่าค่าเฉลี่ยชัดเจน แต่ยอดเข้าชมไม่เกินมัธยฐานของกลุ่มขายดี",
+    hint: "ขายได้ดีกว่าสินค้าส่วนใหญ่ในร้านเดียวกัน แต่มีคนเข้าดูน้อยกว่ารุ่นขายดีทั่วไป",
   },
   community_favorite: {
     label: "ขายดี คนดูเยอะ",
-    hint: "อันดับยอดขายในร้านสูงกว่าค่าเฉลี่ยชัดเจน และยอดเข้าชมสูงกว่ามัธยฐานของกลุ่มขายดี",
+    hint: "ขายได้ดีกว่าสินค้าส่วนใหญ่ในร้านเดียวกัน และมีคนเข้าดูมากกว่ารุ่นขายดีทั่วไป",
   },
   overpriced_hype: {
     label: "คนดูเยอะ แต่ขายน้อย",
-    hint: "อันดับยอดขายในร้านไม่สูงกว่าค่าเฉลี่ยชัดเจน และต่ำกว่าที่ยอดเข้าชมบ่งบอกชัดเจน",
+    hint: "มีคนเข้าดูเยอะ แต่ขายได้น้อยกว่าที่ควรเมื่อเทียบกับคนดู",
   },
-  niche: { label: "คนดูน้อย ขายน้อย", hint: "อันดับยอดขายในร้านไม่สูงกว่าค่าเฉลี่ยชัดเจน และยอดเข้าชมไม่สูง" },
+  niche: { label: "คนดูน้อย ขายน้อย", hint: "ทั้งคนดูและยอดขายต่ำกว่าสินค้าส่วนใหญ่" },
 };
+
+/**
+ * A spec value for display: booleans as ใช่ / ไม่, missing as "–", and
+ * non-integer numbers rounded to at most 2 decimals with trailing zeros
+ * dropped, so a median of floats (3.5999999999999996) reads "3.6".
+ * Integers and strings print unchanged. O(1).
+ *
+ * @param value A value from `canonical_products.specs` (JSON).
+ * @returns The text for the spec table.
+ */
+export function formatSpecValue(value: unknown): string {
+  if (typeof value === "boolean") return value ? "ใช่" : "ไม่";
+  if (value === null || value === undefined || value === "") return "–";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "–";
+    if (Number.isInteger(value)) return String(value);
+    // toFixed(2) then Number() drops trailing zeros ("3.60" -> 3.6).
+    return String(Number(value.toFixed(2)));
+  }
+  return String(value);
+}
 
 /**
  * Stores the platform scrapes, in display order. Copy derives from this list,

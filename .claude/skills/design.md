@@ -169,7 +169,7 @@ product-wide style recommendations do not: RawBlock is the visual direction.
    recommendation) is supporting evidence and is never shown without the price.
 2. **Consumer first, statistics on request.** Pages speak to shoppers: hero
    numbers, pictures, charts. Model quality (R², MAPE, n, accuracy) stays visible
-   but small (`text-xs text-subtle` with an "(i)" tooltip), and full tables,
+   but small (`text-xs text-subtle` with an "(i)" toggle panel), and full tables,
    formulas and tree rules live in a collapsed "รายละเอียดทางสถิติ" section.
 3. **Honest models.** When a model is below its usefulness threshold, say so in
    plain Thai and say what is used instead. Never invent a value: missing is `–`.
@@ -206,10 +206,13 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | `buy_now` | ซื้อเลย | |
 | `wait` | รอก่อน | |
 | `fair_price` | ราคาเหมาะสม | |
-| `hidden_gem` | ขายดี แต่คนดูน้อย | อันดับยอดขายในร้านสูงกว่าค่าเฉลี่ยชัดเจน แต่ยอดเข้าชมไม่เกินมัธยฐานของกลุ่มขายดี |
-| `community_favorite` | ขายดี คนดูเยอะ | อันดับยอดขายในร้านสูงกว่าค่าเฉลี่ยชัดเจน และยอดเข้าชมสูงกว่ามัธยฐานของกลุ่มขายดี |
-| `overpriced_hype` | คนดูเยอะ แต่ขายน้อย | อันดับยอดขายในร้านไม่สูงกว่าค่าเฉลี่ยชัดเจน และต่ำกว่าที่ยอดเข้าชมบ่งบอกชัดเจน |
-| `niche` | คนดูน้อย ขายน้อย | อันดับยอดขายในร้านไม่สูงกว่าค่าเฉลี่ยชัดเจน และยอดเข้าชมไม่สูง |
+| `hidden_gem` | ขายดี แต่คนดูน้อย | ขายได้ดีกว่าสินค้าส่วนใหญ่ในร้านเดียวกัน แต่มีคนเข้าดูน้อยกว่ารุ่นขายดีทั่วไป |
+| `community_favorite` | ขายดี คนดูเยอะ | ขายได้ดีกว่าสินค้าส่วนใหญ่ในร้านเดียวกัน และมีคนเข้าดูมากกว่ารุ่นขายดีทั่วไป |
+| `overpriced_hype` | คนดูเยอะ แต่ขายน้อย | มีคนเข้าดูเยอะ แต่ขายได้น้อยกว่าที่ควรเมื่อเทียบกับคนดู |
+| `niche` | คนดูน้อย ขายน้อย | ทั้งคนดูและยอดขายต่ำกว่าสินค้าส่วนใหญ่ |
+| Group hints (rule) | Plain Thai for shoppers (SPEC round 11): never "มัธยฐาน", "K-Means", "บ่งบอก" or "z"; the exact rule lives in "รายละเอียดทางสถิติ" and the split line on /insights | |
+| Offer demand line | คนดู N ครั้ง · ขายแล้ว N ชิ้น · ขายได้ ~… (JIB and others) / สต็อกลดลง ~… (IHAVECPU), rate from `salesRate`; zero = ยังไม่เห็นยอดขายช่วงนี้ (IHAVECPU: สต็อกยังไม่ลดลงช่วงนี้); unknown = nothing | |
+| Insights group tile | คนดูโดยทั่วไป (median `views_median`; mean only for payloads without it) | |
 | Gap vs fair (card tag) | ▼ ถูกกว่าราคายุติธรรม x% · ▲ แพงกว่าราคายุติธรรม x% (`FairGapTag`) | |
 | Fair price untrusted (card) | ประเมินไม่แน่นอน + "ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล" | |
 | No fair price (card) | ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ) | |
@@ -222,13 +225,14 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | Header shortcuts | ดีลเด็ด · เทียบหลายร้าน · ภาพรวมตลาด | |
 | 404 title / line | ไม่พบหน้านี้ / ลิงก์อาจผิด หรือสินค้านี้ไม่มีขายแล้ว | |
 | 404 action | กลับไปหน้ารวม → | |
-| Error title / line / action | ระบบกำลังยุ่ง / โหลดหน้านี้ไม่สำเร็จ ลองใหม่อีกครั้งในอีกสักครู่ / ลองใหม่ | |
+| Error title / line / action | ระบบกำลังยุ่ง / โหลดหน้านี้ไม่สำเร็จ ลองใหม่อีกครั้งในอีกสักครู่ / ลองใหม่ (same in `error.tsx` and `global-error.tsx`) | |
 
 No icons and no emoji (RawBlock rule 9; skill rule `no-emoji-icons`): every
 badge, button and link is its words. The only symbols are text characters
 that carry meaning: ▼ / ▲ on price gaps, ● / ○ on stock, → on CTAs, ↗ on links
 to a store, + / − on disclosures (`.disclosure`), ↓ on selects and "(i)" on
-statistics with a tooltip. A missing product photo shows the category name in
+statistics and group explanations that open a panel on tap, click or keyboard
+(never a `title`-only tooltip: phones cannot show it). A missing product photo shows the category name in
 type, not a glyph.
 
 ### 3. Design tokens
@@ -417,24 +421,25 @@ variables sit on `<html>` so the stacks resolve at `:root`.
 
 | Component | File | Rules |
 |---|---|---|
-| **HeaderSearch** | `header-search.tsx` (client) | GET `<form action="/">`, prefilled from `?q=` and keeping `?category=`; 44 px; the button reads "ค้นหา" on every width; Suspense fallback is the same form empty, so prerendered pages keep it. |
-| **SiteNav** | `site-nav.tsx` (client) | Category menu + links; marks the current page from the pathname and `?category=` (category link on "/" with that category, "หน้าแรก" on "/" with none, "ภาพรวมตลาด" under /insights; also in the category menu). Only the link row and menu items read the query (`useSearchParams`, each in its own `<Suspense>` with a no-category fallback), so prerendered pages stay static and the menu button hydrates outside any boundary. |
+| **HeaderSearch** | `header-search.tsx` (client) | GET `<form action="/">`, prefilled from `?q=` and keeping `?category=`; 44 px; the button reads "ค้นหา" on every width; Suspense fallback is the same form empty, so prerendered pages keep it. The input shrinks (`min-w-0` on the label and its grid cell). |
+| **Header shortcuts** | `app/layout.tsx` | ดีลเด็ด · เทียบหลายร้าน · ภาพรวมตลาด; `flex-wrap justify-end` with `min-w-0`, so below ~340 px the last one drops to a second line rather than scrolling the page (320 px has no sideways scroll). |
+| **SiteNav** | `site-nav.tsx` (client) | Category menu + links; marks the current page from the pathname and `?category=` (category link on "/" with that category, "หน้าแรก" on "/" with none, "ภาพรวมตลาด" under /insights; also in the category menu). Only the link row and menu items read the query (`useSearchParams`, each in its own `<Suspense>`), so prerendered pages stay static and the menu button hydrates outside any boundary. The Suspense fallbacks mark no "/" or category link (`active={null}`): prerendered HTML cannot know the query, so it never highlights "หน้าแรก" on "/?category=…" (SPEC round 11); "ภาพรวมตลาด" depends on the pathname only and is marked in the first HTML of /insights. |
 | **Hero banner** | `app/page.tsx` | Landing only (no filter/search/sort). `.inverted .card-heavy` block, one link to the product: "Deal of the week" eyebrow (`.caps`, mono), model in Archivo Black, price, fair price + % below, primary CTA "ดูราคา N ร้าน →" (inverts on hover), photo on a white tile. The product is the best Deal ≥ 60 that is in stock at ≥ 2 stores; no hero when none qualifies. |
 | **Promo tiles** | `app/page.tsx` | Three `.card.invert-hover` tiles under the hero: เทียบหลายร้าน, ราคายุติธรรม, ซื้อเลยหรือรอ, each linking to the real page; title in `.display`, body line hidden on phones, "→". |
-| **Listing toolbar** | `app/page.tsx` | Heading (search term / category / segment / "ดีลแนะนำวันนี้") + count left ("พบ X รุ่น", X = every matching model, with "(แสดง N อันดับแรก)" past the page limit; when a group is filtered and the heading is not already its name, "พบ X รุ่นในกลุ่ม “ชื่อกลุ่ม”"), category and sort AutoSubmitSelects right; cluster chips below; "ล้างทั้งหมด" link when anything is set. |
+| **Listing toolbar** | `app/page.tsx` | Heading (search term / category / segment / "ดีลแนะนำวันนี้") + count left ("พบ X รุ่น", X = every matching model, with "(แสดง N อันดับแรก)" past the page limit; when a group is filtered and the heading is not already its name, "พบ X รุ่นในกลุ่ม “ชื่อกลุ่ม”"); while a group is selected its hint is a visible line under the count; category and sort AutoSubmitSelects right; cluster chips below; "ล้างทั้งหมด" link when anything is set. |
 | **AutoSubmitSelect** | `auto-submit-select.tsx` (client) | Native `<select>` that submits its form on change; still works without JS via the button. "↓" text marker, `sr-only` label. |
-| **Cluster toggle** | `app/page.tsx` | Filter chip `<Link>` with the label only, `aria-pressed`; active = black block. Clicking the active one clears it; "ล้างทั้งหมด" appears when set. |
+| **Cluster toggle** | `app/page.tsx` | Filter chip `<Link>` with the label only (no `title`), `aria-pressed`; active = black block. Clicking the active one clears it; "ล้างทั้งหมด" appears when set. Before the chips, a native `<details>` whose summary is "กลุ่มความต้องการ (i)" (44 px, dotted underline): open, it takes the full row (`open:basis-full`) and shows one sunken 2 px panel with a line on what groups are built from, all four group names + hints (`dl`) and a link "ดูวิธีจัดกลุ่มและตัวเลขของแต่ละกลุ่ม →" to `/insights#demand`. Works by tap, click, Enter / Space and without JS. |
 | **ProductImage** | `product-image.tsx` (client) | Merchant image hot-linked at the variant `lib/images.ts` picks for its displayed size; `width`/`height` reserve the box; `priority` (first 4 cards, product hero) = eager + `fetchpriority="high"`, everything else lazy; `referrerPolicy="no-referrer"`; on load error, or no image, the category name in `.display` on `--surface-muted`. White box in both themes. Never proxied or stored. |
 | **ProductCard** | `product-card.tsx` | Whole card is one link (`.card.card-interactive`, name underlines on hover, CTA inverts). Image (4:3, white, 3 px rule under it) with **DealTag top-left** and the black "หมดทุกร้าน" block top-right when sold out → meta → name (2 lines reserved) → **price `tabular text-[22px] sm:text-[26px] font-bold`** → "ราคายุติธรรม ฿x ± y%" (80% prediction interval, `formatBand`) whenever an in-stock fair price exists and is not `fairUncertain`, else "สูงสุด ฿max" → FairGapTag (uncertain: the orange "ประเมินไม่แน่นอน" chip plus the visible line "ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล", and no fair-price figure on the card; in stock with no fair price: the visible line "ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ)"), then `VerdictBadges` (recommendation + the model's demand group, then the card reason from `cardReason`, at most 2 lines, then the conflict note) → **CTA** `.btn-primary` "ดูราคา N ร้าน →" with N = stores in stock (`aria-hidden`, the card is the link; `.btn-secondary` "ดูราคาล่าสุด →" when sold out, where the price drops to a small "ราคาล่าสุด ฿x" and only the model's demand group chip shows). The fair price is never struck through or presented as a former price, and never shown without its ± band. Cards in a row are equal height (`h-full flex-col`, CTA `mt-auto`). |
 | **DealTag / FairGapTag** | `badges.tsx` | DealTag: `.chip.caps` "DEAL n" in Space Mono; ≥ 70 solid green block, ≤ 30 solid red block, else a black chip. FairGapTag: "▼ ถูกกว่าราคายุติธรรม x%" as a green 2 px chip, or "▲ แพงกว่าราคายุติธรรม x%" as a black chip (never green); nothing under 0.5%. A block, not flex, with the "x%" `whitespace-nowrap` (and mono), so a wrap never splits the number. |
 | **DealScore** | `badges.tsx` | Chip "Deal {n}" (mono); ≥ 70 green, ≤ 30 red, else black; `prominent` is larger. |
 | **RecommendationBadge** | `badges.tsx` | Word-only chip: ซื้อเลย green, รอก่อน orange, ราคาเหมาะสม black. The reason text is a `title` tooltip in rows and a sentence in the product hero. |
-| **ClusterBadge** | `badges.tsx` | Word-only chip in `--muted`; hint in `title`. |
+| **ClusterBadge** | `badges.tsx` | Word-only chip in `--muted`; hint in `title` as an extra only (the hints are readable in the home "(i)" panel and on /insights). |
 | **SoldOutTag** | `badges.tsx` | Black chip "○ หมด" / "○ หมดทุกร้าน". |
 | **FairDelta** | `badges.tsx` | "▼ ถูกกว่าราคายุติธรรม x%" (good) / "▲ แพงกว่า… x%" (muted). Arrow + words, never colour alone. |
 | **DealMeter** | `deal-meter.tsx` | Diverging bar: 14 px track with a 2 px border, a 3 px `--foreground` tick at the fair price, a `--good` block left when cheaper, `--bad` right when pricier, clamped at ±40%; label (mono) and fair price printed above; `role="img"` with a full-sentence label. |
 | **Product hero** | `app/product/[id]/page.tsx` | `.card.card-heavy`, image left (3 px frame, ≤ 220 px on mobile), then name (h1, Archivo Black), "ราคาต่ำสุดตอนนี้" hero price at store, Deal + recommendation + the model's demand group (its only place on the page; also beside "หมดทุกร้าน" when sold out everywhere), DealMeter, reason, four stat tiles (2 px, sunken: ราคาสูงสุด, ประหยัดได้สูงสุด, จำนวนร้าน, มีของ). |
-| **OfferRow** | `app/product/[id]/page.tsx` | One `.card` per offer on a fixed 4-column grid (identity · price · DealMeter · verdict) so columns align; store name in `.display`; the listing title is a `.link` with "↗"; cheapest in-stock offer is `.card-heavy` with the green "ถูกที่สุด" chip (only with 2+ in-stock offers); sold-out rows on `--surface-muted` with "○ หมด" and no price verdict; no row shows a demand group (it is the model's, shown in the hero). First 6 shown, the rest behind the secondary "ดูอีก N รายการ +" button. |
+| **OfferRow** | `app/product/[id]/page.tsx` | One `.card` per offer on a fixed 4-column grid (identity · price · DealMeter · verdict) so columns align; store name in `.display`; the listing title is a `.link` with "↗"; cheapest in-stock offer is `.card-heavy` with the green "ถูกที่สุด" chip (only with 2+ in-stock offers); sold-out rows on `--surface-muted` with "○ หมด" and no price verdict; no row shows a demand group (it is the model's, shown in the hero). Demand line under the title (glossary "Offer demand line"): each rate names how its store measures it, because IHAVECPU's stock drawdown and JIB's published sold count are not comparable (SPEC round 11); never "~0.00 ชิ้น/วัน". First 6 shown, the rest behind the secondary "ดูอีก N รายการ +" button. |
 | **PriceChart** | `price-chart.tsx` (client) | Daily minimum per store; **monotone cubic** curves (smooth without overshooting a recorded price), black lines told apart by dash + marker (§3 Charts), a wash under the store that is cheapest today only, `--grid` hairlines with round THB ticks, 5 date ticks, crosshair + one `.tooltip` listing every store at the hovered day, text legend with the dash + marker key. |
 | **Chart sizing** | `use-width.ts` | Charts measure their container (ResizeObserver) and draw a viewBox equal to the real width, so 12 px axis text stays 12 px on a phone (a fixed 760-unit viewBox shrank it to ~5 px). Narrow charts use fewer date ticks. |
 | **SpecScatter** | `spec-scatter.tsx` (client) | Price vs one spec with the fitted SLR line; axes end at the 97.5th percentile with the hidden count printed; nearest-point hover (≤ 24 px) naming model, spec and price in a `.tooltip`. |
@@ -442,10 +447,11 @@ variables sit on `<html>` so the stacks resolve at `:root`.
 | **Price ladder** | insights | Table per spec tier (2 px row rules): tier + model count, starting price (`.link` to the cheapest model), typical price, cheapest model (`.link`, sm+, Work Sans). |
 | **Driver ranks** | insights | Rank in a black 24 px square, importance bar = `--foreground` fill in a 2 px bordered track. |
 | **Segment tiles** | insights | `.card.invert-hover` links, name in `.display`, two 2 px stat tiles (values `whitespace-nowrap`: "~1 ชิ้น / N วัน" never wraps). |
-| **StatNote** | insights | `text-xs text-subtle` + "(i)"; the full statistic in `title`. |
+| **StatNote** | `stat-note.tsx` (client) | `text-xs text-subtle` toggle `<button>` "text (i)" with `aria-expanded` / `aria-controls` (dotted underline; `py-3.5 -my-3.5`: 44 px hit area, no layout shift); opens a sunken 2 px panel (mono) under it with the full statistic. A button, not `<details>`, because it sits inside `<p>` sentences. The panel is server-rendered with `hidden`, so the text is in the HTML. Never `title` alone. |
 | **Statistics details** | insights | Native `<details>` card, collapsed by default, `.display` summary with "+" / "−". |
 | **Empty state** | anywhere | `.card` with centred muted text saying what is missing and why. |
-| **Error** | `app/error.tsx` (client) | Root error boundary, same block as the 404: h1 "ระบบกำลังยุ่ง", one line "โหลดหน้านี้ไม่สำเร็จ ลองใหม่อีกครั้งในอีกสักครู่", primary "ลองใหม่" (`router.refresh()` + `reset()`). No error message, digest or stack. |
+| **Global error** | `app/global-error.tsx` (client) | When the root layout itself fails: its own `<html lang="th"><body>`, imports globals.css for the RawBlock classes (site fonts not loaded, system Thai face), same block and copy as Error with `role="alert"`; "ลองใหม่" reloads the page (the router context is inside the failed layout). |
+| **Error** | `app/error.tsx` (client) | Root error boundary, same block as the 404, `role="alert"`: h1 "ระบบกำลังยุ่ง", one line "โหลดหน้านี้ไม่สำเร็จ ลองใหม่อีกครั้งในอีกสักครู่", primary "ลองใหม่" (`router.refresh()` + `reset()`). No error message, digest or stack. |
 | **404** | `app/not-found.tsx` | `.card.card-heavy`: "404" (mono, `.caps`), h1 "ไม่พบหน้านี้", one line, primary "กลับไปหน้ารวม →". Used for unknown routes and unknown product ids. |
 
 ### 6. Page templates
@@ -487,8 +493,9 @@ in `lib/market.ts`.
    demand signals, `nvme` which `pcie_gen` already carries); the signed
    EffectBars (% per SD) live in the statistics section.
 4. **ของที่คนซื้อจริง** (`#demand`): one clickable tile per segment name that
-   has listings, in the fixed chip order, linking to `/?cluster=…`; average
-   views and a sales tile; **model** count and share. Sales tile (SPEC round
+   has listings, in the fixed chip order, linking to `/?cluster=…`; typical
+   views ("คนดูโดยทั่วไป" = the segment's `views_median`, the mean only for
+   payloads without it) and a sales tile; **model** count and share. Sales tile (SPEC round
    9): with model 2026.11-v9+ (`sales_feature: "store_rank_pct"`, per-segment
    `sales_beats_pct`) it reads อันดับยอดขาย "ขายดีกว่า ~N%" + "ของสินค้าในร้านเดียวกัน"
    (N = `sales_beats_pct` × 100, rounded: the share of the same store's
@@ -519,7 +526,9 @@ in `lib/market.ts`.
    คนดูน้อย ขายน้อย as before (names: SPEC round 7; the hint says what each is
    measured from and never repeats the name). A line under
    the tiles says both are "ขายดีกว่าค่าเฉลี่ยชัดเจน" and prints the split
-   ("คนดูมากกว่า N ครั้ง"), from `split_views`.
+   ("คนดูมากกว่า N ครั้ง"), from `split_views`, and that the split separates
+   only the two best-seller groups (the other groups are not divided by it,
+   so their typical views can sit on either side of it).
 5. **ป้าย ซื้อเลย / รอก่อน คิดจากอะไร** (`#advice`): while the tree is below
    its bar, the three rules as badge + sentence; the accuracy vs. 60% as a
    StatNote.
@@ -558,6 +567,7 @@ export default async function Page() {
 | Chart dates | Thai short month + 2-digit year (tooltip adds the day) | `PriceChart` |
 | Counts | `toLocaleString("th-TH")` | |
 | Missing | `–`, never `null`, `NaN`, `0` | |
+| Spec values | Integers and text as stored; other numbers at most 2 decimals, trailing zeros dropped (3.5999999999999996 → 3.6); booleans ใช่ / ไม่ | `formatSpecValue` |
 | Model metrics | 2 decimals (R², silhouette, ARI); MAPE/accuracy as whole % in notes | `fixed` |
 
 - Stores that do not publish views or sales (BaNANA, IT City) show no demand fields.

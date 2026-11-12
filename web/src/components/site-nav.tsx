@@ -22,8 +22,9 @@ type ActiveCategory = { onHome: boolean; category: Category | null };
  * Pathname + `?category=` narrowed to a known category (anything else means
  * "all"). `useSearchParams` makes a prerendered page bail out to the nearest
  * `<Suspense>` fallback, so callers sit inside one whose fallback is the same
- * markup with `category: null`. That fallback is already right on the static
- * pages (/insights, /product/...) because category links only match on "/".
+ * markup with no "/" or category link marked (`active={null}`): the fallback
+ * is the prerendered HTML, which cannot know the query, so marking "หน้าแรก"
+ * there was wrong on "/?category=…" until hydration (SPEC round 11).
  */
 function useActiveCategory(): ActiveCategory {
   const onHome = usePathname() === "/";
@@ -42,10 +43,8 @@ function useActiveCategory(): ActiveCategory {
  * wrapped.
  */
 export function SiteNav() {
-  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
-  const noQuery: ActiveCategory = { onHome: pathname === "/", category: null };
 
   // Close on outside click and Escape; menu links close it on click.
   useEffect(() => {
@@ -77,7 +76,7 @@ export function SiteNav() {
         </button>
         {open && (
           <div id="category-menu" className="card absolute top-full left-0 z-30 mt-1 w-72">
-            <Suspense fallback={<MenuItems active={noQuery} onPick={() => setOpen(false)} />}>
+            <Suspense fallback={<MenuItems active={null} onPick={() => setOpen(false)} />}>
               <MenuItemsFromUrl onPick={() => setOpen(false)} />
             </Suspense>
             <Link
@@ -90,7 +89,7 @@ export function SiteNav() {
           </div>
         )}
       </div>
-      <Suspense fallback={<NavLinks active={noQuery} />}>
+      <Suspense fallback={<NavLinks active={null} />}>
         <NavLinksFromUrl />
       </Suspense>
     </div>
@@ -101,12 +100,12 @@ function MenuItemsFromUrl({ onPick }: { onPick: () => void }) {
   return <MenuItems active={useActiveCategory()} onPick={onPick} />;
 }
 
-/** Category menu entries; the current category is a black block. */
-function MenuItems({ active, onPick }: { active: ActiveCategory; onPick: () => void }) {
+/** Category menu entries; the current category is a black block (none when `active` is null). */
+function MenuItems({ active, onPick }: { active: ActiveCategory | null; onPick: () => void }) {
   return (
     <ul className="divide-y-[3px] divide-border">
       {CATEGORIES.map((c) => {
-        const current = active.onHome && active.category === c;
+        const current = active !== null && active.onHome && active.category === c;
         return (
           <li key={c}>
             <Link
@@ -136,17 +135,22 @@ function NavLinksFromUrl() {
 /**
  * The inline link row. Active rules: a category link on "/" with that
  * `?category=` (sort, cluster and q do not matter); "หน้าแรก" on "/" with no
- * category; "ภาพรวมตลาด" under /insights.
+ * category; "ภาพรวมตลาด" under /insights. With `active` null (the Suspense
+ * fallback) no "/" or category link is marked; "ภาพรวมตลาด" depends on the
+ * pathname only, so it is marked either way.
  */
-function NavLinks({ active }: { active: ActiveCategory }) {
+function NavLinks({ active }: { active: ActiveCategory | null }) {
   const pathname = usePathname();
+  const known = active !== null;
   const links: { href: string; label: string; active: boolean }[] = [
-    { href: "/", label: "หน้าแรก", active: active.onHome && active.category === null },
+    { href: "/", label: "หน้าแรก", active: known && active.onHome && active.category === null },
     ...CATEGORIES.map((c) => ({
       href: `/?category=${c}`,
       label: CATEGORY_LABELS[c],
-      active: active.onHome && active.category === c,
+      active: known && active.onHome && active.category === c,
     })),
+    // The pathname is known at prerender, so /insights is marked even in the
+    // fallback; only the query-dependent links wait for hydration.
     { href: "/insights", label: "ภาพรวมตลาด", active: pathname.startsWith("/insights") },
   ];
 

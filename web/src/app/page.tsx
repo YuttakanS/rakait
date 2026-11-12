@@ -174,6 +174,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
               {total > products.length && ` (แสดง ${products.length} อันดับแรก)`} · Deal เกิน 50
               แปลว่าถูกกว่าราคายุติธรรม
             </p>
+            {cluster && <p className="mt-1 max-w-2xl text-sm text-muted">{CLUSTER_LABELS[cluster].hint}</p>}
           </div>
           <form action="/" className="flex w-full flex-wrap gap-2 sm:w-auto">
             {cluster && <input type="hidden" name="cluster" value={cluster} />}
@@ -199,12 +200,31 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <span
-            className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted"
-            title="จัดกลุ่มด้วย K-Means จากยอดเข้าชม อันดับยอดขายในร้าน และราคาเทียบกับรุ่นเดียวกัน"
-          >
-            กลุ่มความต้องการ <span className="tabular" aria-hidden>(i)</span>
-          </span>
+          {/* "(i)" opens by tap, click or keyboard (SPEC round 11): a native
+              <details>, not a title tooltip. Closed it is one item of the chip
+              row; open it takes the full row (open:basis-full), so the panel
+              sits above the chips. */}
+          <details className="group mr-1 open:basis-full">
+            <summary className="inline-flex min-h-11 items-center gap-1 text-xs font-medium text-muted underline decoration-dotted underline-offset-4 hover:text-foreground">
+              กลุ่มความต้องการ <span className="tabular">(i)</span>
+            </summary>
+            <div className="mb-1 max-w-3xl border-2 border-border bg-surface-muted p-3 text-sm">
+              <p className="text-xs text-muted">
+                จัดกลุ่มรุ่นสินค้าจากจำนวนคนเข้าดู ยอดขายเทียบกับสินค้าอื่นในร้านเดียวกัน และราคาเทียบกับรุ่นเดียวกัน
+              </p>
+              <dl className="mt-2 space-y-2">
+                {CLUSTERS.map((c) => (
+                  <div key={c}>
+                    <dt className="font-semibold">{CLUSTER_LABELS[c].label}</dt>
+                    <dd className="text-xs text-muted">{CLUSTER_LABELS[c].hint}</dd>
+                  </div>
+                ))}
+              </dl>
+              <Link href="/insights#demand" className="link mt-2 inline-block py-1 text-xs">
+                ดูวิธีจัดกลุ่มและตัวเลขของแต่ละกลุ่ม <span aria-hidden>→</span>
+              </Link>
+            </div>
+          </details>
           {CLUSTERS.map((c) => {
             const active = cluster === c;
             return (
@@ -212,7 +232,6 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                 key={c}
                 href={hrefWith(params, { cluster: active ? undefined : c })}
                 aria-pressed={active}
-                title={CLUSTER_LABELS[c].hint}
                 className={`inline-flex min-h-11 items-center border-2 border-border px-3.5 text-sm font-medium ${
                   active ? "bg-foreground text-background" : "bg-surface text-foreground hover:bg-foreground hover:text-background"
                 }`}
