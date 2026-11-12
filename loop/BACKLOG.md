@@ -41,9 +41,14 @@
 - [x] (เสร็จรอบ 9) ตรวจยอดขายต่อวันของกลุ่มขายดี (~30 ชิ้น/วัน ต่อรุ่น หลังรวมทุกร้านใน v8): ร้านไหนส่ง sales_per_day สูงผิดปกติ (S)
 - [ ] หน้าสินค้า: สเปกแสดงเลขทศนิยมยาว (Base clock 3.5999999999999996), แถวร้านใช้คำว่า "views" และ "~0.00 ชิ้น/วัน" (S)
 
-- [ ] เว็บล่ม (HTTP 500) เป็นช่วงๆ จาก `EMAXCONNSESSION max clients reached in session mode (pool_size 15)` ของ Supabase เกิดช่วง deploy ติดกันหลายครั้ง + prefetch หน้าสินค้า ~12 หน้าพร้อมกัน: จำกัด pool ต่อ instance (max 1-2), ปิด/ลด prefetch ของลิงก์สินค้า หรือแยก connection string สำหรับ build กับ runtime (transaction pooler 6543 สำหรับ runtime; เคยทำ prerender ค้าง) (M, ด่วน)
+- [x] (เสร็จรอบ 10) เว็บล่ม (HTTP 500) เป็นช่วงๆ จาก `EMAXCONNSESSION max clients reached in session mode (pool_size 15)` ของ Supabase เกิดช่วง deploy ติดกันหลายครั้ง + prefetch หน้าสินค้า ~12 หน้าพร้อมกัน: จำกัด pool ต่อ instance (max 1-2), ปิด/ลด prefetch ของลิงก์สินค้า หรือแยก connection string สำหรับ build กับ runtime (transaction pooler 6543 สำหรับ runtime; เคยทำ prerender ค้าง) (M, ด่วน)
 - [ ] "(i)" และ hint ของกลุ่มต้องใช้บนมือถือได้ (แตะแล้วเห็น), ภาษา hint ง่ายขึ้น, การ์ด /insights แสดงมัธยฐานยอดวิวแทนค่าเฉลี่ย (กลุ่ม "คนดูน้อย" ค่าเฉลี่ย 18,339 สูงกว่าเส้นแบ่ง 18,149) (S)
-- [ ] `demand_features` ใน MLR (ราคายุติธรรม / Deal Score) ยังรวมชิ้น/วันข้ามร้าน ใช้อันดับภายในร้านแบบรอบ 9 หรือตัดออกแล้วเทียบ CV MAPE (M)
+- [x] (เสร็จรอบ 12) `demand_features` ใน MLR (ราคายุติธรรม / Deal Score) ยังรวมชิ้น/วันข้ามร้าน ใช้อันดับภายในร้านแบบรอบ 9 หรือตัดออกแล้วเทียบ CV MAPE (M)
+
+- [ ] **ต้องให้ผู้ใช้ตัดสินใจ:** ราคายุติธรรมกลับด้านในรุ่นพี่น้อง (RTX 3050 6GB ฿10,072 > 8GB ฿7,935; RX 9060 XT 8GB > 16GB; 5070 Ti > 5080; 9070 XT ฿48,647 vs 9070 GRE ฿16,611; 9800X3D ฿11,981 vs 9950X3D ฿42,109) ทางเลือก: monotonic constraint (VRAM/tier), แยกโมเดลตามสถาปัตยกรรม, หรือเตือนเมื่อพี่น้องกลับด้าน (L)
+- [ ] GPU: ลองตัด feature ยอดขายออกจาก MLR (no-sales variant R²cv .940 vs .925) (S)
+- [ ] /insights "อะไรทำให้ราคาแพงขึ้น": "เป็น DDR5 ▼ ราคาต่ำกว่า" ต้องบอกว่าเทียบที่ความเร็วเท่ากัน; ตารางสัมประสิทธิ์แสดง featureLabel คู่ชื่อดิบ (S)
+- [ ] Vercel git integration สร้าง deployment ที่ล้ม ("Couldn't find any pages or app directory") ทุกครั้งที่ push เพราะ build จาก root ของ repo: ปิด auto-deploy จาก git หรือตั้ง Root Directory = web (ระวัง: ถ้าเปิดให้ deploy อัตโนมัติจะชนกับลำดับ deploy เว็บก่อน train) — ต้องให้ผู้ใช้ตัดสินใจ (S)
 
 ## Ideas
 (ไอเดียดิบจาก ideator / user-tester ที่ยังไม่ได้เขียนเป็นงาน)

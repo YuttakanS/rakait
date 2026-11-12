@@ -26,6 +26,21 @@ export function formatBand(errorPct: number | null | undefined): string {
   return errorPct === null || errorPct === undefined ? "" : `± ${wholePct(errorPct)}%`;
 }
 
+/**
+ * Why an uncertain fair price (over 40% from the listing's price) is not
+ * ranked: states the measured gap only, never a guessed cause. The card, the
+ * chip tooltip and the product page all print this sentence.
+ */
+export const UNCERTAIN_NOTE =
+  "ราคายุติธรรมของรุ่นนี้ต่างจากราคาจริงเกิน 40% โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล";
+
+/**
+ * The pipeline's reason for such a listing (`train.UNCERTAIN_REASON`, model
+ * 2026.11-v11), shown in place of the stored one so a 2026.11-v10 run, whose
+ * stored reason guessed a cause, reads the same.
+ */
+export const UNCERTAIN_REASON = `ประเมินไม่แน่นอน: ${UNCERTAIN_NOTE}`;
+
 export function formatDateTime(iso: string | null): string {
   if (!iso) return "–";
   return new Date(iso).toLocaleString("th-TH", {

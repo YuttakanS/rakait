@@ -5,6 +5,14 @@ import type { ProductSummary } from "./types";
 const TREE_PREFIX = "Decision Tree: ";
 
 /**
+ * Shown gap (whole percent) under which a Deal Score 21–79 offer reads
+ * "ใกล้เคียงราคายุติธรรม", as the pipeline's reason does (`train.NEAR_FAIR_PCT`).
+ * From 5% on, the card names the band instead, so "▼ ถูกกว่า 18%" never sits
+ * beside "ใกล้เคียง".
+ */
+const NEAR_FAIR_PCT = 5;
+
+/**
  * A card reason: `text`, then `tail` (a number such as "±30%" or "(DEAL 80)")
  * that the card keeps on one line so a wrap never splits it.
  */
@@ -30,7 +38,9 @@ type ReasonInput = Pick<
  * numbers. Those rules give ซื้อเลย / รอก่อน only when Deal Score passes
  * 80 / 20 **and** the gap exceeds the "± Y%" band, both compared as the whole
  * percents printed here (`wholePct`, the pipeline's `shown_pct`). So a high
- * DEAL beside ราคาเหมาะสม reads "ส่วนต่างยังอยู่ในช่วง ±Y%".
+ * DEAL beside ราคาเหมาะสม reads "ส่วนต่างยังอยู่ในช่วง ±Y%". A Deal 21–79 offer
+ * under a 5% gap reads "ใกล้เคียงราคายุติธรรม" (`mid_score_reason`), and so
+ * does any gap that prints as 0%.
  *
  * Null whenever the numbers cannot honestly explain the badge: no
  * recommendation (sold out, uncertain, unpriced), a timing-tree call (its
@@ -49,11 +59,12 @@ export function cardReason(p: ReasonInput): CardReason | null {
   const bandText = band === null ? null : `±${band}%`;
   if (rec === "buy_now") return outside && pct < 0 ? { text: "ส่วนต่างเกินช่วง", tail: bandText } : null;
   if (rec === "wait") return outside && pct > 0 ? { text: "ส่วนต่างเกินช่วง", tail: bandText } : null;
-  if (Math.abs(pct) < 0.005) return { text: "ใกล้เคียงราคายุติธรรม", tail: null };
+  const deal = p.bestDeal;
+  const midDeal = deal !== null && deal > 20 && deal < 80;
+  if (gap === 0 || (midDeal && gap < NEAR_FAIR_PCT)) return { text: "ใกล้เคียงราคายุติธรรม", tail: null };
   if (band === null) return { text: "ยังไม่ทราบช่วงคลาดเคลื่อน", tail: null };
   if (!outside) return { text: "ส่วนต่างยังอยู่ในช่วง", tail: bandText };
   // Outside the band yet fair: only because Deal Score missed its threshold.
-  const deal = p.bestDeal;
   if (deal === null) return null;
   if (pct < 0 && deal < 80) return { text: "ยังไม่ถึงเกณฑ์ซื้อเลย", tail: "(DEAL 80)" };
   if (pct > 0 && deal > 20) return { text: "ยังไม่ถึงเกณฑ์รอก่อน", tail: "(DEAL 20)" };

@@ -33,6 +33,9 @@ const ACTIVE = sql`l.last_scraped_at > now() - interval '2 days' AND l.current_p
  */
 const MODEL_CLUSTER = sql`mode() WITHIN GROUP (ORDER BY i.demand_cluster)`;
 
+/** price_history window behind `max_seen_price`: the pipeline's DEMAND_WINDOW_DAYS (120). */
+const SEEN_WINDOW = sql`interval '120 days'`;
+
 export interface ProductFilter {
   category?: Category;
   cluster?: DemandCluster;
@@ -55,6 +58,13 @@ export interface ProductFilter {
  *
  * `total` counts every matching model before the LIMIT (a window over the
  * grouped rows, same query), so "พบ X รุ่น" and the /insights tiles agree.
+ *
+ * `max_seen_price` is the highest price any listing of the model (every
+ * store, sold out or not) recorded in price_history over the last 120 days:
+ * a correlated scalar subquery on (canonical_product_id) then the
+ * (listing_id, scraped_at) primary key. It is not a sort key, so the planner
+ * evaluates it after the top-N sort, once per returned row (≤ LIMIT, ~4 ms
+ * for 60 rows on the live catalogue), still in this one statement.
  */
 export async function listProducts(filter: ProductFilter): Promise<ProductList> {
   // Buyable first under every sort: a model sold out everywhere carries only
@@ -87,6 +97,12 @@ export async function listProducts(filter: ProductFilter): Promise<ProductList> 
            (array_agg(i.fair_error_pct ORDER BY l.in_stock DESC, l.current_price))[1] AS fair_error_pct,
            coalesce((array_agg(i.fair_uncertain ORDER BY l.in_stock DESC, l.current_price))[1], false)
                AS fair_uncertain,
+           (SELECT max(h.price)
+              FROM merchant_listings hl
+              JOIN price_history h ON h.listing_id = hl.id
+             WHERE hl.canonical_product_id = c.id
+               AND h.scraped_at > now() - ${SEEN_WINDOW})::float8
+               AS max_seen_price,
            count(*) OVER ()::int AS total,
            (array_agg(${IMAGE} ORDER BY l.in_stock DESC, l.current_price)
                 FILTER (WHERE ${IMAGE} IS NOT NULL))[1] AS image_url
@@ -120,6 +136,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductList> 
     fairPrice: (r.fair_price as number | null) ?? null,
     fairErrorPct: (r.fair_error_pct as number | null) ?? null,
     fairUncertain: r.fair_uncertain as boolean,
+    maxSeenPrice: (r.max_seen_price as number | null) ?? null,
     imageUrl: (r.image_url as string | null) ?? null,
   }));
   return { products, total: rows.length ? (rows[0].total as number) : 0 };

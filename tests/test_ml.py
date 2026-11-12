@@ -795,6 +795,47 @@ def test_rule_reason_inside_band_states_gap_and_band() -> None:
     assert "ชัดเจน" not in cheap + dear + unknown
 
 
+def test_mid_score_reason_names_a_gap_of_five_percent_or_more() -> None:
+    """SPEC round 13, criterion 1: "ใกล้เคียง" only under a 5% shown gap."""
+    from pricewatch.ml.train import NEAR_FAIR_REASON, rule_recommendation
+
+    def reason(score: float, pct: float, band: float | None) -> str:
+        label, text = rule_recommendation(pd.Series(_rule_row(score, pct, band)))
+        assert label == m.FAIR
+        return text
+
+    assert reason(60, -0.18, 0.30) == (
+        "ถูกกว่าราคายุติธรรม 18% แต่ยังอยู่ในช่วงคลาดเคลื่อน ±30% จึงยังสรุปไม่ได้ว่าถูกกว่าตลาดจริง"
+    )
+    assert reason(40, 0.12, 0.25) == (
+        "แพงกว่าราคายุติธรรม 12% แต่ยังอยู่ในช่วงคลาดเคลื่อน ±25% จึงยังสรุปไม่ได้ว่าแพงกว่าตลาดจริง"
+    )
+    # 5% as printed (0.045 -> 5) is no longer "close"; 4% (0.0449 -> 4) still is.
+    assert reason(55, -0.045, 0.30).startswith("ถูกกว่าราคายุติธรรม 5% ")
+    assert reason(55, -0.0449, 0.30) == NEAR_FAIR_REASON
+    assert reason(55, 0.0, 0.30) == NEAR_FAIR_REASON
+    assert reason(55, 0.03, None) == NEAR_FAIR_REASON
+    # Unknown band: the gap is still named.
+    assert reason(60, -0.18, None).startswith("ถูกกว่าราคายุติธรรม 18% แต่ยังไม่ทราบช่วงคลาดเคลื่อน")
+    # A gap outside the band never claims "ยังอยู่ในช่วง": it names the missed threshold.
+    cheap, dear = reason(70, -0.50, 0.20), reason(30, 0.50, 0.20)
+    assert cheap == (
+        "ถูกกว่าราคายุติธรรม 50% ซึ่งเกินช่วงคลาดเคลื่อน ±20% "
+        "แต่ Deal Score ยังไม่ถึงเกณฑ์ซื้อเลย (Deal Score 80 ขึ้นไป)"
+    )
+    assert dear.startswith("แพงกว่าราคายุติธรรม 50% ซึ่งเกินช่วงคลาดเคลื่อน ±20% ")
+    assert "เกณฑ์รอก่อน" in dear
+    assert "ชัดเจน" not in cheap + dear
+
+
+def test_uncertain_reason_does_not_guess_a_cause() -> None:
+    """SPEC round 13, criterion 2: neutral wording, no guessed cause."""
+    from pricewatch.ml.train import UNCERTAIN_REASON
+
+    assert "40%" in UNCERTAIN_REASON and "ไม่ใช้จัดอันดับดีล" in UNCERTAIN_REASON
+    assert "แยกรุ่นเก่า" not in UNCERTAIN_REASON and "แบรนด์" not in UNCERTAIN_REASON
+
+
 def test_percents_round_half_up_like_the_web() -> None:
     from pricewatch.ml.train import gap_within_band_reason, shown_pct
 

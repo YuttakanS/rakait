@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CLUSTER_LABELS, RECOMMENDATION_LABELS, wholePct } from "@/lib/format";
+import { CLUSTER_LABELS, RECOMMENDATION_LABELS, UNCERTAIN_NOTE, wholePct } from "@/lib/format";
 import type { DemandCluster, Recommendation } from "@/lib/types";
 import type { Verdict } from "@/lib/verdict";
 
@@ -105,10 +105,7 @@ export function FairGapTag({ pct }: { pct: number | null }) {
  */
 export function UncertainTag() {
   return (
-    <span
-      className="chip text-warn"
-      title="ราคายุติธรรมต่างจากราคาจริงเกิน 40% จึงไม่ใช้จัดอันดับดีล"
-    >
+    <span className="chip text-warn" title={UNCERTAIN_NOTE}>
       ประเมินไม่แน่นอน
     </span>
   );

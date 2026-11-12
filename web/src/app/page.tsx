@@ -32,12 +32,29 @@ function hrefWith(current: Search, patch: Partial<Search>): string {
 }
 
 /**
+ * How far a hero's fair price may sit above the highest price the market
+ * itself set for the model (`maxSeenPrice`, 120 days, every store). Beyond
+ * that the "deal" is the model overestimating, not a cheap listing: on
+ * 2026-11-13 the RX 9070 XT's fair ฿48,647 was 32% above its ฿36,990 high.
+ */
+const HERO_MAX_FAIR_OVER_SEEN = 0.1;
+
+/** Whether the fair price is within `HERO_MAX_FAIR_OVER_SEEN` of the model's observed high. */
+function fairWithinSeen(p: ProductSummary): boolean {
+  return (
+    p.fairPrice !== null && p.maxSeenPrice !== null && p.fairPrice <= p.maxSeenPrice * (1 + HERO_MAX_FAIR_OVER_SEEN)
+  );
+}
+
+/**
  * The hero's deal: the best Deal Score in stock at two or more stores, so the
  * banner always leads to an actual comparison (stores that are sold out do
- * not count). O(n) over the already-sorted list.
+ * not count), whose fair price the market's own prices back up
+ * (`fairWithinSeen`). None qualifying means no hero. O(n) over the
+ * already-sorted list.
  */
 function heroDeal(products: ProductSummary[]): ProductSummary | null {
-  return products.find((p) => p.inStockStores >= 2 && (p.bestDeal ?? 0) >= 60) ?? null;
+  return products.find((p) => p.inStockStores >= 2 && (p.bestDeal ?? 0) >= 60 && fairWithinSeen(p)) ?? null;
 }
 
 /** Promo tiles under the hero: what the site does, each a real link. */

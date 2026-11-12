@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v10"
+MODEL_VERSION = "2026.11-v11"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -435,9 +435,10 @@ def current_timing_features(history: pd.DataFrame, current: pd.DataFrame) -> pd.
 #: market: the listing keeps its fair price for reference but gets no Deal
 #: Score (so it never ranks as a deal) and no recommendation.
 UNCERTAIN_GAP = 0.40
+#: The reason states only what was measured (the gap and that the fit is
+#: weak here), never a guessed cause such as old models or unseen brands.
 UNCERTAIN_REASON = (
-    "ประเมินไม่แน่นอน: ราคายุติธรรมที่โมเดลให้ต่างจากราคาจริงเกิน 40% "
-    "มักเป็นเพราะสเปกในชื่อสินค้าแยกรุ่นเก่าหรือแบรนด์ไม่ออก จึงไม่ใช้จัดอันดับดีล"
+    "ประเมินไม่แน่นอน: ราคายุติธรรมของรุ่นนี้ต่างจากราคาจริงเกิน 40% โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล"
 )
 
 #: Reason shown when no fair price could be estimated for a listing.
@@ -524,6 +525,43 @@ def gap_beyond_band_reason(pct_vs_fair: float, fair_error_pct: float) -> str:
     return f"{side}ราคายุติธรรม {gap}% ซึ่งเกินช่วงคลาดเคลื่อน ±{band}% จึง{side}ตลาดชัดเจน"
 
 
+#: Shown gap (whole percent, ``shown_pct``) below which a Deal Score 21-79
+#: listing may be called "ใกล้เคียงราคายุติธรรม". At 5% or more the reason names
+#: the gap and the band instead: a card reading "ถูกกว่า 18%" beside "ใกล้เคียง"
+#: contradicts itself. Mirrored by ``NEAR_FAIR_PCT`` in web/src/lib/card-reason.ts.
+NEAR_FAIR_PCT = 5
+
+#: Reason for a Deal Score 21-79 listing whose shown gap is under ``NEAR_FAIR_PCT``.
+NEAR_FAIR_REASON = "ราคาใกล้เคียงราคายุติธรรมของสเปกนี้"
+
+
+def mid_score_reason(pct_vs_fair: float, fair_error_pct: float | None) -> str:
+    """Reason for a Deal Score 21-79 listing (always "ราคาเหมาะสม").
+
+    Under ``NEAR_FAIR_PCT`` shown percent the price is called close to fair.
+    From there on the reason quotes the gap like ``gap_within_band_reason``
+    does. A gap that already clears the band cannot say "ยังอยู่ในช่วง", so
+    it names the Deal Score threshold it missed instead (the card's
+    "ยังไม่ถึงเกณฑ์ซื้อเลย (DEAL 80)"). O(1).
+
+    Args:
+        pct_vs_fair: Non-NaN price / fair - 1 (negative = cheaper).
+        fair_error_pct: Half-width of the 80% interval as a fraction, or
+            None when unknown.
+
+    Returns:
+        A Thai sentence in the whole percents the web prints.
+    """
+    if shown_pct(abs(pct_vs_fair)) < NEAR_FAIR_PCT:
+        return NEAR_FAIR_REASON
+    if fair_error_pct is None or not gap_clears_band(pct_vs_fair, fair_error_pct):
+        return gap_within_band_reason(pct_vs_fair, fair_error_pct)
+    side = "ถูกกว่า" if pct_vs_fair < 0 else "แพงกว่า"
+    gap, band = shown_pct(abs(pct_vs_fair)), shown_pct(fair_error_pct)
+    threshold = "ซื้อเลย (Deal Score 80 ขึ้นไป)" if pct_vs_fair < 0 else "รอก่อน (Deal Score 20 ลงมา)"
+    return f"{side}ราคายุติธรรม {gap}% ซึ่งเกินช่วงคลาดเคลื่อน ±{band}% แต่ Deal Score ยังไม่ถึงเกณฑ์{threshold}"
+
+
 def rule_recommendation(row: pd.Series) -> tuple[str | None, str]:
     """Transparent fallback while the timing tree is not reliable enough.
 
@@ -533,8 +571,10 @@ def rule_recommendation(row: pd.Series) -> tuple[str | None, str]:
     as the whole percents the web prints (``gap_clears_band``): otherwise the
     page would call a 37% gap "clear" beside a ±45% band. Inside the band, or
     with no band, the listing gets "fair price" with the gap and band spelled
-    out. A listing without a Deal Score gets no recommendation rather than a
-    "fair price" verdict it has no evidence for. Every reason is a plain
+    out. Deal Score 21-79 gives "fair price" with ``mid_score_reason``
+    ("close to fair" only under a 5% shown gap). A listing without a Deal
+    Score gets no recommendation rather than a "fair price" verdict it has no
+    evidence for. Every reason is a plain
     shopper sentence with no rule-name prefix. O(1) per row.
 
     Args:
@@ -568,7 +608,7 @@ def rule_recommendation(row: pd.Series) -> tuple[str | None, str]:
         if pct > 0 and band is not None and gap_clears_band(pct, band):
             return m.WAIT, gap_beyond_band_reason(pct, band)
         return m.FAIR, gap_within_band_reason(pct, band)
-    return m.FAIR, "ราคาใกล้เคียงราคายุติธรรมของสเปกนี้"
+    return m.FAIR, mid_score_reason(pct, band)
 
 
 @dataclass

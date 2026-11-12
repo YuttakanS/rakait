@@ -4,7 +4,7 @@ import { ClusterBadge, DealScore, NoteText, SoldOutTag, VerdictBadges } from "@/
 import { DealMeter } from "@/components/deal-meter";
 import { PriceChart } from "@/components/price-chart";
 import { ProductImage } from "@/components/product-image";
-import { CATEGORY_LABELS, formatSpecValue, formatTHB } from "@/lib/format";
+import { CATEGORY_LABELS, UNCERTAIN_REASON, formatSpecValue, formatTHB } from "@/lib/format";
 import { salesRate } from "@/lib/market";
 import { getPriceHistory, getProduct } from "@/lib/queries";
 import type { DemandCluster, Offer } from "@/lib/types";
@@ -86,6 +86,14 @@ function verdictOf(o: Offer, cluster: DemandCluster | null = null) {
  * 4.5:1) but shows its stale last price small and no Deal Score, meter or
  * recommendation.
  */
+/**
+ * The reason printed for an offer. An uncertain fair price always reads the
+ * current `UNCERTAIN_REASON`, whichever model version stored the row.
+ */
+function reasonOf(o: Offer): string | null {
+  return o.fairUncertain ? UNCERTAIN_REASON : o.recommendationReason;
+}
+
 function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
   const verdict = verdictOf(o);
   const sales = salesText(o.merchant, o.salesPerDay);
@@ -138,7 +146,7 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
             errorPct={o.fairErrorPct}
             uncertain={o.fairUncertain}
           />
-          <div className="flex flex-col items-start gap-1.5 md:items-end" title={o.recommendationReason ?? undefined}>
+          <div className="flex flex-col items-start gap-1.5 md:items-end" title={reasonOf(o) ?? undefined}>
             <DealScore score={o.dealScore} />
             <VerdictBadges verdict={verdict} align="end" showNote={false} />
           </div>
@@ -174,6 +182,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   // computed from in-stock offers only.
   const inStock = product.offers.filter((o) => o.inStock);
   const cheapest = inStock[0] ?? null;
+  const cheapestReason = cheapest ? reasonOf(cheapest) : null;
   const lastKnown = product.offers[0] ?? null;
   const names = Object.fromEntries(product.offers.map((o) => [o.merchant, o.merchantName]));
   const specs = Object.entries(product.specs).filter(([k]) => k in SPEC_LABELS);
@@ -230,9 +239,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 />
               </div>
               <VerdictBadges verdict={verdictOf(cheapest, product.demandCluster)} className="max-w-xl" />
-              {cheapest.recommendationReason && (
-                <p className="text-sm text-muted">{cheapest.recommendationReason}</p>
-              )}
+              {cheapestReason && <p className="text-sm text-muted">{cheapestReason}</p>}
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <Stat label="ราคาสูงสุด (มีของ)" value={formatTHB(maxInStock)} />

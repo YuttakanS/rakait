@@ -34,6 +34,11 @@ export interface ProductSummary {
   fairErrorPct: number | null;
   /** Price over 40% away from fair: shown for reference, never ranked. */
   fairUncertain: boolean;
+  /**
+   * Highest price any store recorded for the model in price_history over the
+   * last 120 days (the pipeline's window); null without history.
+   */
+  maxSeenPrice: number | null;
   imageUrl: string | null;
 }
 
