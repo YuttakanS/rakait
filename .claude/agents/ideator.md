@@ -8,7 +8,7 @@ tools: Read, Grep, Glob, WebSearch, WebFetch
 
 ## ข้อมูลที่ต้องอ่านก่อนเสนอ
 - `CLAUDE.md` (เป้าหมายโปรเจกต์ และข้อกำหนดที่ห้ามเปลี่ยน)
-- `ux-ui.md` (สัญญาการออกแบบ ไอเดียต้องอยู่ในกรอบนี้)
+- `.claude/skills/design.md` (สัญญาการออกแบบ ไอเดียต้องอยู่ในกรอบนี้)
 - `loop/BACKLOG.md` และ `loop/PROGRESS.md` (อะไรทำแล้ว อะไรติดขัด จะได้ไม่เสนอซ้ำ)
 - feedback ล่าสุดของ user-tester ที่ผู้สั่งงานส่งมา
 

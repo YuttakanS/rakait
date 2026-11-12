@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { CategoryGlyph, ChevronIcon, UiIcon } from "@/components/icons";
 import { CATEGORY_LABELS } from "@/lib/format";
 import type { Category } from "@/lib/types";
 
@@ -57,32 +56,23 @@ export function SiteNav() {
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           aria-controls="category-menu"
-          className="flex h-11 items-center gap-2 rounded-[var(--radius-control)] bg-accent px-4 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:outline-none"
+          className="btn btn-primary gap-3 px-4 text-sm"
         >
-          <UiIcon name="menu" className="h-4 w-4" />
           หมวดหมู่สินค้า
-          <ChevronIcon className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+          <span aria-hidden className="disclosure" />
         </button>
         {open && (
-          <div
-            id="category-menu"
-            className="card absolute top-full left-0 z-30 mt-2 w-72 p-2"
-          >
-            <ul>
+          <div id="category-menu" className="card absolute top-full left-0 z-30 mt-1 w-72">
+            <ul className="divide-y-[3px] divide-border">
               {CATEGORIES.map((c) => (
                 <li key={c}>
                   <Link
                     href={`/?category=${c}`}
                     onClick={() => setOpen(false)}
-                    className="flex items-center gap-3 rounded-[var(--radius-control)] px-3 py-2.5 hover:bg-accent-soft"
+                    className="block px-4 py-2.5 hover:bg-foreground hover:text-background"
                   >
-                    <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[var(--radius-control)] bg-surface-muted text-accent">
-                      <CategoryGlyph category={c} className="h-5 w-5" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold">{CATEGORY_LABELS[c]}</span>
-                      <span className="block truncate text-xs text-muted">{CATEGORY_HINTS[c]}</span>
-                    </span>
+                    <span className="block text-sm font-semibold">{CATEGORY_LABELS[c]}</span>
+                    <span className="block truncate text-xs">{CATEGORY_HINTS[c]}</span>
                   </Link>
                 </li>
               ))}
@@ -90,10 +80,9 @@ export function SiteNav() {
             <Link
               href="/?sort=deal"
               onClick={() => setOpen(false)}
-              className="mt-1 flex items-center justify-between border-t border-border px-3 pt-3 pb-1.5 text-sm font-medium text-accent hover:underline"
+              className="link block border-t-[3px] border-border px-4 py-3 text-sm font-medium"
             >
-              ดูดีลดีที่สุดทุกหมวด
-              <UiIcon name="arrow" className="h-4 w-4" />
+              ดูดีลดีที่สุดทุกหมวด <span aria-hidden>→</span>
             </Link>
           </div>
         )}
@@ -104,11 +93,13 @@ export function SiteNav() {
             <Link
               href={l.href}
               aria-current={l.active ? "page" : undefined}
-              className={`flex h-11 items-center rounded-[var(--radius-control)] px-3 text-sm font-medium transition-colors ${
-                l.active ? "text-accent" : "text-foreground hover:text-accent"
+              className={`flex h-11 items-center px-3 text-sm font-medium focus-visible:-outline-offset-4 ${
+                l.active
+                  ? "bg-foreground text-background focus-visible:outline-background"
+                  : "underline-offset-4 hover:underline"
               }`}
             >
-              <span className={l.active ? "border-b-2 border-accent pb-0.5" : "pb-0.5"}>{l.label}</span>
+              {l.label}
             </Link>
           </li>
         ))}

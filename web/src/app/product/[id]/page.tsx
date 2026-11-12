@@ -2,10 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DealScore, SoldOutTag, VerdictBadges } from "@/components/badges";
 import { DealMeter } from "@/components/deal-meter";
-import { ChevronIcon, ExternalIcon } from "@/components/icons";
 import { PriceChart } from "@/components/price-chart";
 import { ProductImage } from "@/components/product-image";
-import { CATEGORY_LABELS, MERCHANT_COLORS, formatTHB } from "@/lib/format";
+import { CATEGORY_LABELS, formatTHB } from "@/lib/format";
 import { getPriceHistory, getProduct } from "@/lib/queries";
 import type { Offer } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
@@ -51,19 +50,9 @@ function specValue(v: unknown): string {
   return String(v);
 }
 
-function StoreDot({ merchant }: { merchant: string }) {
-  return (
-    <span
-      className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-      style={{ background: MERCHANT_COLORS[merchant] ?? "var(--accent)" }}
-      aria-hidden
-    />
-  );
-}
-
 function Stat({ label, value, tone = "" }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="rounded-[var(--radius-control)] bg-surface-muted px-3 py-2">
+    <div className="border-2 border-border bg-surface-muted px-3 py-2">
       <div className="text-xs text-muted">{label}</div>
       <div className={`tabular text-sm font-semibold ${tone}`}>{value}</div>
     </div>
@@ -77,23 +66,24 @@ function verdictOf(o: Offer) {
 }
 
 /**
- * One store's offer: identity, price, price-vs-fair meter, verdict. A
- * sold-out offer keeps its row (dimmed, marked หมด) but shows its stale last
- * price small and no Deal Score, meter or recommendation.
+ * One store's offer: identity, price, price-vs-fair meter, verdict. The
+ * cheapest in-stock offer gets the 5 px border. A sold-out offer keeps its
+ * row (sunken grey, marked หมด; no opacity, which would drop text below
+ * 4.5:1) but shows its stale last price small and no Deal Score, meter or
+ * recommendation.
  */
 function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
   const verdict = verdictOf(o);
   return (
     <li
       className={`card grid items-center gap-x-6 gap-y-3 p-4 md:grid-cols-[minmax(0,1fr)_8.5rem_minmax(200px,16rem)_7.5rem] ${
-        best ? "ring-2 ring-[var(--good-strong)]" : ""
-      } ${o.inStock ? "" : "opacity-70"}`}
+        best ? "card-heavy" : ""
+      } ${o.inStock ? "" : "bg-surface-muted"}`}
     >
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
-          <StoreDot merchant={o.merchant} />
-          <span className="font-semibold">{o.merchantName}</span>
-          {best && <span className="rounded-full bg-good-bg px-2 py-0.5 text-xs font-semibold text-good">ถูกที่สุด</span>}
+          <span className="display text-lg">{o.merchantName}</span>
+          {best && <span className="chip text-good">ถูกที่สุด</span>}
           {o.inStock ? (
             <span className="text-xs text-good">
               ● มีของ
@@ -107,10 +97,12 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
           href={o.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="group inline-flex max-w-full items-start gap-1 text-xs text-muted hover:text-accent"
+          className="link inline-flex max-w-full items-start gap-1 text-xs"
         >
           <span className="line-clamp-2">{o.title}</span>
-          <ExternalIcon className="mt-0.5 h-3 w-3 shrink-0 opacity-60 group-hover:opacity-100" />
+          <span aria-hidden className="shrink-0">
+            ↗
+          </span>
         </a>
         {(o.viewCount !== null || o.soldCount !== null) && (
           <div className="flex flex-wrap gap-x-3 text-xs text-subtle">
@@ -123,7 +115,7 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
 
       {o.inStock ? (
         <>
-          <div className="tabular text-2xl font-bold tracking-tight md:text-right">{formatTHB(o.price)}</div>
+          <div className="tabular text-2xl font-bold md:text-right">{formatTHB(o.price)}</div>
           <DealMeter
             price={o.price}
             fair={o.fairPrice}
@@ -176,25 +168,26 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-8">
-      <Link href="/" className="inline-flex items-center gap-1 py-2 text-sm text-muted hover:text-accent">
+      <Link href="/" className="link inline-flex items-center gap-1 py-2 text-sm">
         ← กลับไปหน้ารวม
       </Link>
 
       {/* Hero: the answer first: cheapest price, where, and how it compares. */}
-      <section className="card grid gap-6 p-5 sm:p-6 md:grid-cols-[260px_1fr]">
+      <section className="card card-heavy grid gap-6 p-5 sm:p-6 md:grid-cols-[260px_1fr]">
         <ProductImage
           src={image}
           alt={product.model}
           category={product.category}
           size={260}
           priority
-          className="mx-auto aspect-square w-full max-w-[220px] border border-border md:max-w-none" />
+          className="mx-auto aspect-square w-full max-w-[220px] border-[3px] border-border md:max-w-none"
+        />
         <div className="flex flex-col gap-4">
           <div className="space-y-1">
             <p className="text-xs text-muted">
               {CATEGORY_LABELS[product.category]} · {product.manufacturer}
             </p>
-            <h1 className="text-2xl leading-tight font-bold tracking-tight sm:text-3xl">{product.model}</h1>
+            <h1 className="display text-3xl break-words sm:text-4xl">{product.model}</h1>
           </div>
 
           {cheapest ? (
@@ -202,11 +195,10 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
                 <div>
                   <div className="text-xs font-medium text-muted">ราคาต่ำสุดตอนนี้</div>
-                  <div className="tabular text-4xl font-bold tracking-tight text-accent">{formatTHB(cheapest.price)}</div>
+                  <div className="tabular text-4xl font-bold sm:text-5xl">{formatTHB(cheapest.price)}</div>
                 </div>
                 <div className="flex items-center gap-1.5 pb-1.5 text-sm">
-                  ที่ <StoreDot merchant={cheapest.merchant} />
-                  <span className="font-semibold">{cheapest.merchantName}</span>
+                  ที่ <span className="font-semibold">{cheapest.merchantName}</span>
                   <DealScore score={cheapest.dealScore} />
                 </div>
               </div>
@@ -252,7 +244,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
       <section className="space-y-3">
         <div className="flex items-baseline justify-between gap-2">
-          <h2 className="text-lg font-semibold">เทียบราคาแต่ละร้าน</h2>
+          <h2 className="display text-2xl">เทียบราคาแต่ละร้าน</h2>
           <span className="text-xs text-muted">เรียงจากมีของและราคาต่ำสุด</span>
         </div>
         <ul className="space-y-3">
@@ -262,9 +254,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         </ul>
         {product.offers.length > VISIBLE_OFFERS && (
           <details className="group">
-            <summary className="card flex items-center justify-center gap-1 p-3 text-sm font-medium text-accent hover:bg-surface-muted">
+            <summary className="btn btn-secondary w-full gap-3 text-sm">
               ดูอีก {product.offers.length - VISIBLE_OFFERS} รายการ
-              <ChevronIcon className="h-4 w-4 transition-transform group-open:rotate-180" />
+              <span aria-hidden className="disclosure" />
             </summary>
             <ul className="mt-3 space-y-3">
               {product.offers.slice(VISIBLE_OFFERS).map((o) => (
@@ -277,7 +269,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
       <section className="card space-y-4 p-5 sm:p-6">
         <div>
-          <h2 className="text-lg font-semibold">ประวัติราคา</h2>
+          <h2 className="display text-2xl">ประวัติราคา</h2>
           <p className="text-xs text-muted">ชี้หรือแตะบนกราฟเพื่อดูราคาของทุกร้านในวันนั้น</p>
         </div>
         <PriceChart points={history} names={names} />
@@ -285,10 +277,10 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
       {specs.length > 0 && (
         <section className="card space-y-4 p-5 sm:p-6">
-          <h2 className="text-lg font-semibold">สเปกระดับรุ่น</h2>
+          <h2 className="display text-2xl">สเปกระดับรุ่น</h2>
           <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
             {specs.map(([k, v]) => (
-              <div key={k} className="flex justify-between gap-2 border-b border-border py-2 text-sm">
+              <div key={k} className="flex justify-between gap-2 border-b-2 border-border py-2 text-sm">
                 <dt className="text-muted">{SPEC_LABELS[k]}</dt>
                 <dd className="tabular font-medium">{specValue(v)}</dd>
               </div>

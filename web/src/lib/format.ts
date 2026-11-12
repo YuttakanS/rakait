@@ -57,8 +57,8 @@ export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string
 
 /**
  * Stores the platform scrapes, in display order. Copy derives from this list,
- * and the order is the chart colour order (ux-ui.md §3: validated as adjacent
- * pairs in this order), so do not reorder without re-running the validator.
+ * and the order is the price chart's dash/marker order (`STORE_STYLES` in
+ * price-chart.tsx, .claude/skills/design.md §3).
  */
 export const MERCHANTS: readonly { slug: string; name: string }[] = [
   { slug: "jib", name: "JIB" },
@@ -102,13 +102,6 @@ export function merchantList(): string {
   const names = MERCHANTS.map((m) => m.name);
   return names.length > 1 ? `${names.slice(0, -1).join(", ")} และ ${names.at(-1)}` : (names[0] ?? "");
 }
-
-export const MERCHANT_COLORS: Record<string, string> = {
-  jib: "var(--store-jib)",
-  ihavecpu: "var(--store-ihavecpu)",
-  banana: "var(--store-banana)",
-  itcity: "var(--store-itcity)",
-};
 
 /**
  * Thai label for a model feature. Missingness indicators added by the

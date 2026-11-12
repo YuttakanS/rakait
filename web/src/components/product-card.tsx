@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { DealTag, FairGapTag, UncertainTag, VerdictBadges } from "@/components/badges";
-import { UiIcon } from "@/components/icons";
 import { ProductImage } from "@/components/product-image";
 import { cardReason } from "@/lib/card-reason";
 import { CATEGORY_LABELS, formatBand, formatTHB } from "@/lib/format";
@@ -42,38 +41,38 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
   return (
     <Link
       href={`/product/${p.id}`}
-      className="group card card-interactive flex h-full flex-col overflow-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+      className="group card card-interactive flex h-full flex-col"
     >
-      <div className="relative border-b border-border bg-white">
+      <div className="relative border-b-[3px] border-border bg-white">
         <ProductImage
           src={p.imageUrl}
           alt={p.model}
           category={p.category}
           size={220}
           priority={priority}
-          className="aspect-[4/3] rounded-none"
+          className="aspect-[4/3]"
         />
-        <div className="absolute top-3 left-3">
+        <div className="absolute top-2 left-2">
           <DealTag score={inStock ? p.bestDeal : null} />
         </div>
         {!inStock && (
-          <span className="absolute top-3 right-3 rounded-[6px] bg-foreground/80 px-2 py-1 text-xs font-semibold text-background">
+          <span className="absolute top-2 right-2 border-2 border-black bg-foreground px-2 py-0.5 text-xs font-semibold text-background">
             หมดทุกร้าน
           </span>
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-2 p-4">
+      <div className="flex flex-1 flex-col gap-2 p-3 sm:p-4">
         <span className="text-xs text-muted">
           {CATEGORY_LABELS[p.category]} · {p.manufacturer}
         </span>
-        <h3 className="line-clamp-2 min-h-[2.75rem] text-[15px] leading-snug font-semibold group-hover:text-accent">
+        <h3 className="line-clamp-2 min-h-[2.75rem] text-[15px] leading-snug font-semibold underline-offset-2 group-hover:underline">
           {p.model}
         </h3>
 
         <div className="tabular mt-1">
           {inStock ? (
-            <p className="text-[26px] leading-none font-extrabold tracking-tight">{formatTHB(p.minPrice)}</p>
+            <p className="text-[22px] leading-none font-bold sm:text-[26px]">{formatTHB(p.minPrice)}</p>
           ) : (
             // A sold-out model's price is a stale last-known one: not a headline.
             <p className="flex min-h-[26px] items-end text-sm text-muted">
@@ -113,16 +112,13 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
           </div>
         )}
 
+        {/* Visual CTA only (the card is the link): primary when in stock,
+            secondary when sold out. Inverts with the card's hover. */}
         <span
-          className={`mt-auto flex h-10 items-center justify-center gap-1.5 rounded-[var(--radius-control)] text-sm font-semibold transition-colors ${
-            inStock
-              ? "bg-accent text-on-accent group-hover:bg-accent-hover"
-              : "border border-border bg-surface-muted text-muted"
-          }`}
+          className={`btn mt-auto px-2 text-sm ${inStock ? "btn-primary" : "btn-secondary"}`}
           aria-hidden
         >
-          {inStock ? (p.inStockStores > 1 ? `ดูราคา ${p.inStockStores} ร้าน` : "ดูราคาที่ร้าน") : "ดูราคาล่าสุด"}
-          <UiIcon name="arrow" className="h-4 w-4" />
+          {inStock ? (p.inStockStores > 1 ? `ดูราคา ${p.inStockStores} ร้าน` : "ดูราคาที่ร้าน") : "ดูราคาล่าสุด"} →
         </span>
       </div>
     </Link>

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { RecommendationBadge } from "@/components/badges";
 import { EffectBars, type Effect } from "@/components/effect-bars";
-import { CategoryGlyph, ChevronIcon, Glyph, InfoIcon } from "@/components/icons";
 import { SpecScatter } from "@/components/spec-scatter";
 import { CATEGORY_LABELS, CLUSTER_LABELS, featureLabel, formatDateTime, formatTHB } from "@/lib/format";
 import {
@@ -117,7 +116,7 @@ function find(insights: MarketInsight[], category: string, kind: string) {
 function DiagnosticsLine({ d }: { d: Diagnostics }) {
   const p = (v: number): string => (v < 0.001 ? "<0.001" : fixed(v, 3));
   return (
-    <p className="tabular mt-2 border-t border-border pt-2 text-xs text-muted">
+    <p className="tabular mt-2 border-t-2 border-border pt-2 text-xs text-muted">
       max VIF {fixed(d.max_vif, 1)} · skew {fixed(d.skew)} · excess kurt {fixed(d.excess_kurtosis)} · JB p{" "}
       {p(d.jarque_bera_p)} · BP p {p(d.breusch_pagan_p)}
     </p>
@@ -138,7 +137,7 @@ function Section({
   return (
     <section id={id} className="scroll-mt-20 space-y-4">
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+        <h2 className="display text-2xl sm:text-3xl">{title}</h2>
         {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
       </div>
       {children}
@@ -146,26 +145,20 @@ function Section({
   );
 }
 
-/** Small grey statistic with the full detail in a native tooltip (ⓘ). */
+/** Small grey statistic with the full detail in a native tooltip, marked "(i)". */
 function StatNote({ text, detail }: { text: string; detail: string }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs text-subtle" title={detail}>
-      {text} <InfoIcon className="h-3 w-3" />
+      {text}{" "}
+      <span aria-hidden className="tabular">
+        (i)
+      </span>
     </span>
   );
 }
 
 const hint = (c: Category, feature: string): string | undefined =>
   FACTOR_HINTS[`${c}.${feature}`] ?? FACTOR_HINTS[feature];
-
-/** Icon disc used by section cards. */
-function IconDisc({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
-      {children}
-    </span>
-  );
-}
 
 export default async function InsightsPage() {
   const [insights, coverage, points] = await Promise.all([getMarketInsights(), getCoverage(), getSpecPoints()]);
@@ -184,7 +177,7 @@ export default async function InsightsPage() {
     <div className="space-y-12">
       <section className="space-y-4">
         <div className="space-y-2">
-          <h1 className="text-3xl font-bold tracking-tight">ภาพรวมตลาด</h1>
+          <h1 className="display text-4xl sm:text-5xl">ภาพรวมตลาด</h1>
           <p className="max-w-2xl text-sm leading-relaxed text-muted">
             สรุปจากราคาทุกร้านตอนนี้ ว่างบเท่าไรได้สเปกระดับไหน อะไรทำให้ของแพง และของชิ้นไหนที่คนซื้อจริง · คำนวณล่าสุด{" "}
             {formatDateTime(computedAt)}
@@ -195,7 +188,7 @@ export default async function InsightsPage() {
             <a
               key={x.id}
               href={`#${x.id}`}
-              className="rounded-full border border-border bg-surface px-3 py-2 text-sm text-muted transition-colors hover:border-accent-soft hover:text-accent focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:outline-none"
+              className="inline-flex min-h-11 items-center border-2 border-border bg-surface px-3 text-sm font-medium hover:bg-foreground hover:text-background"
             >
               {x.label}
             </a>
@@ -216,15 +209,10 @@ export default async function InsightsPage() {
             const perUnit = roundForCopy(num(p.slope_thb_per_unit) * UNIT[c].scale);
             return (
               <div key={c} className="card space-y-4 p-5">
-                <div className="flex items-center gap-3">
-                  <IconDisc>
-                    <CategoryGlyph category={c} className="h-5 w-5" />
-                  </IconDisc>
-                  <h3 className="text-lg font-semibold">{CATEGORY_LABELS[c]}</h3>
-                </div>
+                <h3 className="display border-b-[3px] border-border pb-2 text-xl">{CATEGORY_LABELS[c]}</h3>
                 <p className="text-sm">
                   {UNIT[c].step} ราคาเพิ่มเฉลี่ยราว{" "}
-                  <span className="tabular font-semibold text-accent">{formatTHB(perUnit)}</span>{" "}
+                  <span className="tabular font-bold">{formatTHB(perUnit)}</span>{" "}
                   <StatNote
                     text={`ความเชื่อถือ${reliability(num(p.r2))}`}
                     detail={`Simple Linear Regression: Ŷ = β₀ + β₁X · β₁ = ${fixed(p.slope_thb_per_unit, 1)} บาท/${String(p.unit)} · R² = ${fixed(p.r2)} · n = ${String(p.n)}`}
@@ -241,23 +229,19 @@ export default async function InsightsPage() {
                   </thead>
                   <tbody className="tabular">
                     {ladder.map((r) => (
-                      <tr key={r.tier} className="border-t border-border">
+                      <tr key={r.tier} className="border-t-2 border-border">
                         <td className="py-2 font-medium whitespace-nowrap">
                           {tierLabel(c, r.tier)}
                           <span className="ml-1.5 text-xs font-normal text-subtle">{r.models} รุ่น</span>
                         </td>
                         <td className="py-2 text-right font-semibold">
-                          <Link
-                            href={`/product/${r.cheapest.id}`}
-                            className="hover:text-accent hover:underline"
-                            title={r.cheapest.model}
-                          >
+                          <Link href={`/product/${r.cheapest.id}`} className="link" title={r.cheapest.model}>
                             {formatTHB(r.from)}
                           </Link>
                         </td>
                         <td className="py-2 text-right text-muted">{formatTHB(r.typical)}</td>
-                        <td className="hidden max-w-[11rem] truncate py-2 pl-4 sm:table-cell">
-                          <Link href={`/product/${r.cheapest.id}`} className="text-accent hover:underline" title={r.cheapest.model}>
+                        <td className="hidden max-w-[11rem] truncate py-2 pl-4 font-sans sm:table-cell">
+                          <Link href={`/product/${r.cheapest.id}`} className="link" title={r.cheapest.model}>
                             {r.cheapest.model}
                           </Link>
                         </td>
@@ -266,9 +250,9 @@ export default async function InsightsPage() {
                   </tbody>
                 </table>
                 <details className="group">
-                  <summary className="inline-flex items-center gap-1 py-2 text-sm text-muted hover:text-accent">
+                  <summary className="btn btn-secondary gap-3 px-4 text-sm">
                     ดูกราฟราคาทุกรายการ
-                    <ChevronIcon className="h-4 w-4 transition-transform group-open:rotate-180" />
+                    <span aria-hidden className="disclosure" />
                   </summary>
                   <div className="mt-2 space-y-2">
                     <SpecScatter
@@ -304,7 +288,7 @@ export default async function InsightsPage() {
             return (
               <div key={c} className="card space-y-4 p-5">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                  <h3 className="text-lg font-semibold">{CATEGORY_LABELS[c]}</h3>
+                  <h3 className="display text-xl">{CATEGORY_LABELS[c]}</h3>
                   <StatNote
                     text={`ราคายุติธรรมคลาดเคลื่อนเฉลี่ย ~${fixed(num(p.mape_cv) * 100, 0)}%`}
                     detail={`Multiple Linear Regression บน log(ราคา) · R²(cross-validated) = ${fixed(p.r2_cv)} · MAPE = ${fixed(num(p.mape_cv) * 100, 1)}% · n = ${String(p.n)}`}
@@ -322,7 +306,7 @@ export default async function InsightsPage() {
                         : "ยิ่งสูง ยิ่งถูก";
                     return (
                       <li key={f.feature} className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] gap-x-3 gap-y-1.5">
-                        <span className="tabular flex h-6 w-6 items-center justify-center rounded-full bg-surface-muted text-xs font-semibold text-muted">
+                        <span className="tabular flex h-6 w-6 items-center justify-center bg-foreground text-xs font-bold text-background">
                           {i + 1}
                         </span>
                         <div className="min-w-0">
@@ -333,12 +317,12 @@ export default async function InsightsPage() {
                           {f.raises ? "▲" : "▼"} {direction}
                         </span>
                         <div
-                          className="col-start-2 col-end-4 h-1.5 rounded-full bg-neutral-bg"
+                          className="col-start-2 col-end-4 h-3 border-2 border-border bg-surface"
                           role="img"
                           aria-label={`ผลต่อราคา ${Math.round(f.weight * 100)}% ของปัจจัยอันดับ 1`}
                         >
                           <div
-                            className="h-1.5 rounded-full bg-[var(--series-1)]"
+                            className="h-full bg-foreground"
                             style={{ width: `${Math.max(f.weight * 100, 3)}%` }}
                           />
                         </div>
@@ -369,23 +353,18 @@ export default async function InsightsPage() {
                 <Link
                   key={c.label}
                   href={`/?cluster=${c.label}`}
-                  className="card card-interactive flex flex-col gap-4 p-5 focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:outline-none"
+                  className="card invert-hover flex flex-col gap-4 p-5"
                 >
-                  <div className="flex items-center gap-3">
-                    <IconDisc>
-                      <Glyph name={c.label} className="h-5 w-5" />
-                    </IconDisc>
-                    <div>
-                      <div className="font-semibold">{CLUSTER_LABELS[c.label].label}</div>
-                      <div className="text-xs text-muted">{CLUSTER_LABELS[c.label].hint}</div>
-                    </div>
+                  <div>
+                    <div className="display text-xl">{CLUSTER_LABELS[c.label].label}</div>
+                    <div className="text-xs text-muted">{CLUSTER_LABELS[c.label].hint}</div>
                   </div>
                   <dl className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-[var(--radius-control)] bg-surface-muted p-2.5">
+                    <div className="border-2 border-border p-2.5">
                       <dt className="text-muted">คนดูเฉลี่ย</dt>
                       <dd className="tabular text-sm font-semibold">{Math.round(c.views).toLocaleString("th-TH")} ครั้ง</dd>
                     </div>
-                    <div className="rounded-[var(--radius-control)] bg-surface-muted p-2.5">
+                    <div className="border-2 border-border p-2.5">
                       <dt className="text-muted">ขายได้</dt>
                       <dd className="tabular text-sm font-semibold">{salesRate(c.sales_per_day)}</dd>
                     </div>
@@ -394,7 +373,7 @@ export default async function InsightsPage() {
                     <span className="tabular">
                       {c.size.toLocaleString("th-TH")} รายการ ({Math.round(share * 100)}%)
                     </span>
-                    <span className="font-medium text-accent">ดูสินค้า →</span>
+                    <span className="font-bold text-foreground underline underline-offset-2">ดูสินค้า →</span>
                   </div>
                 </Link>
               );
@@ -423,7 +402,7 @@ export default async function InsightsPage() {
               ))}
             </ul>
           )}
-          <p className="border-t border-border pt-3 text-xs leading-relaxed text-muted">
+          <p className="border-t-2 border-border pt-3 text-xs leading-relaxed text-muted">
             {treeInUse
               ? "ระบบ train ใหม่ทุก 3 ชั่วโมงจากราคาล่าสุด"
               : "ตอนนี้ใช้กฎตรง ๆ ข้างบน เพราะประวัติราคายังสั้นเกินไปให้โมเดลทำนายแม่นพอ ระบบ train ใหม่ทุก 3 ชั่วโมง และจะเปลี่ยนไปใช้โมเดลเองเมื่อแม่นพอ"}{" "}
@@ -438,13 +417,13 @@ export default async function InsightsPage() {
       </Section>
 
       <details className="card group p-5">
-        <summary className="flex items-center justify-between gap-2 font-semibold">
-          <span>รายละเอียดทางสถิติ (สำหรับคนที่อยากรู้ลึก)</span>
-          <ChevronIcon className="h-5 w-5 text-muted transition-transform group-open:rotate-180" />
+        <summary className="flex min-h-11 items-center justify-between gap-2">
+          <span className="display text-lg sm:text-xl">รายละเอียดทางสถิติ (สำหรับคนที่อยากรู้ลึก)</span>
+          <span aria-hidden className="disclosure text-xl" />
         </summary>
         <div className="mt-5 space-y-8 text-sm">
           <div className="space-y-2">
-            <h3 className="font-semibold">ข้อมูลที่ใช้</h3>
+            <h3 className="display text-base">ข้อมูลที่ใช้</h3>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[480px]">
                 <thead className="text-left text-xs text-muted">
@@ -458,7 +437,7 @@ export default async function InsightsPage() {
                 </thead>
                 <tbody className="tabular">
                   {coverage.map((c) => (
-                    <tr key={c.merchant} className="border-t border-border">
+                    <tr key={c.merchant} className="border-t-2 border-border">
                       <td className="py-1.5">{c.merchantName}</td>
                       <td className="py-1.5 text-right">{c.listings.toLocaleString("th-TH")}</td>
                       <td className="py-1.5 text-right">
@@ -474,7 +453,7 @@ export default async function InsightsPage() {
           </div>
 
           <div className="space-y-2">
-            <h3 className="font-semibold">Simple Linear Regression: ราคาต่อหน่วยสเปก</h3>
+            <h3 className="display text-base">Simple Linear Regression: ราคาต่อหน่วยสเปก</h3>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[420px]">
                 <thead className="text-left text-xs text-muted">
@@ -492,7 +471,7 @@ export default async function InsightsPage() {
                     const p = find(insights, c, "simple_regression");
                     if (!p) return null;
                     return (
-                      <tr key={c} className="border-t border-border">
+                      <tr key={c} className="border-t-2 border-border">
                         <td className="py-1.5">{CATEGORY_LABELS[c]}</td>
                         <td className="py-1.5">{String(p.feature)}</td>
                         <td className="py-1.5 text-right">{fixed(p.slope_thb_per_unit, 1)}</td>
@@ -509,7 +488,7 @@ export default async function InsightsPage() {
 
           {linkage && (
             <div className="space-y-2">
-              <h3 className="font-semibold">การจับคู่สินค้า: กฎ Regex + TF-IDF Similarity</h3>
+              <h3 className="display text-base">การจับคู่สินค้า: กฎ Regex + TF-IDF Similarity</h3>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[560px]">
                   <thead className="text-left text-xs text-muted">
@@ -529,7 +508,7 @@ export default async function InsightsPage() {
                       const t = l.evaluation?.threshold ?? null;
                       const point = l.evaluation?.curve.find((p) => p.threshold === t);
                       return (
-                        <tr key={c} className="border-t border-border">
+                        <tr key={c} className="border-t-2 border-border">
                           <td className="py-1.5">{CATEGORY_LABELS[c]}</td>
                           <td className="py-1.5 text-right">
                             {l.listings ? `${Math.round((l.rule_linked / l.listings) * 100)}%` : "–"}
@@ -556,7 +535,7 @@ export default async function InsightsPage() {
           )}
 
           <div className="space-y-3">
-            <h3 className="font-semibold">Multiple Linear Regression: สัมประสิทธิ์</h3>
+            <h3 className="display text-base">Multiple Linear Regression: สัมประสิทธิ์</h3>
             <p className="text-xs text-muted">
               log(Price) = β₀ + Σβⱼxⱼ + ε บนฟีเจอร์ที่ standardize แล้ว · แถบ = % ราคาที่เปลี่ยนเมื่อฟีเจอร์เพิ่ม 1 SD ·
               residual eᵢ ติดลบมาก = ถูกกว่าตลาด → Deal Score สูง
@@ -566,24 +545,28 @@ export default async function InsightsPage() {
                 const p = find(insights, c, "fair_value_mlr");
                 if (!p) return null;
                 return (
-                  <div key={c} className="rounded-[var(--radius-control)] border border-border p-3">
-                    <div className="mb-2 flex justify-between gap-2">
+                  // min-w-0: a grid item defaults to min-width:auto and would
+                  // grow to its widest child (long feature names, tree rules).
+                  <div key={c} className="min-w-0 border-2 border-border p-3">
+                    <div className="mb-2 flex flex-wrap justify-between gap-x-2">
                       <span className="font-medium">{CATEGORY_LABELS[c]}</span>
                       <span className="tabular text-xs text-muted">
                         R²(cv) {fixed(p.r2_cv)} · MAPE {fixed(num(p.mape_cv) * 100, 1)}% · n={String(p.n)}
                       </span>
                     </div>
                     <EffectBars effects={(p.coefficients as Coefficient[]) ?? []} />
-                    <table className="mt-3 w-full text-xs">
-                      <tbody className="tabular">
-                        {((p.coefficients as Coefficient[]) ?? []).map((k) => (
-                          <tr key={k.feature} className="border-t border-border">
-                            <td className="py-0.5">{k.feature}</td>
-                            <td className="py-0.5 text-right">β={k.beta.toFixed(3)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div className="mt-3 overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <tbody className="tabular">
+                          {((p.coefficients as Coefficient[]) ?? []).map((k) => (
+                            <tr key={k.feature} className="border-t-2 border-border">
+                              <td className="py-0.5 pr-2 break-all">{k.feature}</td>
+                              <td className="py-0.5 text-right whitespace-nowrap">β={k.beta.toFixed(3)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                     {p.diagnostics ? <DiagnosticsLine d={p.diagnostics as Diagnostics} /> : null}
                   </div>
                 );
@@ -597,13 +580,13 @@ export default async function InsightsPage() {
           </div>
 
           <div className="space-y-3">
-            <h3 className="font-semibold">Regression Tree: ขอบเขตราคาตามระดับฮาร์ดแวร์ (max_depth = 4)</h3>
+            <h3 className="display text-base">Regression Tree: ขอบเขตราคาตามระดับฮาร์ดแวร์ (max_depth = 4)</h3>
             <div className="grid gap-4 lg:grid-cols-2">
               {categories.map((c) => {
                 const p = find(insights, c, "tier_tree");
                 if (!p) return null;
                 return (
-                  <div key={c} className="rounded-[var(--radius-control)] border border-border p-3">
+                  <div key={c} className="min-w-0 border-2 border-border p-3">
                     <div className="mb-1 font-medium">
                       {CATEGORY_LABELS[c]}{" "}
                       <span className="tabular text-xs font-normal text-muted">
@@ -619,7 +602,7 @@ export default async function InsightsPage() {
 
           {kmeans && (
             <div className="space-y-1">
-              <h3 className="font-semibold">K-Means และ Hierarchical Clustering</h3>
+              <h3 className="display text-base">K-Means และ Hierarchical Clustering</h3>
               <p className="tabular text-xs text-muted">
                 X = [log(Views+1), log(SalesVelocity+1), NormalizedPrice] (StandardScaler) · k={String(kmeans.k)} เลือกจาก
                 silhouette = {fixed(kmeans.silhouette)} · n={String(kmeans.n)}
@@ -631,7 +614,7 @@ export default async function InsightsPage() {
 
           {timing && (
             <div className="space-y-1">
-              <h3 className="font-semibold">Decision Tree: ซื้อเลย / รอก่อน / ราคาเหมาะสม (max_depth = 4)</h3>
+              <h3 className="display text-base">Decision Tree: ซื้อเลย / รอก่อน / ราคาเหมาะสม (max_depth = 4)</h3>
               <p className="tabular text-xs text-muted">
                 Balanced accuracy {fixed(num(timing.balanced_accuracy_test) * 100, 1)}% · สุ่มทาย{" "}
                 {fixed(num(timing.baseline_balanced_accuracy) * 100, 1)}% · train {String(timing.n_train)} / test{" "}

@@ -3,9 +3,10 @@ import { formatBand, formatTHB } from "@/lib/format";
 const RANGE = 0.4; // ±40% fills half the track; beyond that the bar is clamped.
 
 /**
- * Diverging bar for price vs. fair price: a neutral midpoint tick at the fair
- * price, green to the left when cheaper, red to the right when pricier. The
- * percentage is always printed, so the colour is never the only signal.
+ * Diverging bar for price vs. fair price: a bordered track with a solid
+ * midpoint tick at the fair price, a green block to the left when cheaper,
+ * a red block to the right when pricier. The percentage and direction are
+ * always printed, so the colour is never the only signal.
  */
 export function DealMeter({
   price,
@@ -44,25 +45,25 @@ export function DealMeter({
   return (
     <div className="w-full min-w-[140px] space-y-1">
       <div className="flex items-baseline justify-between gap-2 text-xs">
-        <span className={`font-semibold ${below ? "text-good" : "text-muted"}`}>{label}</span>
+        <span className={`tabular font-semibold ${below ? "text-good" : "text-muted"}`}>{label}</span>
         <span className="tabular text-muted">
           ยุติธรรม {formatTHB(fair)} {formatBand(errorPct)}
         </span>
       </div>
       <div
-        className="relative h-2 w-full rounded-full bg-neutral-bg"
+        className="relative h-3.5 w-full border-2 border-border bg-surface"
         role="img"
         aria-label={`ราคา ${formatTHB(price)} ${label} จากราคายุติธรรม ${formatTHB(fair)}`}
       >
         <div
-          className="absolute top-0 h-2 rounded-full"
+          className="absolute inset-y-0"
           style={{
             left: below ? `${50 - half}%` : "50%",
             width: `${half}%`,
-            background: below ? "var(--good-strong)" : "var(--bad-strong)",
+            background: below ? "var(--good)" : "var(--bad)",
           }}
         />
-        <div className="absolute top-[-3px] left-1/2 h-[14px] w-[2px] -translate-x-1/2 rounded bg-muted" />
+        <div className="absolute -top-1.5 left-1/2 h-5 w-[3px] -translate-x-1/2 bg-foreground" />
       </div>
     </div>
   );

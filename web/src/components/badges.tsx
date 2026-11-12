@@ -1,25 +1,23 @@
 import type { ReactNode } from "react";
-import { Glyph } from "@/components/icons";
 import { CLUSTER_LABELS, RECOMMENDATION_LABELS, wholePct } from "@/lib/format";
 import type { DemandCluster, Recommendation } from "@/lib/types";
 import type { Verdict } from "@/lib/verdict";
 
-const pill = "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap";
-
+/*
+ * Status chips (RawBlock): square, 2 px border in the status colour
+ * (`.chip` borders use currentColor), words or ▲▼ always printed, so colour
+ * is never the only signal.
+ */
 function dealTone(score: number): string {
-  return score >= 70
-    ? "bg-good-bg text-good"
-    : score <= 30
-      ? "bg-bad-bg text-bad"
-      : "bg-neutral-bg text-foreground";
+  return score >= 70 ? "text-good" : score <= 30 ? "text-bad" : "text-foreground";
 }
 
-/** Deal Score pill. `prominent` is the card-corner variant. */
+/** Deal Score chip. `prominent` is the card-corner variant. */
 export function DealScore({ score, prominent = false }: { score: number | null; prominent?: boolean }) {
   if (score === null) return prominent ? null : <span className="text-xs text-muted">–</span>;
-  const size = prominent ? "px-2.5 py-1 text-sm font-bold shadow-sm" : "";
+  const size = prominent ? "px-2.5 py-1 text-sm font-bold" : "";
   return (
-    <span className={`${pill} ${dealTone(score)} ${size} tabular`} title="Deal Score 0–100 (50 = ราคายุติธรรม)">
+    <span className={`chip tabular ${dealTone(score)} ${size}`} title="Deal Score 0–100 (50 = ราคายุติธรรม)">
       Deal {score}
     </span>
   );
@@ -27,21 +25,14 @@ export function DealScore({ score, prominent = false }: { score: number | null; 
 
 export function RecommendationBadge({ value }: { value: Recommendation | null }) {
   if (value === null) return null;
-  const tone =
-    value === "buy_now" ? "bg-good-bg text-good" : value === "wait" ? "bg-warn-bg text-warn" : "bg-neutral-bg text-foreground";
-  return (
-    <span className={`${pill} ${tone}`}>
-      <Glyph name={value} />
-      {RECOMMENDATION_LABELS[value]}
-    </span>
-  );
+  const tone = value === "buy_now" ? "text-good" : value === "wait" ? "text-warn" : "text-foreground";
+  return <span className={`chip ${tone}`}>{RECOMMENDATION_LABELS[value]}</span>;
 }
 
 export function ClusterBadge({ value }: { value: DemandCluster }) {
   const { label, hint } = CLUSTER_LABELS[value];
   return (
-    <span className={`${pill} border border-border bg-surface text-muted`} title={hint}>
-      <Glyph name={value} />
+    <span className="chip font-medium text-muted" title={hint}>
       {label}
     </span>
   );
@@ -62,21 +53,21 @@ export function FairDelta({ pct, className = "" }: { pct: number | null; classNa
 }
 
 /**
- * Card-corner tags: a solid Deal tag and a "ถูกกว่า x%" ribbon, the
- * storefront's discount-tag shape. Solid fills carry white text (>= 5:1);
- * Deal 31–69 is a white tag with a border, so only strong deals shout.
+ * Card-corner DEAL tag. Deal >= 70 / <= 30 are solid blocks (white on
+ * darkened green / red, >= 6:1) framed by the theme border; Deal 31–69 is a
+ * plain chip, so only strong deals shout.
  */
 export function DealTag({ score }: { score: number | null }) {
   if (score === null) return null;
   const tone =
     score >= 70
-      ? "bg-good-solid text-white"
+      ? "chip-solid bg-good-solid"
       : score <= 30
-        ? "bg-bad-solid text-white"
-        : "border border-border bg-surface text-foreground";
+        ? "chip-solid bg-bad-solid"
+        : "text-foreground";
   return (
     <span
-      className={`tabular inline-flex items-center rounded-[6px] px-2 py-1 text-xs font-bold tracking-wide shadow-sm ${tone}`}
+      className={`chip tabular caps px-2 py-0.5 font-bold ${tone}`}
       title="Deal Score 0–100 (50 = ราคายุติธรรม)"
     >
       DEAL {score}
@@ -86,8 +77,8 @@ export function DealTag({ score }: { score: number | null }) {
 
 /**
  * The headline offer's gap from its fair price as a card tag (under the
- * fair-price line): "▼ ถูกกว่าราคายุติธรรม x%" on green, or
- * "▲ แพงกว่าราคายุติธรรม x%" on the neutral tone (never green, so a pricey
+ * fair-price line): "▼ ถูกกว่าราคายุติธรรม x%" as a green chip, or
+ * "▲ แพงกว่าราคายุติธรรม x%" as a black chip (never green, so a pricey
  * card cannot read as a deal). Arrow plus words, never colour alone; nothing
  * under 0.5% either way.
  */
@@ -98,24 +89,24 @@ export function FairGapTag({ pct }: { pct: number | null }) {
     <span
       // A block, not flex: flex would split the words and the number into
       // separate columns when the tag wraps on a narrow card.
-      className={`tabular inline-block rounded-[6px] px-2 py-1 text-xs leading-snug font-semibold ${
-        below ? "bg-good-bg text-good" : "bg-neutral-bg text-foreground"
+      className={`inline-block border-2 border-current bg-surface px-2 py-0.5 text-xs leading-snug font-semibold ${
+        below ? "text-good" : "text-foreground"
       }`}
     >
       {below ? "▼ ถูกกว่า" : "▲ แพงกว่า"}ราคายุติธรรม{" "}
-      <span className="whitespace-nowrap">{wholePct(Math.abs(pct))}%</span>
+      <span className="tabular whitespace-nowrap">{wholePct(Math.abs(pct))}%</span>
     </span>
   );
 }
 
 /**
  * Fair price too far from the market to trust (|price / fair - 1| > 40%).
- * Words plus an icon-free amber pill; the reason is printed next to it.
+ * Words in an orange chip; the reason is printed next to it.
  */
 export function UncertainTag() {
   return (
     <span
-      className="inline-flex items-center rounded-[6px] bg-warn-bg px-2 py-1 text-xs font-semibold text-warn"
+      className="chip text-warn"
       title="ราคายุติธรรมต่างจากราคาจริงเกิน 40% จึงไม่ใช้จัดอันดับดีล"
     >
       ประเมินไม่แน่นอน
@@ -126,7 +117,7 @@ export function UncertainTag() {
 /** Sold-out marker: words plus a hollow dot, so the state never rests on dimming alone. */
 export function SoldOutTag({ label = "หมด" }: { label?: string }) {
   return (
-    <span className={`${pill} border border-border bg-surface-muted font-semibold text-muted`}>
+    <span className="chip text-foreground">
       <span aria-hidden>○</span>
       {label}
     </span>

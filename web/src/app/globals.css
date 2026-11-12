@@ -1,117 +1,93 @@
 @import "tailwindcss";
 
 /*
- * Design tokens (contract: ux-ui.md §3). Components reference these, never hex.
- * Light values first; dark values are their own validated steps, not a flip.
+ * RawBlock design tokens (contract: .claude/skills/design.md, RawBlock + "RakaIT project adaptation" §3).
+ * Black on white, thick borders, no radius, no shadow. Dark mode is the same
+ * system inverted (white on black, white borders). Status colours are the
+ * pure hues darkened (light) or lightened (dark) until text passes WCAG AA
+ * 4.5:1 on both --surface and --surface-muted; the ratios are tabled in
+ * .claude/skills/design.md §3. Components reference these, never hex.
+ *
+ * The two palettes are written twice: once for the page and once for
+ * `.inverted` blocks (announcement bar, hero, hover inversions), which take
+ * the opposite theme's palette. Swapping whole palettes, not single colours,
+ * keeps every text/background pair inside an inverted block on a validated
+ * pair. The O(1) cost is a few dozen custom properties per inverted subtree.
  */
 :root {
   color-scheme: light;
-  --background: #f8fafc;
+  --background: #ffffff;
   --surface: #ffffff;
-  --surface-muted: #f1f5f9;
-  --foreground: #0f172a;
-  --muted: #64748b;
-  --subtle: #94a3b8;
-  --border: #e2e8f0;
+  --surface-muted: #f0f0f0; /* RawBlock surface-sunken: inputs, stat tiles */
+  --foreground: #000000;
+  --muted: #474747; /* 9.3:1 on surface, 8.2:1 on surface-muted */
+  --subtle: #666666; /* 5.7:1 / 5.0:1 */
+  --border: #000000;
+  --grid: #bdbdbd; /* chart gridlines only: decorative, not text */
+  --disabled-border: #cccccc;
+  --link: #0000ff; /* links only, 8.6:1 */
+  --good: #007000; /* pure green #008000 darkened: 6.3:1 / 5.6:1 */
+  --warn: #a85400; /* pure orange darkened: 5.3:1 / 4.7:1 */
+  --bad: #c40000; /* pure red darkened: 6.3:1 / 5.5:1 */
+  --good-solid: #007000; /* solid DEAL blocks, white text 6.3:1 */
+  --bad-solid: #c40000; /* white text 6.3:1 */
+  --on-solid: #ffffff;
+}
 
-  /* Primary brand: trust blue; search button, CTAs, active filters, focus,
-     hover states. White on #1d4ed8 is 6.7:1. */
-  --accent: #1d4ed8;
-  --accent-hover: #1e40af;
-  --accent-soft: #dbeafe;
-  --on-accent: #ffffff;
-
-  /* Storefront chrome: the slim announcement bar and the hero banner. */
-  --topbar: #0f172a;
-  --on-topbar: #cbd5e1;
-  --hero-from: #1e3a8a;
-  --hero-to: #2563eb;
-  --on-hero: #ffffff;
-  --on-hero-muted: #dbeafe;
-
-  /* Solid tag fills (white text, >= 5:1 in both themes). */
-  --good-solid: #047857;
-  --bad-solid: #b91c1c;
-
-  /* Status (reserved: never reused as a series colour). */
-  --good: #047857;
-  --good-strong: #10b981;
-  --good-bg: #d1fae5;
-  --bad: #b91c1c;
-  --bad-strong: #ef4444;
-  --bad-bg: #fee2e2;
-  --warn: #b45309;
-  --warn-strong: #f59e0b;
-  --warn-bg: #fef3c7;
-  --neutral-bg: #f1f5f9;
-
-  /* Store identity: dataviz reference slots 1-4, validated adjacent-pairs. */
-  --store-jib: #2a78d6;
-  --store-ihavecpu: #eb6834;
-  --store-itcity: #1baf7a;
-  --store-banana: #eda100;
-
-  /* Charts: single-series hue and the diverging pair (blue <-> red, grey mid). */
-  --series-1: #2a78d6;
-  --div-neg: #2a78d6;
-  --div-pos: #e34948;
-  --div-mid: #e2e8f0;
-
-  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.05), 0 4px 16px rgb(15 23 42 / 0.06);
-  --shadow-card-hover: 0 2px 4px rgb(15 23 42 / 0.06), 0 12px 28px rgb(15 23 42 / 0.1);
-  --radius-card: 12px;
-  --radius-control: 8px;
+.inverted,
+.invert-hover:hover,
+.group:hover .invert-on-group-hover {
+  --background: #000000;
+  --surface: #000000;
+  --surface-muted: #1a1a1a;
+  --foreground: #ffffff;
+  --muted: #c2c2c2;
+  --subtle: #9e9e9e;
+  --border: #ffffff;
+  --grid: #5c5c5c;
+  --disabled-border: #4d4d4d;
+  --link: #9999ff;
+  --good: #33cc33;
+  --warn: #ffa500;
+  --bad: #ff5c5c;
+  background-color: var(--surface);
+  color: var(--foreground);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --background: #0b1120;
-    --surface: #131c2e;
-    --surface-muted: #1b2538;
-    --foreground: #e2e8f0;
-    --muted: #94a3b8;
-    --subtle: #64748b;
-    --border: #253047;
+    --background: #000000;
+    --surface: #000000;
+    --surface-muted: #1a1a1a;
+    --foreground: #ffffff;
+    --muted: #c2c2c2; /* 11.8:1 on surface, 9.8:1 on surface-muted */
+    --subtle: #9e9e9e; /* 7.8:1 / 6.5:1 */
+    --border: #ffffff;
+    --grid: #5c5c5c;
+    --disabled-border: #4d4d4d;
+    --link: #9999ff; /* #0000ff is 2.4:1 on black: lightened to 8.4:1 */
+    --good: #33cc33; /* 9.8:1 / 8.1:1 */
+    --warn: #ffa500; /* 10.6:1 / 8.8:1 */
+    --bad: #ff5c5c; /* 6.9:1 / 5.8:1 */
+  }
 
-    --accent: #8fb0ff;
-    --accent-hover: #adc4ff;
-    --accent-soft: #1e2a4d;
-    --on-accent: #0b1120;
-
-    --topbar: #050810;
-    --on-topbar: #94a3b8;
-    --hero-from: #142451;
-    --hero-to: #1e3f94;
-    --on-hero: #ffffff;
-    --on-hero-muted: #c7d6fe;
-
-    --good-solid: #047857;
-    --bad-solid: #b91c1c;
-
-    --good: #34d399;
-    --good-strong: #10b981;
-    --good-bg: #0b3326;
-    --bad: #f87171;
-    --bad-strong: #ef4444;
-    --bad-bg: #3b1416;
-    --warn: #fbbf24;
-    --warn-strong: #f59e0b;
-    --warn-bg: #3a2a0a;
-    --neutral-bg: #1b2538;
-
-    --store-jib: #3987e5;
-    --store-ihavecpu: #d95926;
-    --store-itcity: #199e70;
-    --store-banana: #c98500;
-
-    --series-1: #3987e5;
-    --div-neg: #3987e5;
-    --div-pos: #e66767;
-    --div-mid: #334155;
-
-    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 16px rgb(0 0 0 / 0.25);
-    --shadow-card-hover: 0 2px 4px rgb(0 0 0 / 0.45), 0 12px 28px rgb(0 0 0 / 0.35);
+  .inverted,
+  .invert-hover:hover,
+  .group:hover .invert-on-group-hover {
+    --background: #ffffff;
+    --surface: #ffffff;
+    --surface-muted: #f0f0f0;
+    --foreground: #000000;
+    --muted: #474747;
+    --subtle: #666666;
+    --border: #000000;
+    --grid: #bdbdbd;
+    --disabled-border: #cccccc;
+    --link: #0000ff;
+    --good: #007000;
+    --warn: #a85400;
+    --bad: #c40000;
   }
 }
 
@@ -123,29 +99,35 @@
   --color-muted: var(--muted);
   --color-subtle: var(--subtle);
   --color-border: var(--border);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-soft: var(--accent-soft);
-  --color-on-accent: var(--on-accent);
+  --color-grid: var(--grid);
+  --color-link: var(--link);
   --color-good: var(--good);
-  --color-good-bg: var(--good-bg);
-  --color-bad: var(--bad);
-  --color-bad-bg: var(--bad-bg);
   --color-warn: var(--warn);
-  --color-warn-bg: var(--warn-bg);
-  --color-neutral-bg: var(--neutral-bg);
-  --color-topbar: var(--topbar);
-  --color-on-topbar: var(--on-topbar);
-  --color-on-hero: var(--on-hero);
-  --color-on-hero-muted: var(--on-hero-muted);
+  --color-bad: var(--bad);
   --color-good-solid: var(--good-solid);
   --color-bad-solid: var(--bad-solid);
-  --font-sans: var(--font-thai), ui-sans-serif, system-ui, sans-serif;
+  --color-on-solid: var(--on-solid);
+  /* Latin face first, then its Thai partner: a Latin font has no Thai
+     glyphs, so Thai text falls through to the Thai face (never a system
+     fallback). The baht sign U+0E3F sits in the Thai block too. */
+  --font-sans: var(--font-work), var(--font-thai), ui-sans-serif, sans-serif;
+  --font-display: var(--font-archivo), var(--font-kanit), var(--font-thai), sans-serif;
+  --font-mono: var(--font-space-mono), var(--font-thai), ui-monospace, monospace;
   /* Thai stacks tone marks above and vowels below the line: 1.6 keeps them
      from touching (ui-ux-pro-max line-height rule: 1.5-1.75 for body). */
   --text-xs--line-height: 1.6;
   --text-sm--line-height: 1.6;
   --text-base--line-height: 1.6;
+}
+
+/* RawBlock: 0 px radius on every element, no exceptions in this app (it has
+   no radio buttons, the one exception the system allows). */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-radius: 0;
+  }
 }
 
 html {
@@ -168,56 +150,161 @@ summary,
   cursor: pointer;
 }
 
-.tabular {
-  font-variant-numeric: tabular-nums;
+/* Keyboard focus: a 4 px outline in the text colour, 2 px off the element,
+   so it reads on black buttons (white gap, black ring) and inside inverted
+   blocks (the ring follows the block's own foreground). Outline, not
+   a shadow ring: RawBlock has no shadows, and outlines do not shift layout.
+   Inside scrolling rows the outline is pulled inwards (-outline-offset-4) so
+   overflow does not clip it. */
+@layer base {
+  :focus-visible {
+    outline: 4px solid var(--foreground);
+    outline-offset: 2px;
+  }
+
+  /* An inverted block redefines --foreground on itself, so an outside ring
+     would be drawn in the block's own fill colour on the page and vanish.
+     Inverted elements (and their links) draw the ring inside instead. */
+  .inverted:focus-visible,
+  .invert-hover:hover:focus-visible {
+    outline-offset: -6px;
+  }
+
+  .inverted :focus-visible {
+    outline-offset: -4px;
+  }
 }
 
-/* Raised surface: cards, tables, panels. */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card);
-}
+/* Component classes live in the components layer so Tailwind utilities on
+   the same element (padding, size, leading) still override them. */
+@layer components {
+  /* Headline face: Archivo Black (Latin) + Kanit 700 (Thai). Archivo Black
+     ships one weight (400); asking for 400 keeps the browser from faking a
+     bold on it, and Kanit is only loaded at 700, so Thai resolves to it. */
+  .display {
+    font-family: var(--font-display);
+    font-weight: 400;
+    line-height: 1.2;
+  }
 
-.card-interactive {
-  transition:
-    box-shadow 150ms ease,
-    transform 150ms ease,
-    border-color 150ms ease;
-}
+  /* Numbers: prices, %, ±, DEAL. Space Mono with tabular figures. */
+  .tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
 
-.card-interactive:hover {
-  box-shadow: var(--shadow-card-hover);
-  border-color: var(--accent-soft);
-  transform: translateY(-2px);
-}
+  /* Uppercase + tracking: Latin labels only (DEAL, DEAL OF THE WEEK). Never on
+     Thai, where tracking breaks the stacked vowels and tone marks. */
+  .caps {
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
 
-/* Promotional banner surface (home hero). */
-.hero-banner {
-  background:
-    radial-gradient(120% 140% at 100% 0%, rgb(255 255 255 / 0.14), transparent 55%),
-    linear-gradient(120deg, var(--hero-from), var(--hero-to));
-  color: var(--on-hero);
-}
+  /* Links: hyperlink blue, always underlined. */
+  .link {
+    color: var(--link);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
 
-/* Lift for the hero and promo tiles, same motion rules as cards. */
-.lift {
-  transition: transform 150ms ease, box-shadow 150ms ease;
-}
+  .link:hover {
+    text-decoration-thickness: 3px;
+  }
 
-.lift:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-card-hover);
-}
+  /* Cards: 3 px border. `.card-heavy` = 5 px for the one thing that matters most
+     in its block (deal of the week, product hero, cheapest offer). */
+  .card {
+    background: var(--surface);
+    border: 3px solid var(--border);
+  }
 
-@media (prefers-reduced-motion: reduce) {
-  .lift,
-  .lift:hover,
-  .card-interactive,
+  .card-heavy {
+    border-width: 5px;
+  }
+
+  /* Clickable cards thicken to 5 px on hover with an inset-free outline, so
+     nothing moves (no layout shift, no transform). */
   .card-interactive:hover {
-    transition: none;
-    transform: none;
+    outline: 2px solid var(--border);
+    outline-offset: 0;
+  }
+
+  /* After :hover, so a hovered card that has keyboard focus keeps the ring. */
+  .card-interactive:focus-visible {
+    outline: 4px solid var(--foreground);
+    outline-offset: 2px;
+  }
+
+  /* Buttons (RawBlock): square, 3 px border, at least 44 px tall. */
+  .btn {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: 3px solid var(--border);
+    padding: 0 1.5rem;
+    font-weight: 700;
+  }
+
+  .btn-primary {
+    background: var(--foreground);
+    color: var(--background);
+  }
+
+  .btn-primary:hover,
+  .group:hover .btn-primary {
+    background: var(--background);
+    color: var(--foreground);
+  }
+
+  .btn-primary:active {
+    background: var(--foreground);
+    color: var(--background);
+    border-width: 5px;
+  }
+
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--foreground);
+  }
+
+  .btn-secondary:hover,
+  .group:hover .btn-secondary {
+    background: var(--foreground);
+    color: var(--background);
+  }
+
+  /* Status chip: square, 2 px border in the status colour, text always
+     present (words or ▲▼), so colour is never the only signal. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border: 2px solid currentColor;
+    background: var(--surface);
+    padding: 1px 8px;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* Solid DEAL block (Deal >= 70 / <= 30): white on darkened green / red,
+     framed by the theme border so the block edge clears 3:1 on black too. */
+  .chip-solid {
+    border-color: var(--border);
+    color: var(--on-solid);
+  }
+
+  /* Tooltip: inverted block, Space Mono, no border, no arrow, no shadow. */
+  .tooltip {
+    background: var(--foreground);
+    color: var(--background);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    max-width: 260px;
   }
 }
 
@@ -229,4 +316,16 @@ details > summary {
 
 details > summary::-webkit-details-marker {
   display: none;
+}
+
+/* Text disclosure marker in place of a chevron icon: + closed, − open. */
+.disclosure::after {
+  content: "+";
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+details[open] > summary .disclosure::after,
+[aria-expanded="true"] .disclosure::after {
+  content: "−";
 }

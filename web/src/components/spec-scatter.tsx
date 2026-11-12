@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { useTooltipLeft } from "@/components/use-tooltip-left";
 import { useWidth } from "@/components/use-width";
 import { formatTHB } from "@/lib/format";
 
@@ -56,6 +57,9 @@ export function SpecScatter({
     return { xMax, yMax, sx, sy, xy, x0, x1, shown, hidden: points.length - shown.length };
   }, [points, slope, intercept, IW, IH]);
 
+  const hoveredPx = hover === null ? null : geo.xy[hover]?.px;
+  const [tipRef, tipX] = useTooltipLeft(hoveredPx === undefined || hoveredPx === null ? null : (hoveredPx * measured) / W, measured);
+
   if (points.length === 0) return <p className="text-sm text-muted">ยังไม่มีข้อมูล</p>;
   const { xMax, yMax, sx, sy, xy, x0, x1, shown, hidden } = geo;
   const yTicks = [0, yMax / 2, yMax];
@@ -93,8 +97,8 @@ export function SpecScatter({
       >
         {yTicks.map((v) => (
           <g key={v}>
-            <line x1={PAD.left} x2={W - PAD.right} y1={sy(v)} y2={sy(v)} stroke="var(--border)" />
-            <text x={PAD.left - 6} y={sy(v) + 4} textAnchor="end" fontSize="12" fill="var(--muted)">
+            <line x1={PAD.left} x2={W - PAD.right} y1={sy(v)} y2={sy(v)} stroke="var(--grid)" />
+            <text x={PAD.left - 6} y={sy(v) + 4} textAnchor="end" fontSize="12" fill="var(--muted)" className="tabular">
               {formatTHB(v)}
             </text>
           </g>
@@ -106,6 +110,7 @@ export function SpecScatter({
             y={H - 18}
             fontSize="12"
             fill="var(--muted)"
+            className="tabular"
             textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
           >
             {Math.round(v).toLocaleString("th-TH")}
@@ -115,7 +120,8 @@ export function SpecScatter({
           {xLabel} ({xUnit})
         </text>
         {xy.map((p, i) => (
-          <circle key={i} cx={p.px} cy={p.py} r={3} fill="var(--series-1)" fillOpacity={0.45} />
+          // Hollow squares: overlaps stay countable without colour or alpha.
+          <rect key={i} x={p.px - 2.5} y={p.py - 2.5} width={5} height={5} fill="none" stroke="var(--foreground)" strokeOpacity={0.55} />
         ))}
         {x1 > x0 && (
           <line
@@ -124,23 +130,25 @@ export function SpecScatter({
             x2={sx(x1)}
             y2={sy(intercept + slope * x1)}
             stroke="var(--foreground)"
-            strokeWidth={2}
-            strokeLinecap="round"
+            strokeWidth={3}
           />
         )}
-        {h && <circle cx={h.px} cy={h.py} r={5} fill="var(--series-1)" stroke="var(--surface)" strokeWidth={2} />}
+        {h && (
+          <rect x={h.px - 5} y={h.py - 5} width={10} height={10} fill="var(--foreground)" stroke="var(--surface)" strokeWidth={2} />
+        )}
       </svg>
       {h && (
         <div
-          className="card pointer-events-none absolute z-10 max-w-[220px] px-2.5 py-1.5 text-xs"
+          ref={tipRef}
+          className="tooltip pointer-events-none absolute z-10 px-3 py-2 text-xs"
           style={{
-            left: `${Math.min((h.px / W) * 100, 55)}%`,
+            left: tipX,
             top: `${Math.max((h.py / H) * 100 - 30, 0)}%`,
           }}
         >
           <div className="font-medium">{h.model}</div>
-          <div className="tabular text-muted">
-            {h.x.toLocaleString("th-TH")} {xUnit} · <span className="font-semibold text-foreground">{formatTHB(h.price)}</span>
+          <div>
+            {h.x.toLocaleString("th-TH")} {xUnit} · <span className="font-bold">{formatTHB(h.price)}</span>
           </div>
         </div>
       )}

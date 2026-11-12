@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { CategoryGlyph } from "@/components/icons";
+import { CATEGORY_LABELS } from "@/lib/format";
 import { imageUrl } from "@/lib/images";
+import type { Category } from "@/lib/types";
 
 /**
  * Merchant thumbnail, hot-linked from the merchant's CDN at the right size
@@ -12,8 +13,11 @@ import { imageUrl } from "@/lib/images";
  *   with fetchpriority="high" so they compete with nothing below the fold;
  * - the rest are native lazy-loaded, decoded off the main thread;
  * - width/height reserve the box, so nothing shifts when an image arrives;
- * - a merchant that blocks or drops an image falls back to the category glyph
- *   instead of a broken-image icon.
+ * - a merchant that blocks or drops an image falls back to the category name
+ *   in type on the sunken surface (RawBlock: no illustrations) instead of a
+ *   broken-image icon.
+ *
+ * The box is white in both themes: merchant photos are shot on white.
  */
 export function ProductImage({
   src,
@@ -25,7 +29,7 @@ export function ProductImage({
 }: {
   src: string | null;
   alt: string;
-  category: string;
+  category: Category;
   /** Displayed width in CSS pixels, used to pick the CDN variant. */
   size: number;
   priority?: boolean;
@@ -35,9 +39,7 @@ export function ProductImage({
   const show = src !== null && !failed;
   return (
     <div
-      className={`flex items-center justify-center overflow-hidden rounded-[var(--radius-control)] ${
-        show ? "bg-white" : "bg-surface-muted"
-      } ${className}`}
+      className={`flex items-center justify-center overflow-hidden ${show ? "bg-white" : "bg-surface-muted"} ${className}`}
     >
       {show ? (
         // eslint-disable-next-line @next/next/no-img-element -- see lib/images.ts: no optimizer hop
@@ -54,8 +56,8 @@ export function ProductImage({
           className="h-full w-full object-contain p-2"
         />
       ) : (
-        <span className="text-subtle">
-          <CategoryGlyph category={category} />
+        <span aria-hidden className="display text-lg text-subtle">
+          {CATEGORY_LABELS[category]}
         </span>
       )}
     </div>

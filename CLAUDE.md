@@ -16,7 +16,7 @@ The platform leverages resilient Web Scraping, Structured Normalization, and Fou
   - `canonical_products`: Silicon specifications, hardware architecture specs, normalized attributes.
   - `merchant_listings`: Vendor-specific SKU URLs, current pricing, view counts, and inventory/sales velocity.
   - `price_history`: Time-series ledger storing price fluctuations for statistical regression and tracking.
-- **Frontend / Client**: Next.js (App Router), Tailwind CSS, TypeScript. Every page and component follows the design contract in [ux-ui.md](ux-ui.md) (tokens, copy glossary, components, page templates, review checklist). For UI work, load the project skill `ui-ux-pro-max` (`.claude/skills/ui-ux-pro-max`) for rule checks (accessibility, touch, typography, charts, Next.js); `ux-ui.md` overrides its style suggestions.
+- **Frontend / Client**: Next.js (App Router), Tailwind CSS, TypeScript. Every page and component follows the design contract in [.claude/skills/design.md](.claude/skills/design.md) (tokens, copy glossary, components, page templates, review checklist). For UI work, load the project skill `ui-ux-pro-max` (`.claude/skills/ui-ux-pro-max`) for rule checks (accessibility, touch, typography, charts, Next.js); `.claude/skills/design.md` overrides its style suggestions.
 
 ---
 
@@ -95,7 +95,7 @@ Always apply low-level optimization principles when generating or refactoring co
 Claude ตัวหลักใน session นี้ทำหน้าที่ **ผู้สั่งงาน (Orchestrator)** ห้ามเขียนหรือแก้โค้ดเอง ให้มอบหมายผ่าน subagents ใน `.claude/agents/` เท่านั้น:
 
 - `builder` = ผู้เขียน/แก้โค้ด (ต้องทำตามหัวข้อ 2–4)
-- `reviewer` = ผู้ตรวจโค้ด อ่านอย่างเดียว (ตรวจตามหัวข้อ 2–4 และ `ux-ui.md`)
+- `reviewer` = ผู้ตรวจโค้ด อ่านอย่างเดียว (ตรวจตามหัวข้อ 2–4 และ `.claude/skills/design.md`)
 - `user-tester` = ผู้ใช้จำลอง ลองใช้งานจริงแล้วให้ feedback
 - `ideator` = ผู้คิดไอเดีย เสนองาน/ปรับปรุง UX ถัดไป (อ่านและค้นข้อมูลอย่างเดียว)
 

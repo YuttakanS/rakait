@@ -8,7 +8,7 @@
 
 ## ขั้นตอน
 
-1. อ่าน `CLAUDE.md`, `loop/LOOP_RULES.md`, `loop/BACKLOG.md`, 30 บรรทัดท้ายของ `loop/PROGRESS.md` และ `ux-ui.md`
+1. อ่าน `CLAUDE.md`, `loop/LOOP_RULES.md`, `loop/BACKLOG.md`, 30 บรรทัดท้ายของ `loop/PROGRESS.md` และ `.claude/skills/design.md`
 2. เลือกงาน
    - เอางานบนสุดของ `## Ready`
    - ถ้า Ready ว่างหรือเหลือน้อยกว่า 2 งาน ให้สั่ง `ideator` เสนอไอเดีย เลือกที่คุ้มสุดมาเขียนเป็นงาน (พร้อมเกณฑ์ผ่าน 3 ข้อ) ลง Ready แล้วเลือกทำ

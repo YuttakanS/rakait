@@ -1,7 +1,5 @@
 "use client";
 
-import { ChevronIcon } from "@/components/icons";
-
 /**
  * A native <select> inside a GET form that submits on change. Without
  * JavaScript it still works: the form's submit button applies it.
@@ -24,7 +22,7 @@ export function AutoSubmitSelect({
         name={name}
         defaultValue={value}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="h-10 w-full appearance-none rounded-[var(--radius-control)] border border-border bg-surface pr-9 pl-3 text-base shadow-sm sm:text-sm focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft sm:w-44"
+        className="h-11 w-full appearance-none border-[3px] border-border bg-surface-muted pr-9 pl-3 text-base hover:bg-surface sm:w-48 sm:text-sm"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -32,7 +30,10 @@ export function AutoSubmitSelect({
           </option>
         ))}
       </select>
-      <ChevronIcon className="pointer-events-none absolute right-3 h-4 w-4 text-muted" />
+      {/* Text marker instead of a chevron icon (RawBlock: no icons). */}
+      <span aria-hidden className="tabular pointer-events-none absolute right-3 text-sm font-bold">
+        ↓
+      </span>
     </label>
   );
 }

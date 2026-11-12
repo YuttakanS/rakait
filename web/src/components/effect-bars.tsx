@@ -4,9 +4,10 @@ export type Effect = { feature: string; pct_effect_per_sd: number };
 
 /**
  * Diverging horizontal bars of each MLR feature's effect on price (percent
- * per one standard deviation): red to the right raises price, blue to the
- * left lowers it, grey midline at zero. Every bar prints its value, so the
- * chart needs no tooltip and no legend beyond the axis caption.
+ * per one standard deviation): a solid black bar to the right raises price,
+ * an outlined bar to the left lowers it, a solid midline at zero. Fill style
+ * and side carry the sign (no colour), every bar prints its signed value, so
+ * the chart needs no tooltip and no legend beyond the axis caption.
  */
 export function EffectBars({ effects }: { effects: Effect[] }) {
   const sorted = [...effects].sort((a, b) => Math.abs(b.pct_effect_per_sd) - Math.abs(a.pct_effect_per_sd));
@@ -25,17 +26,16 @@ export function EffectBars({ effects }: { effects: Effect[] }) {
           >
             <span className="truncate text-muted">{featureLabel(e.feature)}</span>
             <div className="relative h-3">
-              <div className="absolute inset-y-0 left-1/2 w-px bg-[var(--div-mid)]" />
               <div
-                className="absolute inset-y-0.5 rounded-[3px]"
+                className={`absolute inset-y-0 ${v >= 0 ? "bg-foreground" : "border-2 border-foreground bg-surface"}`}
                 style={{
                   left: v >= 0 ? "50%" : `${50 - w}%`,
-                  width: `max(${w}%, 2px)`,
-                  background: v >= 0 ? "var(--div-pos)" : "var(--div-neg)",
+                  width: `max(${w}%, 3px)`,
                 }}
               />
+              <div className="absolute -inset-y-0.5 left-1/2 w-0.5 -translate-x-1/2 bg-foreground" />
             </div>
-            <span className="tabular text-right font-medium">{label}</span>
+            <span className="tabular text-right font-bold">{label}</span>
           </div>
         );
       })}
