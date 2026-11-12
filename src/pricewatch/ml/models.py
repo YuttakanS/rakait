@@ -499,44 +499,68 @@ def fit_tier_tree(features: pd.DataFrame, price: pd.Series) -> TierTree:
 # ---------------------------------------------------- D. K-Means segmentation
 
 HIDDEN_GEM, FAVORITE, HYPE, NICHE = "hidden_gem", "community_favorite", "overpriced_hype", "niche"
-# Minimum gap, in standard deviations, between a centroid's sales and views.
+#: Cluster-level name for centroids that sell above average. Never a listing
+#: label: :func:`split_best_sellers` divides their members by views into
+#: :data:`FAVORITE` and :data:`HIDDEN_GEM`.
+BEST_SELLERS = "best_sellers"
+#: Listing labels in the fixed display order (the web's filter chips).
+SEGMENT_LABELS = (HIDDEN_GEM, FAVORITE, HYPE, NICHE)
+# Minimum gap, in standard deviations, between a centroid's views and sales.
 _CONVERSION_MARGIN = 0.5
 
 
 def name_segments(centers: list[tuple[float, float]]) -> list[str]:
     """Name clusters from their standardised (views_z, sales_z) centroids.
 
-    Views and sales are strongly correlated in practice, so the profiles are
-    read relative to each other ("sells more than its attention predicts")
-    rather than as absolute quadrants:
-
-    * hidden gem: the cluster whose sales most exceed its views, provided it
-      sells above average and the gap exceeds the margin;
-    * community favourite: other above-average sellers with above-average views;
-    * overpriced hype: below-average sellers whose views exceed sales by the margin
-      (attention that does not convert);
+    * best sellers: centroids that sell above average (``sales_z > 0``). Their
+      listings are split by views afterwards (:func:`split_best_sellers`), so
+      both well-selling profiles of CLAUDE.md section 2D, community favourite
+      (many views) and hidden gem (few views), are read from the listings
+      rather than from one centroid each;
+    * overpriced hype: below-average sellers whose views exceed sales by the
+      margin (attention that does not convert);
     * niche: everything else (little attention, few sales).
 
     Args:
         centers: ``(views_z, sales_z)`` per cluster.
 
     Returns:
-        One label per cluster, in input order.
+        One name per cluster, in input order.
     """
     names = [NICHE] * len(centers)
-    gaps = [sales - views for views, sales in centers]
-    gem_candidates = [
-        i for i, (_, sales) in enumerate(centers) if sales > 0 and gaps[i] > _CONVERSION_MARGIN
-    ]
-    gem = max(gem_candidates, key=lambda i: gaps[i]) if gem_candidates else None
     for i, (views, sales) in enumerate(centers):
-        if i == gem:
-            names[i] = HIDDEN_GEM
-        elif sales > 0 and views > 0:
-            names[i] = FAVORITE
-        elif sales <= 0 and views - sales > _CONVERSION_MARGIN:
+        if sales > 0:
+            names[i] = BEST_SELLERS
+        elif views - sales > _CONVERSION_MARGIN:
             names[i] = HYPE
     return names
+
+
+def split_best_sellers(
+    cluster_names: np.ndarray, log_views: np.ndarray
+) -> tuple[np.ndarray, float | None]:
+    """Turn cluster names into listing labels, splitting best sellers by views.
+
+    Every listing of a :data:`BEST_SELLERS` cluster becomes :data:`FAVORITE`
+    when its ``log1p(views)`` exceeds the median over all best-seller listings
+    (pooled across such clusters), else :data:`HIDDEN_GEM`. Other listings
+    keep their cluster's name. One masked median plus one ``np.where``: O(n),
+    vectorised, no per-row Python.
+
+    Args:
+        cluster_names: Name of each listing's cluster (from :func:`name_segments`).
+        log_views: ``log1p(views)`` per listing, aligned with ``cluster_names``.
+
+    Returns:
+        The listing labels and the median ``log1p(views)`` used for the split
+        (``None`` when no cluster sells above average).
+    """
+    sellers = cluster_names == BEST_SELLERS
+    if not sellers.any():
+        return cluster_names.astype(object), None
+    median = float(np.median(log_views[sellers]))
+    split = np.where(log_views > median, FAVORITE, HIDDEN_GEM)
+    return np.where(sellers, split, cluster_names).astype(object), median
 
 
 #: Ward linkage keeps an O(n^2) condensed distance matrix (8 bytes per pair):
@@ -607,14 +631,85 @@ def compare_hierarchical(x: np.ndarray, kmeans_labels: np.ndarray, k: int) -> Hi
 
 @dataclass(frozen=True)
 class DemandSegments:
-    """K-Means over ``[log(views+1), log(sales/day+1), normalised price]``."""
+    """K-Means over ``[log(views+1), log(sales/day+1), normalised price]``.
+
+    Attributes:
+        k: Chosen cluster count.
+        silhouette: Silhouette of the chosen partition.
+        centroids: One entry per K-Means cluster (z-scores and unscaled means);
+            ``split_by_views`` marks the best-seller clusters whose listings
+            were divided into community favourites and hidden gems.
+        labels: Listing label per input row (``None`` without demand data).
+        segments: Summary per listing label, computed from the listings
+            themselves, in :data:`SEGMENT_LABELS` order; labels without
+            members are omitted.
+        split_views: Views at the best-seller split (the median of
+            ``log1p(views)``, back-transformed), or ``None`` when no cluster
+            sells above average.
+        silhouette_by_k: Silhouette per candidate k.
+        hierarchy: Ward comparison, when ``n`` is small enough.
+    """
 
     k: int
     silhouette: float
-    centroids: list[dict[str, float | str]]
+    centroids: list[dict[str, float | str | bool]]
     labels: pd.Series
+    segments: list[dict[str, float | int | str]] = field(default_factory=list)
+    split_views: float | None = None
     silhouette_by_k: dict[int, float] = field(default_factory=dict)
     hierarchy: HierarchyComparison | None = None
+
+
+_SEGMENT_STATS = (
+    "views",
+    "views_median",
+    "sales_per_day",
+    "sales_per_day_median",
+    "normalized_price",
+)
+
+
+def summarise_segments(
+    labels: pd.Series, views: pd.Series, sales_per_day: pd.Series, normalized_price: pd.Series
+) -> list[dict[str, float | int | str]]:
+    """Per-label size and demand averages from the listings themselves.
+
+    One ``groupby`` over contiguous float columns: O(n).
+
+    Args:
+        labels: Listing label per row (rows without a label are skipped).
+        views: Cumulative page views.
+        sales_per_day: Sales velocity (negative values clipped to 0).
+        normalized_price: Price relative to the model's typical price.
+
+    Returns:
+        One dict per label that has members, in :data:`SEGMENT_LABELS` order.
+    """
+    frame = pd.DataFrame(
+        {
+            "label": labels,
+            "views": views.astype(float),
+            "sales_per_day": sales_per_day.astype(float).clip(lower=0),
+            "normalized_price": normalized_price.astype(float),
+        }
+    ).dropna(subset=["label"])
+    grouped = frame.groupby("label").agg(
+        size=("views", "size"),
+        views=("views", "mean"),
+        views_median=("views", "median"),
+        sales_per_day=("sales_per_day", "mean"),
+        sales_per_day_median=("sales_per_day", "median"),
+        normalized_price=("normalized_price", "mean"),
+    )
+    return [
+        {
+            "label": label,
+            "size": int(grouped.at[label, "size"]),
+            **{column: float(grouped.at[label, column]) for column in _SEGMENT_STATS},
+        }
+        for label in SEGMENT_LABELS
+        if label in grouped.index
+    ]
 
 
 def segment_demand(
@@ -624,11 +719,12 @@ def segment_demand(
     *,
     k_range: range = range(4, 7),
 ) -> DemandSegments:
-    """Cluster listings by demand and name each cluster from its centroid.
+    """Cluster listings by demand and label each listing.
 
     k is chosen by silhouette score within ``k_range``; the floor of 4 follows
     the specification's three demand profiles plus a remainder segment.
-    Clusters are named by :func:`name_segments`.
+    Clusters are named by :func:`name_segments`; the listings of clusters that
+    sell above average are then split by views (:func:`split_best_sellers`).
 
     Args:
         views: Cumulative page views.
@@ -661,10 +757,11 @@ def segment_demand(
     best_k = max(scores, key=lambda k: scores[k])
     km = fits[best_k]
 
-    names = dict(
-        enumerate(name_segments([(float(c[0]), float(c[1])) for c in km.cluster_centers_]))
+    names = name_segments([(float(c[0]), float(c[1])) for c in km.cluster_centers_])
+    listing_labels, split_log_views = split_best_sellers(
+        np.asarray(names, dtype=object)[km.labels_], raw["log_views"].to_numpy(float)
     )
-    centroids: list[dict[str, float | str]] = []
+    centroids: list[dict[str, float | str | bool]] = []
     for idx, center in enumerate(km.cluster_centers_):
         views_z, sales_z, price_z = (float(v) for v in center)
         unscaled = scaler.inverse_transform(center.reshape(1, -1))[0]
@@ -672,6 +769,7 @@ def segment_demand(
             {
                 "cluster": idx,
                 "label": names[idx],
+                "split_by_views": names[idx] == BEST_SELLERS,
                 "size": int((km.labels_ == idx).sum()),
                 "views_z": views_z,
                 "sales_z": sales_z,
@@ -682,11 +780,20 @@ def segment_demand(
             }
         )
     labels = pd.Series(None, index=views.index, dtype="object")
-    labels[raw.index] = [names[i] for i in km.labels_]
+    labels[raw.index] = listing_labels
     hierarchy = (
         compare_hierarchical(x, km.labels_, best_k) if len(x) <= MAX_HIERARCHICAL_N else None
     )
-    return DemandSegments(best_k, scores[best_k], centroids, labels, scores, hierarchy)
+    return DemandSegments(
+        k=best_k,
+        silhouette=scores[best_k],
+        centroids=centroids,
+        labels=labels,
+        segments=summarise_segments(labels, views, sales_per_day, normalized_price),
+        split_views=None if split_log_views is None else float(math.expm1(split_log_views)),
+        silhouette_by_k=scores,
+        hierarchy=hierarchy,
+    )
 
 
 # ------------------------------------------ E. Buy / Wait decision tree

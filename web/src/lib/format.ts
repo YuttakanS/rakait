@@ -49,8 +49,8 @@ export const RECOMMENDATION_LABELS: Record<Recommendation, string> = {
 };
 
 export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string }> = {
-  hidden_gem: { label: "ช้างเผือก", hint: "ยอดเข้าชมน้อย แต่ขายดี" },
-  community_favorite: { label: "ขวัญใจชุมชน", hint: "คนดูเยอะและซื้อจริง" },
+  hidden_gem: { label: "ช้างเผือก", hint: "ขายดีกว่าค่าเฉลี่ย แต่คนดูน้อย" },
+  community_favorite: { label: "ขวัญใจชุมชน", hint: "ขายดีกว่าค่าเฉลี่ย และคนดูเยอะ" },
   overpriced_hype: { label: "กระแสแรง ขายไม่ออก", hint: "คนดูเยอะ แต่ยอดขายต่ำ" },
   niche: { label: "เฉพาะกลุ่ม", hint: "ยอดเข้าชมและยอดขายต่ำ" },
 };

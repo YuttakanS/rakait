@@ -206,8 +206,8 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | `buy_now` | ซื้อเลย | |
 | `wait` | รอก่อน | |
 | `fair_price` | ราคาเหมาะสม | |
-| `hidden_gem` | ช้างเผือก | ยอดเข้าชมน้อย แต่ขายดี |
-| `community_favorite` | ขวัญใจชุมชน | คนดูเยอะและซื้อจริง |
+| `hidden_gem` | ช้างเผือก | ขายดีกว่าค่าเฉลี่ย แต่คนดูน้อย |
+| `community_favorite` | ขวัญใจชุมชน | ขายดีกว่าค่าเฉลี่ย และคนดูเยอะ |
 | `overpriced_hype` | กระแสแรง ขายไม่ออก | คนดูเยอะ แต่ยอดขายต่ำ |
 | `niche` | เฉพาะกลุ่ม | ยอดเข้าชมและยอดขายต่ำ |
 | Gap vs fair (card tag) | ▼ ถูกกว่าราคายุติธรรม x% · ▲ แพงกว่าราคายุติธรรม x% (`FairGapTag`) | |
@@ -484,9 +484,17 @@ in `lib/market.ts`.
    excluded here (missing-spec flags, the generation × tier interaction,
    demand signals, `nvme` which `pcie_gen` already carries); the signed
    EffectBars (% per SD) live in the statistics section.
-4. **ของที่คนซื้อจริง** (`#demand`): one clickable tile per segment name in
-   the fixed chip order, linking to `/?cluster=…`; average views and sales as
-   "~1 ชิ้น / N วัน"; listing count and share.
+4. **ของที่คนซื้อจริง** (`#demand`): one clickable tile per segment name that
+   has listings, in the fixed chip order, linking to `/?cluster=…`; average
+   views and sales as "~1 ชิ้น / N วัน"; listing count and share. Numbers come
+   from the per-label summary `segments` of `demand_kmeans` (model 2026.11-v7,
+   computed from the listings); older payloads fall back to merging centroids
+   by label. Labels (SPEC round 6): K-Means clusters whose centroid sells
+   above average (sales_z > 0) are pooled and split at the median
+   log(views + 1) of their listings: above = ขวัญใจชุมชน, the rest = ช้างเผือก;
+   other clusters are กระแสแรง ขายไม่ออก or เฉพาะกลุ่ม as before. A line under
+   the tiles says both are "ขายดีกว่าค่าเฉลี่ย" and prints the split
+   ("คนดูมากกว่า N ครั้ง"), from `split_views`.
 5. **ป้าย ซื้อเลย / รอก่อน คิดจากอะไร** (`#advice`): while the tree is below
    its bar, the three rules as badge + sentence; the accuracy vs. 60% as a
    StatNote.

@@ -26,14 +26,16 @@ type Diagnostics = {
   jarque_bera_p: number;
   breusch_pagan_p: number;
 };
-type Centroid = {
-  cluster: number;
+/** One shopper-facing demand segment: listing count and averages. */
+type Segment = {
   label: DemandCluster;
   size: number;
   views: number;
   sales_per_day: number;
   normalized_price: number;
 };
+/** A K-Means centroid as stored by models before 2026.11-v7 (one label each). */
+type Centroid = Segment & { cluster: number };
 type CurvePoint = { threshold: number; coverage: number; precision: number | null };
 type CategoryLinkage = {
   listings: number;
@@ -82,14 +84,21 @@ const ADVICE_RULES: { value: Recommendation; rule: string }[] = [
 const num = (v: unknown): number => (typeof v === "number" ? v : Number.NaN);
 const fixed = (v: unknown, d = 2): string => (Number.isFinite(num(v)) ? num(v).toFixed(d) : "–");
 
+const isSegmentLabel = (label: unknown): label is DemandCluster =>
+  typeof label === "string" && (SEGMENT_ORDER as string[]).includes(label);
+
+const bySegmentOrder = (a: Segment, b: Segment) => SEGMENT_ORDER.indexOf(a.label) - SEGMENT_ORDER.indexOf(b.label);
+
 /**
- * K-Means can yield two clusters with the same profile name (e.g. two "niche"
- * groups at different price levels). Shoppers see one segment per name:
+ * Fallback for payloads stored before 2026.11-v7, which have no per-label
+ * summary. K-Means can yield two clusters with the same profile name (e.g. two
+ * "niche" groups at different price levels). Shoppers see one segment per name:
  * sizes add up and averages are size-weighted. Fixed order (SEGMENT_ORDER).
  */
-function mergeByLabel(centroids: Centroid[]): Centroid[] {
-  const merged = new Map<DemandCluster, Centroid>();
+function mergeByLabel(centroids: Centroid[]): Segment[] {
+  const merged = new Map<DemandCluster, Segment>();
   for (const c of centroids) {
+    if (!isSegmentLabel(c.label)) continue;
     const m = merged.get(c.label);
     if (!m) {
       merged.set(c.label, { ...c });
@@ -105,7 +114,19 @@ function mergeByLabel(centroids: Centroid[]): Centroid[] {
       normalized_price: avg(m.normalized_price, c.normalized_price),
     });
   }
-  return [...merged.values()].sort((a, b) => SEGMENT_ORDER.indexOf(a.label) - SEGMENT_ORDER.indexOf(b.label));
+  return [...merged.values()].sort(bySegmentOrder);
+}
+
+/**
+ * Shopper-facing segments: the per-label summary computed from the listings
+ * (2026.11-v7+: best-seller clusters are split by views, so one centroid no
+ * longer equals one label), else the merged centroids of an older payload.
+ */
+function demandSegments(kmeans: Record<string, unknown> | undefined): Segment[] {
+  if (Array.isArray(kmeans?.segments)) {
+    return (kmeans.segments as Segment[]).filter((s) => isSegmentLabel(s.label) && s.size > 0).sort(bySegmentOrder);
+  }
+  return mergeByLabel((kmeans?.centroids as Centroid[] | undefined) ?? []);
 }
 
 function find(insights: MarketInsight[], category: string, kind: string) {
@@ -169,8 +190,10 @@ export default async function InsightsPage() {
   const linkage = find(insights, "all", "linkage_quality") as Record<string, CategoryLinkage> | undefined;
   // linkage_quality is written by the link step, not training: exclude it from "computed at".
   const computedAt = insights.find((i) => i.kind !== "linkage_quality")?.computedAt ?? null;
-  const centroids = mergeByLabel((kmeans?.centroids as Centroid[]) ?? []);
-  const clustered = centroids.reduce((s, c) => s + c.size, 0);
+  const segments = demandSegments(kmeans);
+  const clustered = segments.reduce((s, c) => s + c.size, 0);
+  // Views at which best sellers are split into ขวัญใจชุมชน / ช้างเผือก (2026.11-v7+).
+  const splitViews = num(kmeans?.split_views);
   const treeInUse = timing?.used_for_recommendations === true;
 
   return (
@@ -345,9 +368,9 @@ export default async function InsightsPage() {
         title="ของที่คนซื้อจริง"
         subtitle="จัดกลุ่มสินค้าจากยอดเข้าชมและยอดขายจริงด้วย K-Means · ใช้ข้อมูลเฉพาะร้านที่เปิดเผยตัวเลขเหล่านี้"
       >
-        {centroids.length > 0 ? (
-          <div className={`grid gap-4 sm:grid-cols-2 ${centroids.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-4"}`}>
-            {centroids.map((c) => {
+        {segments.length > 0 ? (
+          <div className={`grid gap-4 sm:grid-cols-2 ${segments.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-4"}`}>
+            {segments.map((c) => {
               const share = clustered ? c.size / clustered : 0;
               return (
                 <Link
@@ -381,6 +404,13 @@ export default async function InsightsPage() {
           </div>
         ) : (
           <p className="card p-6 text-sm text-muted">ยังมีข้อมูลยอดขายไม่พอสำหรับจัดกลุ่ม</p>
+        )}
+        {Number.isFinite(splitViews) && (
+          <p className="max-w-3xl text-xs leading-relaxed text-muted">
+            ช้างเผือก และ ขวัญใจชุมชน คือสินค้าที่ขายดีกว่าค่าเฉลี่ยทั้งคู่ แล้วแยกกันด้วยยอดเข้าชม: คนดูมากกว่า{" "}
+            <span className="tabular whitespace-nowrap">{Math.round(splitViews).toLocaleString("th-TH")} ครั้ง</span>{" "}
+            (มัธยฐานของกลุ่มขายดี) เป็นขวัญใจชุมชน น้อยกว่านั้นเป็นช้างเผือก
+          </p>
         )}
       </Section>
 

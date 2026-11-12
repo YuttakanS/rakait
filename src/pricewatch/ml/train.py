@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v6"
+MODEL_VERSION = "2026.11-v7"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -580,6 +580,10 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             "silhouette": seg.silhouette,
             "silhouette_by_k": seg.silhouette_by_k,
             "centroids": seg.centroids,
+            # Per listing label, from the listings (best-seller clusters are
+            # split by views, so a centroid no longer equals one label).
+            "segments": seg.segments,
+            "split_views": seg.split_views,
             "n": int(seg.labels.notna().sum()),
         }
         if seg.hierarchy is not None:
@@ -876,6 +880,14 @@ def _plot_kmeans(out: Path, current: pd.DataFrame, seg: m.DemandSegments) -> Non
             s=12,
             alpha=0.7,
             label=label,
+        )
+    if seg.split_views is not None:
+        ax.axvline(
+            math.log1p(seg.split_views),
+            color="black",
+            linestyle="--",
+            linewidth=1,
+            label="best-seller views split",
         )
     ax.set(
         xlabel="log(views + 1)",

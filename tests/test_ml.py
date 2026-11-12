@@ -127,10 +127,16 @@ def test_segment_demand_names_clusters_from_centroids() -> None:
     )
     seg = m.segment_demand(data["views"], data["sales"], data["price"], k_range=range(4, 5))
 
-    assert seg.labels.iloc[0] == "community_favorite"
-    assert seg.labels.iloc[30] == "overpriced_hype"
-    assert seg.labels.iloc[60] == "hidden_gem"
-    assert seg.labels.iloc[90] == "niche"
+    # Two clusters sell above average; pooled, their median views fall between
+    # the 50,000-view and the 500-view blob, so the split matches the blobs.
+    assert (seg.labels.iloc[:30] == m.FAVORITE).all()
+    assert (seg.labels.iloc[30:60] == m.HYPE).all()
+    assert (seg.labels.iloc[60:90] == m.HIDDEN_GEM).all()
+    assert (seg.labels.iloc[90:] == m.NICHE).all()
+    assert sum(c["split_by_views"] for c in seg.centroids) == 2
+    assert [s["label"] for s in seg.segments] == list(m.SEGMENT_LABELS)
+    assert all(s["size"] == 30 for s in seg.segments)
+    assert seg.split_views is not None and 500 < seg.split_views < 50_000
     assert seg.silhouette > 0.5
     # Four well-separated demand blobs: Ward largely agrees with K-Means. Not
     # exactly: price noise is standardised to unit variance too, and Ward may
@@ -333,7 +339,9 @@ def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
     assert clear.any() and ins.loc[clear, "recommendation_reason"].str.contains(numbered).all()
     assert ("gpu", "simple_regression") in report.market
     assert ("gpu", "fair_value_mlr") in report.market
-    assert ("all", "demand_kmeans") in report.market
+    kmeans = report.market[("all", "demand_kmeans")]
+    assert {s["label"] for s in kmeans["segments"]} <= set(m.SEGMENT_LABELS)
+    assert sum(s["size"] for s in kmeans["segments"]) == kmeans["n"]
     assert any("timing tree" in note for note in report.notes)
 
 
@@ -369,17 +377,76 @@ def test_timing_tree_learns_a_real_signal() -> None:
     assert model.usable is True
 
 
-def test_name_segments_reads_conversion_relative_to_attention() -> None:
-    # Centroids seen on the live JIB data at k=4: views and sales correlate,
-    # and the best seller converts far better than its views suggest.
-    names = m.name_segments([(1.16, 0.38), (-0.45, -0.35), (-1.78, -0.70), (0.59, 3.75)])
-    assert names == [m.FAVORITE, m.NICHE, m.NICHE, m.HIDDEN_GEM]
+def test_name_segments_marks_above_average_sellers_for_the_views_split() -> None:
+    # Centroids of the live 2026.11-v6 run shape: one cluster sells above
+    # average; it is no longer named from its centroid alone.
+    names = m.name_segments([(1.16, -0.38), (-0.45, -0.35), (-1.78, -0.70), (0.67, 3.62)])
+    assert names == [m.HYPE, m.NICHE, m.NICHE, m.BEST_SELLERS]
 
 
 def test_name_segments_finds_hype_and_requires_a_margin() -> None:
-    assert m.name_segments([(0.19, -0.37), (0.1, 0.3)]) == [m.HYPE, m.FAVORITE]
-    # Sales barely above views is not a hidden gem.
-    assert m.name_segments([(0.5, 0.7)]) == [m.FAVORITE]
+    assert m.name_segments([(0.19, -0.37), (0.1, 0.3)]) == [m.HYPE, m.BEST_SELLERS]
+    # Views barely above sales is not hype.
+    assert m.name_segments([(0.2, -0.1)]) == [m.NICHE]
+
+
+def _demand_blobs(blobs: list[tuple[float, float, int]], seed: int) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    return pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "views": rng.lognormal(np.log(views), 0.6, size),
+                    "sales": rng.normal(sales, sales * 0.05, size),
+                    "price": rng.normal(1.0, 0.02, size),
+                }
+            )
+            for views, sales, size in blobs
+        ],
+        ignore_index=True,
+    )
+
+
+def test_one_best_selling_cluster_yields_both_profiles_split_by_views() -> None:
+    # One small blob sells far above the rest (like the live k=6 run); its
+    # views spread widely, so the median splits it into two labelled halves.
+    data = _demand_blobs(
+        [(20_000, 0.01, 60), (300, 0.01, 60), (2_000, 0.002, 60), (5_000, 3.0, 30)], seed=3
+    )
+    seg = m.segment_demand(data["views"], data["sales"], data["price"], k_range=range(4, 5))
+
+    sellers = seg.labels.isin([m.FAVORITE, m.HIDDEN_GEM])
+    assert sum(c["split_by_views"] for c in seg.centroids) == 1
+    assert sellers.sum() == 30 and sellers.iloc[-30:].all()
+    log_views = np.log1p(data["views"])
+    median = np.median(log_views[sellers])
+    assert ((seg.labels == m.FAVORITE) == (sellers & (log_views > median))).all()
+    by_label = {s["label"]: s for s in seg.segments}
+    assert by_label[m.FAVORITE]["size"] == 15 and by_label[m.HIDDEN_GEM]["size"] == 15
+    assert by_label[m.HIDDEN_GEM]["views"] < by_label[m.FAVORITE]["views"]
+    assert by_label[m.HIDDEN_GEM]["views_median"] < by_label[m.FAVORITE]["views_median"]
+    # Summaries come from the listings themselves, not from the centroid.
+    gems = seg.labels == m.HIDDEN_GEM
+    assert by_label[m.HIDDEN_GEM]["sales_per_day"] == pytest.approx(data["sales"][gems].mean())
+
+
+def test_no_best_selling_cluster_yields_neither_profile() -> None:
+    labels, split = m.split_best_sellers(
+        np.array([m.NICHE, m.HYPE, m.NICHE], dtype=object), np.array([1.0, 9.0, 2.0])
+    )
+    assert split is None
+    assert labels.tolist() == [m.NICHE, m.HYPE, m.NICHE]
+    segments = m.summarise_segments(
+        pd.Series(labels), pd.Series([1.0, 9.0, 2.0]), pd.Series([0.0, 0.0, 0.1]), pd.Series(1.0)
+    )
+    assert [s["label"] for s in segments] == [m.HYPE, m.NICHE]
+
+
+def test_split_best_sellers_pools_clusters_and_ties_go_to_hidden_gem() -> None:
+    names = np.array([m.BEST_SELLERS] * 4 + [m.NICHE], dtype=object)
+    labels, split = m.split_best_sellers(names, np.array([1.0, 2.0, 2.0, 5.0, 9.0]))
+    assert split == 2.0
+    assert labels.tolist() == [m.HIDDEN_GEM, m.HIDDEN_GEM, m.HIDDEN_GEM, m.FAVORITE, m.NICHE]
 
 
 def _rule_row(
