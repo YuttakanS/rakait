@@ -18,19 +18,20 @@ export interface Verdict {
  * The verdict compares this offer's own price with the fair price of its
  * specs; the cluster is a popularity signal from views and sales that
  * BaNANA and IT City do not even publish, and it says nothing direct about
- * price. So "ซื้อเลย" (clearly below fair) beside "กระแสแรง ขายไม่ออก" (read
- * as overpriced hype) keeps ซื้อเลย, and "รอก่อน" (clearly above fair)
- * beside "ช้างเผือก" (a value find) keeps รอก่อน. Pairs not listed here are
+ * price. So "ซื้อเลย" (clearly below fair) beside "คนดูเยอะ แต่ขายน้อย"
+ * (overpriced_hype, read as hype that does not sell) keeps ซื้อเลย, and
+ * "รอก่อน" (clearly above fair) beside "ขายดี แต่คนดูน้อย" (hidden_gem, read
+ * as a value find) keeps รอก่อน. Pairs not listed here are
  * compatible (a popular part can still be overpriced at one store).
  */
 const CONFLICTS: Partial<Record<Recommendation, Partial<Record<DemandCluster, string>>>> = {
   buy_now: {
     overpriced_hype:
-      "ไม่แสดงป้าย “กระแสแรง ขายไม่ออก” เพราะราคานี้ถูกกว่าราคายุติธรรมชัดเจน ราคาบอกความคุ้มได้ตรงกว่ายอดเข้าชมและยอดขาย",
+      "ไม่แสดงป้าย “คนดูเยอะ แต่ขายน้อย” เพราะราคานี้ถูกกว่าราคายุติธรรมชัดเจน ราคาบอกความคุ้มได้ตรงกว่ายอดเข้าชมและยอดขาย",
   },
   wait: {
     hidden_gem:
-      "ไม่แสดงป้าย “ช้างเผือก” เพราะร้านนี้ตั้งราคาสูงกว่าราคายุติธรรมชัดเจน แม้รุ่นนี้จะขายดี",
+      "ไม่แสดงป้าย “ขายดี แต่คนดูน้อย” เพราะร้านนี้ตั้งราคาสูงกว่าราคายุติธรรมชัดเจน แม้รุ่นนี้จะขายดี",
   },
 };
 

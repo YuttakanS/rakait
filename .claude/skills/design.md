@@ -206,10 +206,10 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | `buy_now` | ซื้อเลย | |
 | `wait` | รอก่อน | |
 | `fair_price` | ราคาเหมาะสม | |
-| `hidden_gem` | ช้างเผือก | ขายดีกว่าค่าเฉลี่ย แต่คนดูน้อย |
-| `community_favorite` | ขวัญใจชุมชน | ขายดีกว่าค่าเฉลี่ย และคนดูเยอะ |
-| `overpriced_hype` | กระแสแรง ขายไม่ออก | คนดูเยอะ แต่ยอดขายต่ำ |
-| `niche` | เฉพาะกลุ่ม | ยอดเข้าชมและยอดขายต่ำ |
+| `hidden_gem` | ขายดี แต่คนดูน้อย | ยอดขายต่อวันสูงกว่าค่าเฉลี่ย แต่ยอดเข้าชมไม่เกินมัธยฐานของกลุ่มขายดี |
+| `community_favorite` | ขายดี คนดูเยอะ | ยอดขายต่อวันสูงกว่าค่าเฉลี่ย และยอดเข้าชมสูงกว่ามัธยฐานของกลุ่มขายดี |
+| `overpriced_hype` | คนดูเยอะ แต่ขายน้อย | ยอดขายต่อวันต่ำกว่าค่าเฉลี่ย และต่ำกว่าที่ยอดเข้าชมบ่งบอกชัดเจน |
+| `niche` | คนดูน้อย ขายน้อย | ยอดขายต่อวันต่ำกว่าค่าเฉลี่ย และยอดเข้าชมไม่สูง |
 | Gap vs fair (card tag) | ▼ ถูกกว่าราคายุติธรรม x% · ▲ แพงกว่าราคายุติธรรม x% (`FairGapTag`) | |
 | Fair price untrusted (card) | ประเมินไม่แน่นอน + "ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล" | |
 | No fair price (card) | ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ) | |
@@ -491,8 +491,10 @@ in `lib/market.ts`.
    computed from the listings); older payloads fall back to merging centroids
    by label. Labels (SPEC round 6): K-Means clusters whose centroid sells
    above average (sales_z > 0) are pooled and split at the median
-   log(views + 1) of their listings: above = ขวัญใจชุมชน, the rest = ช้างเผือก;
-   other clusters are กระแสแรง ขายไม่ออก or เฉพาะกลุ่ม as before. A line under
+   log(views + 1) of their listings: above = ขายดี คนดูเยอะ, the rest =
+   ขายดี แต่คนดูน้อย; other clusters are คนดูเยอะ แต่ขายน้อย or
+   คนดูน้อย ขายน้อย as before (names: SPEC round 7; the hint says what each is
+   measured from and never repeats the name). A line under
    the tiles says both are "ขายดีกว่าค่าเฉลี่ย" and prints the split
    ("คนดูมากกว่า N ครั้ง"), from `split_views`.
 5. **ป้าย ซื้อเลย / รอก่อน คิดจากอะไร** (`#advice`): while the tree is below
@@ -549,8 +551,8 @@ export default async function Page() {
 - Badge conflicts (`lib/verdict.ts`, one rule set for card, hero and rows): the
   price verdict outranks the demand cluster, because it compares this offer's
   own price with fair value while the cluster is a views/sales signal two
-  stores do not publish. ซื้อเลย + กระแสแรง ขายไม่ออก keeps ซื้อเลย; รอก่อน +
-  ช้างเผือก keeps รอก่อน. The withheld badge is named in a visible sentence
+  stores do not publish. ซื้อเลย + คนดูเยอะ แต่ขายน้อย keeps ซื้อเลย; รอก่อน +
+  ขายดี แต่คนดูน้อย keeps รอก่อน. The withheld badge is named in a visible sentence
   under the badges (full row width in OfferRow), never a hover-only tooltip.
   A card's cluster is the headline offer's own, never another store's.
 - Fair-price uncertainty (`fair_uncertain`, migration 0012): a listing priced

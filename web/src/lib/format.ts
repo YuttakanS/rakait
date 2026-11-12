@@ -49,10 +49,19 @@ export const RECOMMENDATION_LABELS: Record<Recommendation, string> = {
 };
 
 export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string }> = {
-  hidden_gem: { label: "ช้างเผือก", hint: "ขายดีกว่าค่าเฉลี่ย แต่คนดูน้อย" },
-  community_favorite: { label: "ขวัญใจชุมชน", hint: "ขายดีกว่าค่าเฉลี่ย และคนดูเยอะ" },
-  overpriced_hype: { label: "กระแสแรง ขายไม่ออก", hint: "คนดูเยอะ แต่ยอดขายต่ำ" },
-  niche: { label: "เฉพาะกลุ่ม", hint: "ยอดเข้าชมและยอดขายต่ำ" },
+  hidden_gem: {
+    label: "ขายดี แต่คนดูน้อย",
+    hint: "ยอดขายต่อวันสูงกว่าค่าเฉลี่ย แต่ยอดเข้าชมไม่เกินมัธยฐานของกลุ่มขายดี",
+  },
+  community_favorite: {
+    label: "ขายดี คนดูเยอะ",
+    hint: "ยอดขายต่อวันสูงกว่าค่าเฉลี่ย และยอดเข้าชมสูงกว่ามัธยฐานของกลุ่มขายดี",
+  },
+  overpriced_hype: {
+    label: "คนดูเยอะ แต่ขายน้อย",
+    hint: "ยอดขายต่อวันต่ำกว่าค่าเฉลี่ย และต่ำกว่าที่ยอดเข้าชมบ่งบอกชัดเจน",
+  },
+  niche: { label: "คนดูน้อย ขายน้อย", hint: "ยอดขายต่อวันต่ำกว่าค่าเฉลี่ย และยอดเข้าชมไม่สูง" },
 };
 
 /**

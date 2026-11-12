@@ -192,8 +192,11 @@ export default async function InsightsPage() {
   const computedAt = insights.find((i) => i.kind !== "linkage_quality")?.computedAt ?? null;
   const segments = demandSegments(kmeans);
   const clustered = segments.reduce((s, c) => s + c.size, 0);
-  // Views at which best sellers are split into ขวัญใจชุมชน / ช้างเผือก (2026.11-v7+).
+  // Views at which best sellers are split into community_favorite / hidden_gem (2026.11-v7+).
   const splitViews = num(kmeans?.split_views);
+  // Group names quoted inside the split sentence; nowrap so a name never breaks across lines.
+  const favoriteName = <span className="whitespace-nowrap">“{CLUSTER_LABELS.community_favorite.label}”</span>;
+  const hiddenGemName = <span className="whitespace-nowrap">“{CLUSTER_LABELS.hidden_gem.label}”</span>;
   const treeInUse = timing?.used_for_recommendations === true;
 
   return (
@@ -407,9 +410,9 @@ export default async function InsightsPage() {
         )}
         {Number.isFinite(splitViews) && (
           <p className="max-w-3xl text-xs leading-relaxed text-muted">
-            ช้างเผือก และ ขวัญใจชุมชน คือสินค้าที่ขายดีกว่าค่าเฉลี่ยทั้งคู่ แล้วแยกกันด้วยยอดเข้าชม: คนดูมากกว่า{" "}
+            {favoriteName} และ {hiddenGemName} คือสินค้าที่ขายดีกว่าค่าเฉลี่ยทั้งคู่ แล้วแยกกันด้วยยอดเข้าชม: คนดูมากกว่า{" "}
             <span className="tabular whitespace-nowrap">{Math.round(splitViews).toLocaleString("th-TH")} ครั้ง</span>{" "}
-            (มัธยฐานของกลุ่มขายดี) เป็นขวัญใจชุมชน น้อยกว่านั้นเป็นช้างเผือก
+            (มัธยฐานของกลุ่มขายดี) เป็น {favoriteName} ไม่เกินนั้นเป็น {hiddenGemName}
           </p>
         )}
       </Section>
