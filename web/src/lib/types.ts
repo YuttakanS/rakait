@@ -19,6 +19,8 @@ export interface ProductSummary {
   maxPrice: number;
   bestDeal: number | null;
   cheapestRecommendation: Recommendation | null;
+  /** That offer's recommendation_reason ("Decision Tree: …" from the timing tree). */
+  cheapestReason: string | null;
   /** Demand cluster of that same headline offer (not another store's). */
   cheapestCluster: DemandCluster | null;
   /** Price-vs-fair delta of the headline offer (e.g. -0.12 = 12% below). */

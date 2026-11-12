@@ -324,8 +324,13 @@ def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
     advised = ins["recommendation"].notna()  # no score and no history: no advice
     assert advised[scored].all()
     assert set(ins.loc[advised, "recommendation"]) <= {m.BUY_NOW, m.WAIT, m.FAIR}
-    # No history yet, so every recommendation comes from the Deal Score rules.
-    assert ins.loc[advised, "recommendation_reason"].str.startswith("กฎจาก Deal Score").all()
+    # No history yet, so every recommendation comes from the Deal Score rules,
+    # whose reasons are plain shopper sentences without a rule-name prefix.
+    reasons = ins.loc[advised, "recommendation_reason"]
+    assert not reasons.str.contains("กฎจาก|Deal Score|Decision Tree").any()
+    clear = ins["recommendation"].isin([m.BUY_NOW, m.WAIT])
+    numbered = r"\d+% ซึ่งเกินช่วงคลาดเคลื่อน ±\d+%"
+    assert clear.any() and ins.loc[clear, "recommendation_reason"].str.contains(numbered).all()
     assert ("gpu", "simple_regression") in report.market
     assert ("gpu", "fair_value_mlr") in report.market
     assert ("all", "demand_kmeans") in report.market
@@ -447,6 +452,55 @@ def test_percents_round_half_up_like_the_web() -> None:
     # JavaScript Math.round, not Python's banker's round (36.5 -> 36).
     assert [shown_pct(x) for x in (0.365, 0.125, 0.204, 0.196, 0.0)] == [37, 13, 20, 20, 0]
     assert gap_within_band_reason(-0.365, 0.40).startswith("ถูกกว่าราคายุติธรรม 37% ")
+
+
+# Expected values were produced by JavaScript itself (Node 24):
+#   node -e "for (const f of [...]) console.log(f, Math.round(f*100), f*100)"
+# Math.round(-0.5) is -0 in JS; -0 == 0 here, so it is written as 0.
+JS_MATH_ROUND = [
+    (0.004999999999999999, 0),  # f*100 = 0.49999999999999994; floor(v + 0.5) gives 1
+    (-0.004999999999999999, 0),  # f*100 = -0.49999999999999994
+    (0.005, 1),  # exactly .5: rounds up
+    (0.015, 2),  # 1.5
+    (0.025, 3),  # 2.5 (banker's round gives 2)
+    (0.125, 13),  # 12.5 (banker's round gives 12)
+    (0.445, 45),  # 44.5
+    (0.455, 46),  # 45.5
+    (-0.005, 0),  # -0.5: JS rounds towards +inf at .5
+    (-0.015, -1),  # -1.5
+    (1.005, 100),  # f*100 = 100.49999999999999
+    (0.285, 28),  # f*100 = 28.499999999999996
+    (0.575, 57),  # f*100 = 57.49999999999999
+]
+
+
+@pytest.mark.parametrize(("fraction", "js_value"), JS_MATH_ROUND)
+def test_shown_pct_matches_javascript_math_round(fraction: float, js_value: int) -> None:
+    from pricewatch.ml.train import shown_pct
+
+    assert shown_pct(fraction) == js_value
+
+
+def test_buy_and_wait_reasons_name_gap_and_band() -> None:
+    from pricewatch.ml.train import rule_recommendation
+
+    low_stock = _rule_row(85, -0.52, 0.30) | {"stock_quantity": 2}
+    assert rule_recommendation(pd.Series(_rule_row(85, -0.52, 0.30))) == (
+        m.BUY_NOW,
+        "ถูกกว่าราคายุติธรรม 52% ซึ่งเกินช่วงคลาดเคลื่อน ±30% จึงถูกกว่าตลาดชัดเจน",
+    )
+    assert rule_recommendation(pd.Series(low_stock)) == (
+        m.BUY_NOW,
+        "ถูกกว่าราคายุติธรรม 52% ซึ่งเกินช่วงคลาดเคลื่อน ±30% จึงถูกกว่าตลาดชัดเจน และสต็อกเหลือน้อย",
+    )
+    # The numbers are the card's: 0.125 -> 13% and 0.455 -> 46% (half up).
+    assert rule_recommendation(pd.Series(_rule_row(10, 0.455, 0.125))) == (
+        m.WAIT,
+        "แพงกว่าราคายุติธรรม 46% ซึ่งเกินช่วงคลาดเคลื่อน ±13% จึงแพงกว่าตลาดชัดเจน",
+    )
+    # Sold out keeps its own reason; no prefix on any rule reason.
+    label, reason = rule_recommendation(pd.Series(_rule_row(95, -0.5, 0.2, in_stock=False)))
+    assert (label, reason) == (m.WAIT, "สินค้าหมดที่ร้านนี้ รอของเข้าหรือดูร้านอื่น")
 
 
 def test_run_models_buy_and_wait_only_outside_the_error_band() -> None:

@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v5"
+MODEL_VERSION = "2026.11-v6"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -321,8 +321,11 @@ def shown_pct(fraction: float) -> int:
     """Whole percent exactly as the web prints a fraction.
 
     Matches JavaScript ``Math.round(fraction * 100)`` (``formatBand``,
-    ``BelowFairTag``, ``FairDelta``): halves round up, unlike Python's
-    banker's ``round``. O(1).
+    ``FairGapTag``, ``FairDelta``, the card reason) bit for bit: halves round
+    up, unlike Python's banker's ``round``. ``floor(v + 0.5)`` is not enough:
+    for v = 0.49999999999999994 the float sum rounds to 1.0 while JS gives 0.
+    ``v - floor(v)`` is exact for |v| < 2**52, so comparing the fraction part
+    with 0.5 needs no extra rounding step. O(1).
 
     Args:
         fraction: A non-NaN ratio such as 0.365 for 36.5%.
@@ -330,7 +333,9 @@ def shown_pct(fraction: float) -> int:
     Returns:
         The rounded whole percent, e.g. 37.
     """
-    return math.floor(fraction * 100 + 0.5)
+    value = fraction * 100
+    whole = math.floor(value)
+    return whole + 1 if value - whole >= 0.5 else whole
 
 
 def gap_clears_band(pct_vs_fair: float, fair_error_pct: float) -> bool:
@@ -341,8 +346,9 @@ def gap_clears_band(pct_vs_fair: float, fair_error_pct: float) -> bool:
 
     Args:
         pct_vs_fair: Non-NaN price / fair - 1 (negative = cheaper).
-        fair_error_pct: Half-width of the 80% interval as a fraction; NaN or
-            None when unknown, which never clears.
+        fair_error_pct: Half-width of the 80% interval as a fraction; NaN
+            when unknown, which never clears. Callers holding ``None`` for an
+            unknown band check it themselves (``rule_recommendation``).
 
     Returns:
         True only when the band is known and the rounded gap is larger.
@@ -352,7 +358,7 @@ def gap_clears_band(pct_vs_fair: float, fair_error_pct: float) -> bool:
     return shown_pct(abs(pct_vs_fair)) > shown_pct(fair_error_pct)
 
 
-def gap_within_band_reason(pct_vs_fair: float, fair_error_pct: float) -> str:
+def gap_within_band_reason(pct_vs_fair: float, fair_error_pct: float | None) -> str:
     """Reason for a Deal Score extreme whose gap the error band cannot confirm.
 
     Args:
@@ -368,10 +374,27 @@ def gap_within_band_reason(pct_vs_fair: float, fair_error_pct: float) -> str:
     """
     side = "ถูกกว่า" if pct_vs_fair < 0 else "แพงกว่า"
     gap = f"{side}ราคายุติธรรม {shown_pct(abs(pct_vs_fair))}%"
-    if pd.isna(fair_error_pct):
+    if fair_error_pct is None or pd.isna(fair_error_pct):
         return f"{gap} แต่ยังไม่ทราบช่วงคลาดเคลื่อนของราคานี้ จึงยังสรุปไม่ได้ว่า{side}ตลาดจริง"
     band = shown_pct(fair_error_pct)
     return f"{gap} แต่ยังอยู่ในช่วงคลาดเคลื่อน ±{band}% จึงยังสรุปไม่ได้ว่า{side}ตลาดจริง"
+
+
+def gap_beyond_band_reason(pct_vs_fair: float, fair_error_pct: float) -> str:
+    """Reason for a buy / wait call whose gap cleared the error band.
+
+    Args:
+        pct_vs_fair: Non-NaN price / fair - 1 (negative = cheaper).
+        fair_error_pct: Non-NaN half-width of the 80% interval as a fraction.
+
+    Returns:
+        A Thai sentence naming the gap and the band in the whole percents the
+        web prints (``shown_pct``), e.g. "ถูกกว่าราคายุติธรรม 52% ซึ่งเกินช่วง
+        คลาดเคลื่อน ±30% จึงถูกกว่าตลาดชัดเจน".
+    """
+    side = "ถูกกว่า" if pct_vs_fair < 0 else "แพงกว่า"
+    gap, band = shown_pct(abs(pct_vs_fair)), shown_pct(fair_error_pct)
+    return f"{side}ราคายุติธรรม {gap}% ซึ่งเกินช่วงคลาดเคลื่อน ±{band}% จึง{side}ตลาดชัดเจน"
 
 
 def rule_recommendation(row: pd.Series) -> tuple[str | None, str]:
@@ -384,24 +407,39 @@ def rule_recommendation(row: pd.Series) -> tuple[str | None, str]:
     page would call a 37% gap "clear" beside a ±45% band. Inside the band, or
     with no band, the listing gets "fair price" with the gap and band spelled
     out. A listing without a Deal Score gets no recommendation rather than a
-    "fair price" verdict it has no evidence for. O(1) per row.
+    "fair price" verdict it has no evidence for. Every reason is a plain
+    shopper sentence with no rule-name prefix. O(1) per row.
+
+    Args:
+        row: One listing with ``deal_score`` (float, NaN when unscored),
+            ``pct_vs_fair`` (float, NaN when unpriced), ``fair_error_pct``
+            (``float | None``; NaN or None when the band is unknown),
+            ``in_stock`` (bool) and ``stock_quantity`` (float, NaN when the
+            store does not publish it).
+
+    Returns:
+        ``(recommendation, reason)``: the recommendation is ``m.BUY_NOW``,
+        ``m.WAIT``, ``m.FAIR`` or None (no Deal Score), and the reason is the
+        Thai sentence shown under it.
     """
     score = row.get("deal_score")
     pct = row.get("pct_vs_fair", np.nan)
-    band = row.get("fair_error_pct", np.nan)
+    raw_band = row.get("fair_error_pct")
+    band: float | None = None if raw_band is None or pd.isna(raw_band) else float(raw_band)
     if row.get("in_stock") is False:
         return m.WAIT, "สินค้าหมดที่ร้านนี้ รอของเข้าหรือดูร้านอื่น"
     if pd.isna(score) or pd.isna(pct):
         return None, NO_FAIR_PRICE
     if score >= 80:
-        if pct < 0 and gap_clears_band(pct, band):
+        if pct < 0 and band is not None and gap_clears_band(pct, band):
             quantity = row.get("stock_quantity")
             low = pd.notna(quantity) and quantity <= 3
-            return m.BUY_NOW, "ถูกกว่าราคายุติธรรมของสเปกนี้ชัดเจน" + (" และสต็อกเหลือน้อย" if low else "")
+            reason = gap_beyond_band_reason(pct, band)
+            return m.BUY_NOW, reason + (" และสต็อกเหลือน้อย" if low else "")
         return m.FAIR, gap_within_band_reason(pct, band)
     if score <= 20:
-        if pct > 0 and gap_clears_band(pct, band):
-            return m.WAIT, "แพงกว่าราคายุติธรรมของสเปกนี้ชัดเจน"
+        if pct > 0 and band is not None and gap_clears_band(pct, band):
+            return m.WAIT, gap_beyond_band_reason(pct, band)
         return m.FAIR, gap_within_band_reason(pct, band)
     return m.FAIR, "ราคาใกล้เคียงราคายุติธรรมของสเปกนี้"
 
@@ -603,9 +641,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     else:
         recs = merged.apply(rule_recommendation, axis=1)
         insights["recommendation"] = [r[0] for r in recs]
-        insights["recommendation_reason"] = [
-            "กฎจาก Deal Score: " + reason if rec is not None else reason for rec, reason in recs
-        ]
+        insights["recommendation_reason"] = [reason for _, reason in recs]
     # Whatever produced the recommendation, a fair price this far off the
     # market cannot back a buy / wait call.
     flagged = insights["fair_uncertain"].astype(bool)

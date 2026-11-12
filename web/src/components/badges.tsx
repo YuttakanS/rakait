@@ -1,5 +1,6 @@
+import type { ReactNode } from "react";
 import { Glyph } from "@/components/icons";
-import { CLUSTER_LABELS, RECOMMENDATION_LABELS } from "@/lib/format";
+import { CLUSTER_LABELS, RECOMMENDATION_LABELS, wholePct } from "@/lib/format";
 import type { DemandCluster, Recommendation } from "@/lib/types";
 import type { Verdict } from "@/lib/verdict";
 
@@ -83,12 +84,26 @@ export function DealTag({ score }: { score: number | null }) {
   );
 }
 
-/** "ถูกกว่าราคายุติธรรม 12%" as a tag; nothing when not meaningfully below fair. */
-export function BelowFairTag({ pct }: { pct: number | null }) {
-  if (pct === null || pct > -0.005) return null;
+/**
+ * The headline offer's gap from its fair price as a card tag (under the
+ * fair-price line): "▼ ถูกกว่าราคายุติธรรม x%" on green, or
+ * "▲ แพงกว่าราคายุติธรรม x%" on the neutral tone (never green, so a pricey
+ * card cannot read as a deal). Arrow plus words, never colour alone; nothing
+ * under 0.5% either way.
+ */
+export function FairGapTag({ pct }: { pct: number | null }) {
+  if (pct === null || Math.abs(pct) < 0.005) return null;
+  const below = pct < 0;
   return (
-    <span className="tabular inline-flex items-center gap-1 rounded-[6px] bg-good-bg px-2 py-1 text-xs font-semibold text-good">
-      ▼ ถูกกว่าราคายุติธรรม {Math.round(-pct * 100)}%
+    <span
+      // A block, not flex: flex would split the words and the number into
+      // separate columns when the tag wraps on a narrow card.
+      className={`tabular inline-block rounded-[6px] px-2 py-1 text-xs leading-snug font-semibold ${
+        below ? "bg-good-bg text-good" : "bg-neutral-bg text-foreground"
+      }`}
+    >
+      {below ? "▼ ถูกกว่า" : "▲ แพงกว่า"}ราคายุติธรรม{" "}
+      <span className="whitespace-nowrap">{wholePct(Math.abs(pct))}%</span>
     </span>
   );
 }
@@ -129,12 +144,15 @@ export function VerdictBadges({
   className = "",
   align = "start",
   showNote = true,
+  reason = null,
 }: {
   verdict: Verdict;
   className?: string;
   align?: "start" | "end";
   /** False when the caller prints `verdict.note` itself (a narrow column). */
   showNote?: boolean;
+  /** Short reason printed right under the recommendation (the card's). */
+  reason?: ReactNode;
 }) {
   if (!verdict.inStock) {
     return (
@@ -151,6 +169,7 @@ export function VerdictBadges({
         <RecommendationBadge value={verdict.recommendation} />
         {verdict.cluster && <ClusterBadge value={verdict.cluster} />}
       </div>
+      {verdict.recommendation && reason && <p className="line-clamp-2 text-xs leading-snug text-muted">{reason}</p>}
       {showNote && verdict.note && <p className="text-xs leading-snug text-muted">{verdict.note}</p>}
     </div>
   );

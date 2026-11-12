@@ -350,6 +350,67 @@ async def test_train_persists_insights(conn, tmp_path) -> None:
     assert (tmp_path / "gpu_simple_regression.png").exists()
 
 
+async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path) -> None:
+    import numpy as np
+
+    from pricewatch.db.linking import link_listings
+    from pricewatch.ml.train import MODEL_VERSION, UNCERTAIN_REASON, train
+
+    await apply_migrations(conn)
+    rng = np.random.default_rng(1)
+    # The same nine-product catalogue as test_train_persists_insights, except
+    # every store sells the 5060 Ti 12GB at ~35% of its spec-implied price: a
+    # gap no fit can vouch for, so train flags it fair_uncertain.
+    products = [
+        (chip, vram, round(base * (1.15 if vram == 16 else 1.0)))
+        for chip, base in (("5060", 11000), ("5060 Ti", 14000), ("5070", 20000))
+        for vram in (8, 12, 16)
+    ]
+    odd = ("5060 Ti", 12)
+    listings = []
+    for i in range(60):
+        chip, vram, base = products[i % len(products)]
+        factor = 0.35 if (chip, vram) == odd else 1.0
+        listings.append(
+            ScrapedListing(
+                merchant=["jib", "ihavecpu", "banana"][i % 3],
+                merchant_sku=str(i),
+                category=Category.GPU,
+                title=f"VGA MSI GEFORCE RTX {chip} - {vram}GB GDDR7",
+                url=f"https://example.test/{i}",
+                price=Decimal(str(round(base * factor * rng.uniform(0.9, 1.1)))),
+                view_count=int(rng.integers(100, 100_000)),
+                sold_count=int(rng.integers(0, 500)),
+                in_stock=True,
+                scraped_at=datetime.now(timezone.utc),
+            )
+        )
+    await save_listings(conn, listings)
+    await link_listings(conn)
+
+    await train(conn, figures=None)
+
+    rows = await conn.fetch(
+        "SELECT l.title, i.fair_uncertain, i.fair_price, i.deal_score, i.recommendation, "
+        "i.recommendation_reason, i.model_version "
+        "FROM listing_insights i JOIN merchant_listings l ON l.id = i.listing_id"
+    )
+    odd_title = "VGA MSI GEFORCE RTX 5060 Ti - 12GB GDDR7"
+    odd_rows = [r for r in rows if r["title"] == odd_title]
+    assert odd_rows and all(r["fair_uncertain"] for r in odd_rows)
+    flagged = [r for r in rows if r["fair_uncertain"]]
+    for r in flagged:
+        assert r["fair_price"] is not None  # kept for the product page
+        assert r["deal_score"] is None
+        assert r["recommendation"] is None
+        assert r["recommendation_reason"] == UNCERTAIN_REASON
+    assert {r["model_version"] for r in rows} == {MODEL_VERSION}
+    # Every other scored listing keeps a recommendation with a plain reason.
+    rest = [r for r in rows if not r["fair_uncertain"] and r["deal_score"] is not None]
+    assert rest and all(r["recommendation"] is not None for r in rest)
+    assert not any("กฎจาก" in r["recommendation_reason"] for r in rows)
+
+
 async def test_image_url_survives_observations_without_one(conn) -> None:
     await apply_migrations(conn)
 

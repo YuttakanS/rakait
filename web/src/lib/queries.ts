@@ -64,6 +64,8 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
                AS max_price,
            (array_agg(i.deal_score ORDER BY l.in_stock DESC, l.current_price))[1]::int AS best_deal,
            (array_agg(i.recommendation ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_rec,
+           (array_agg(i.recommendation_reason ORDER BY l.in_stock DESC, l.current_price))[1]
+               AS cheapest_reason,
            (array_agg(i.demand_cluster ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_cluster,
            (array_agg(i.pct_vs_fair ORDER BY l.in_stock DESC, l.current_price))[1] AS best_pct,
            (array_agg(i.fair_price ORDER BY l.in_stock DESC, l.current_price))[1]::float8 AS fair_price,
@@ -96,6 +98,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductSummar
     maxPrice: r.max_price as number,
     bestDeal: (r.best_deal as number | null) ?? null,
     cheapestRecommendation: (r.cheapest_rec as Recommendation | null) ?? null,
+    cheapestReason: (r.cheapest_reason as string | null) ?? null,
     cheapestCluster: (r.cheapest_cluster as DemandCluster | null) ?? null,
     bestPctVsFair: (r.best_pct as number | null) ?? null,
     fairPrice: (r.fair_price as number | null) ?? null,

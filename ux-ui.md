@@ -64,6 +64,12 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | `community_favorite` | ขวัญใจชุมชน | star | คนดูเยอะและซื้อจริง |
 | `overpriced_hype` | กระแสแรง ขายไม่ออก | flame | คนดูเยอะ แต่ยอดขายต่ำ |
 | `niche` | เฉพาะกลุ่ม | target | ยอดเข้าชมและยอดขายต่ำ |
+| Gap vs fair (card tag) | ▼ ถูกกว่าราคายุติธรรม x% · ▲ แพงกว่าราคายุติธรรม x% (`FairGapTag`) | | |
+| Fair price untrusted (card) | ประเมินไม่แน่นอน + "ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล" | | |
+| No fair price (card) | ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ) | | |
+| Card reason (`cardReason`) | ส่วนต่างเกินช่วง ±y% · ส่วนต่างยังอยู่ในช่วง ±y% · ใกล้เคียงราคายุติธรรม · ยังไม่ทราบช่วงคลาดเคลื่อน · ยังไม่ถึงเกณฑ์ซื้อเลย (DEAL 80) · ยังไม่ถึงเกณฑ์รอก่อน (DEAL 20) | | |
+| Buy / wait reason (pipeline) | ถูกกว่าราคายุติธรรม x% ซึ่งเกินช่วงคลาดเคลื่อน ±y% จึงถูกกว่าตลาดชัดเจน [และสต็อกเหลือน้อย] · แพงกว่าราคายุติธรรม x% ซึ่งเกินช่วงคลาดเคลื่อน ±y% จึงแพงกว่าตลาดชัดเจน (no prefix) | | |
+| Inside-band reason (pipeline) | ถูกกว่า/แพงกว่าราคายุติธรรม x% แต่ยังอยู่ในช่วงคลาดเคลื่อน ±y% จึงยังสรุปไม่ได้ว่าถูกกว่า/แพงกว่าตลาดจริง | | |
 | In stock / sold out | ● มีของ / ○ หมด (`SoldOutTag`); a model sold out everywhere: ○ หมดทุกร้าน | | |
 | Categories | การ์ดจอ · ซีพียู · แรม · SSD | | |
 | Nav | หมวดหมู่สินค้า (menu) · หน้าแรก · การ์ดจอ · ซีพียู · แรม · SSD · ภาพรวมตลาด | | |
@@ -196,8 +202,8 @@ Text tokens on their `-bg` meet WCAG AA in both themes.
 | **AutoSubmitSelect** | `auto-submit-select.tsx` (client) | Native `<select>` that submits its form on change; still works without JS via the button. Custom chevron, `sr-only` label. |
 | **Cluster toggle** | `app/page.tsx` | Pill `<Link>` with icon + label, `aria-pressed`; active = navy fill. Clicking the active one clears it; "ล้างตัวกรอง" appears when set. |
 | **ProductImage** | `product-image.tsx` (client) | Merchant image hot-linked at the variant `lib/images.ts` picks for its displayed size; `width`/`height` reserve the box; `priority` (first 4 cards, product hero) = eager + `fetchpriority="high"`, everything else lazy; `referrerPolicy="no-referrer"`; on load error, or no image, the category glyph on `--surface-muted`. Never proxied or stored. |
-| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ฿x ± y%" (80% prediction interval, `formatBand`) whenever an in-stock fair price exists and is not `fairUncertain`, else "สูงสุด ฿max" → BelowFairTag (uncertain: the amber "ประเมินไม่แน่นอน" tag plus the visible line "ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล", and no fair-price figure on the card), then `VerdictBadges` (recommendation + the headline offer's cluster, conflict note under them) → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" with N = stores in stock (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out, where the price drops to a small "ราคาล่าสุด ฿x" and no badges show). The fair price is never struck through or presented as a former price, and never shown without its ± band. |
-| **DealTag / BelowFairTag** | `badges.tsx` | Card tags, 6 px radius. DEAL ≥ 70 solid green, ≤ 30 solid red, else white with border; "▼ ถูกกว่าราคายุติธรรม x%" on `good-bg`. |
+| **ProductCard** | `product-card.tsx` | Whole card is one link (`.card-interactive`, title turns blue on hover). Image (4:3, white) with **DealTag top-left** and "สินค้าหมด" top-right when sold out → meta → name (2 lines reserved) → **price `text-[26px] font-extrabold`** → "ราคายุติธรรม ฿x ± y%" (80% prediction interval, `formatBand`) whenever an in-stock fair price exists and is not `fairUncertain`, else "สูงสุด ฿max" → FairGapTag (uncertain: the amber "ประเมินไม่แน่นอน" tag plus the visible line "ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล", and no fair-price figure on the card; in stock with no fair price: the visible line "ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ)"), then `VerdictBadges` (recommendation + the headline offer's cluster, then the card reason from `cardReason`, at most 2 lines, then the conflict note) → **CTA bar** `bg-accent` "ดูราคา N ร้าน →" with N = stores in stock (`aria-hidden`, the card is the link; grey "ดูราคาล่าสุด" when sold out, where the price drops to a small "ราคาล่าสุด ฿x" and no badges show). The fair price is never struck through or presented as a former price, and never shown without its ± band. |
+| **DealTag / FairGapTag** | `badges.tsx` | Card tags, 6 px radius. DEAL ≥ 70 solid green, ≤ 30 solid red, else white with border. FairGapTag: "▼ ถูกกว่าราคายุติธรรม x%" on `good-bg`, or "▲ แพงกว่าราคายุติธรรม x%" on `neutral-bg` (never green); nothing under 0.5%. A block, not flex, with the "x%" `whitespace-nowrap`, so a wrap never splits the number. |
 | **DealScore** | `badges.tsx` | Pill `Deal {n}`; ≥ 70 good, ≤ 30 bad, else neutral; `prominent` variant for card corners. |
 | **RecommendationBadge** | `badges.tsx` | Icon + word; buy_now good, wait warn, fair neutral. The reason text is a `title` tooltip in rows and a sentence in the product hero. |
 | **ClusterBadge** | `badges.tsx` | Outlined pill with icon; hint in `title`. |
@@ -320,7 +326,7 @@ export default async function Page() {
   Its card hides the fair-price figure (the product page keeps it with the
   explanation). Every other fair price carries "± y%", the half-width of its
   80% interval.
-- ซื้อเลย / รอก่อน never claim more than the band shows (model 2026.11-v5):
+- ซื้อเลย / รอก่อน never claim more than the band shows (model 2026.11-v5, reasons reworded in 2026.11-v6):
   ซื้อเลย needs Deal ≥ 80 **and** a gap below fair larger than the "± y%"
   band; รอก่อน (pricey) needs Deal ≤ 20 **and** a gap above fair larger than
   the band. Inside the band, or with no band, the offer gets ราคาเหมาะสม and a
@@ -329,7 +335,26 @@ export default async function Page() {
   (whole percentages, as `formatBand` prints them). The comparison itself
   uses those printed whole percents (`Math.round`, halves up), so "ถูกกว่า 20%"
   beside "± 20%" is never "ชัดเจน". "…ชัดเจน" appears only in reasons that cleared
-  the band. Sold out still gives รอก่อน.
+  the band, and those reasons quote both numbers too:
+  "ถูกกว่าราคายุติธรรม 52% ซึ่งเกินช่วงคลาดเคลื่อน ±30% จึงถูกกว่าตลาดชัดเจน"
+  (+ " และสต็อกเหลือน้อย" at 3 or fewer in stock), and
+  "แพงกว่าราคายุติธรรม 46% ซึ่งเกินช่วงคลาดเคลื่อน ±13% จึงแพงกว่าตลาดชัดเจน".
+  With no band: "ถูกกว่าราคายุติธรรม 30% แต่ยังไม่ทราบช่วงคลาดเคลื่อนของราคานี้
+  จึงยังสรุปไม่ได้ว่าถูกกว่าตลาดจริง". Deal 21–79: "ราคาใกล้เคียงราคายุติธรรมของสเปกนี้".
+  Sold out still gives รอก่อน ("สินค้าหมดที่ร้านนี้ รอของเข้าหรือดูร้านอื่น").
+  Rule reasons carry no prefix (the old "กฎจาก Deal Score: " is gone);
+  decision-tree reasons keep "Decision Tree: ". Python's `shown_pct` equals
+  JS `Math.round(fraction * 100)` (`wholePct`) on every value.
+- Card reason (`cardReason` in `lib/card-reason.ts`, from the headline offer's
+  `bestPctVsFair`, `fairErrorPct`, `bestDeal` and `cheapestReason`, all in the
+  one `listProducts` query), at most 2 lines under the recommendation, "±y%"
+  and "(DEAL 80)" never split. None for timing-tree calls ("Decision Tree: …")
+  or when the numbers disagree with the badge:
+  ซื้อเลย / รอก่อน → "ส่วนต่างเกินช่วง ±y%"; ราคาเหมาะสม → "ส่วนต่างยังอยู่ในช่วง ±y%"
+  (why a high DEAL is not ซื้อเลย), "ใกล้เคียงราคายุติธรรม" (under 0.5%),
+  "ยังไม่ทราบช่วงคลาดเคลื่อน" (no band), or, when the gap clears the band but
+  Deal did not reach its threshold, "ยังไม่ถึงเกณฑ์ซื้อเลย (DEAL 80)" /
+  "ยังไม่ถึงเกณฑ์รอก่อน (DEAL 20)". Nothing for sold-out, uncertain or unpriced cards.
 - No fair price is estimated when a listing's title lacks a core spec (VRAM and
   chip; cores and threads; capacity and speed; capacity and interface). Such a
   listing shows `–` for Deal Score, no recommendation, and the reason

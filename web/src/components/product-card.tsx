@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { BelowFairTag, DealTag, UncertainTag, VerdictBadges } from "@/components/badges";
+import type { ReactNode } from "react";
+import { DealTag, FairGapTag, UncertainTag, VerdictBadges } from "@/components/badges";
 import { UiIcon } from "@/components/icons";
 import { ProductImage } from "@/components/product-image";
+import { cardReason } from "@/lib/card-reason";
 import { CATEGORY_LABELS, formatBand, formatTHB } from "@/lib/format";
 import type { ProductSummary } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
@@ -14,6 +16,19 @@ import { resolveVerdict } from "@/lib/verdict";
  */
 export function shownFair(p: ProductSummary): number | null {
   return p.inStockOffers > 0 && !p.fairUncertain ? p.fairPrice : null;
+}
+
+/** The card reason with its number kept on one line (`cardReason`). */
+function reasonLine(p: ProductSummary): ReactNode {
+  const reason = cardReason(p);
+  if (reason === null) return null;
+  return reason.tail === null ? (
+    reason.text
+  ) : (
+    <>
+      {reason.text} <span className="whitespace-nowrap">{reason.tail}</span>
+    </>
+  );
 }
 
 /**
@@ -88,10 +103,13 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
                 {/* Visible, not a tooltip: phones cannot hover. */}
                 <p className="text-xs leading-snug text-muted">ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล</p>
               </>
+            ) : p.fairPrice === null ? (
+              // Visible in place of the gap tag, so the card never just goes blank.
+              <p className="text-xs leading-snug text-muted">ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ)</p>
             ) : (
-              <BelowFairTag pct={p.bestPctVsFair} />
+              <FairGapTag pct={p.bestPctVsFair} />
             )}
-            <VerdictBadges verdict={verdict} />
+            <VerdictBadges verdict={verdict} reason={reasonLine(p)} />
           </div>
         )}
 

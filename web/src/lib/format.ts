@@ -12,9 +12,18 @@ export function formatPct(value: number | null | undefined, digits = 0): string 
   return `${value > 0 ? "+" : ""}${pct}%`;
 }
 
+/**
+ * A fraction as the whole percent every page prints (0.365 -> 37). The
+ * pipeline's `shown_pct` reproduces this exactly, so reasons written there
+ * quote the same numbers as the tags here.
+ */
+export function wholePct(fraction: number): number {
+  return Math.round(fraction * 100);
+}
+
 /** "± 25%" for a fair price's error band; empty when unknown. */
 export function formatBand(errorPct: number | null | undefined): string {
-  return errorPct === null || errorPct === undefined ? "" : `± ${Math.round(errorPct * 100)}%`;
+  return errorPct === null || errorPct === undefined ? "" : `± ${wholePct(errorPct)}%`;
 }
 
 export function formatDateTime(iso: string | null): string {
