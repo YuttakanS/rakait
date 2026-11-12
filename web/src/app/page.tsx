@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { AutoSubmitSelect } from "@/components/auto-submit-select";
+import { DealTag } from "@/components/badges";
 import { ProductCard, shownFair } from "@/components/product-card";
 import { ProductImage } from "@/components/product-image";
 import { CATEGORY_LABELS, CLUSTER_LABELS, MERCHANTS, formatBand, formatTHB, merchantList, wholePct } from "@/lib/format";
-import { listProducts } from "@/lib/queries";
+import { SEEN_WINDOW_DAYS, listProducts } from "@/lib/queries";
 import type { Category, DemandCluster, ProductSummary, SortKey } from "@/lib/types";
 
 export const revalidate = 900;
@@ -79,7 +80,9 @@ const PROMOS = [
 /**
  * Deal of the week: the one inverted, 5 px block on the page (RawBlock
  * "elevated" = heavier border, never a shadow). The product photo stays on
- * a white tile in both themes.
+ * a white tile in both themes. The caption states the selection rule
+ * (`heroDeal`) as it is, next to the DEAL number it ranked on and the
+ * model's observed high (`maxSeenPrice`) that vets the fair price.
  */
 function Hero({ p }: { p: ProductSummary }) {
   const fair = shownFair(p);
@@ -90,21 +93,36 @@ function Hero({ p }: { p: ProductSummary }) {
       className="inverted card card-heavy group grid border-background md:grid-cols-[1.4fr_1fr]"
     >
       <div className="flex flex-col justify-center gap-3 p-5 sm:p-8 lg:px-12 lg:py-10">
-        <span className="caps tabular w-fit bg-foreground px-2 py-0.5 text-xs font-bold text-background">
-          Deal of the week
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="caps tabular w-fit bg-foreground px-2 py-0.5 text-xs font-bold text-background">
+            Deal of the week
+          </span>
+          <DealTag score={p.bestDeal} />
+        </div>
         <h2 className="display text-3xl break-words sm:text-4xl lg:text-5xl">{p.model}</h2>
-        <p className="text-sm text-muted">
-          {CATEGORY_LABELS[p.category]} · {p.manufacturer} · Deal Score สูงสุดตอนนี้ในรุ่นที่มีขายหลายร้าน
-        </p>
+        <div className="space-y-0.5 text-sm text-muted">
+          <p>
+            {CATEGORY_LABELS[p.category]} · {p.manufacturer}
+          </p>
+          <p>
+            Deal Score สูงสุดในรุ่นที่มีขายหลายร้าน และราคายุติธรรมไม่สูงกว่าราคาสูงสุดที่ร้านเคยตั้งเกิน{" "}
+            {wholePct(HERO_MAX_FAIR_OVER_SEEN)}%
+          </p>
+        </div>
         <div className="tabular flex flex-wrap items-end gap-x-4 gap-y-1">
           <span className="text-4xl font-bold sm:text-5xl">{formatTHB(p.minPrice)}</span>
           {fair !== null && p.bestPctVsFair !== null && (
             <span className="pb-1 text-sm text-muted">
-              ราคายุติธรรม {formatTHB(fair)} {formatBand(p.fairErrorPct)} · ถูกกว่า {wholePct(-p.bestPctVsFair)}%
+              ราคายุติธรรม {formatTHB(fair)} {formatBand(p.fairErrorPct)} ·{" "}
+              <span className="whitespace-nowrap">ถูกกว่า {wholePct(-p.bestPctVsFair)}%</span>
             </span>
           )}
         </div>
+        {p.maxSeenPrice !== null && (
+          <p className="tabular text-sm text-muted">
+            สูงสุดที่เคยเห็นใน {SEEN_WINDOW_DAYS} วัน {formatTHB(p.maxSeenPrice)}
+          </p>
+        )}
         <span className="btn btn-primary mt-2 w-fit text-sm">ดูราคา {p.inStockStores} ร้าน <span aria-hidden>→</span></span>
       </div>
       <div className="flex items-center justify-center p-5 pt-0 md:py-8 md:pr-10 md:pl-0">

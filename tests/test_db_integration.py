@@ -354,7 +354,7 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
     import numpy as np
 
     from pricewatch.db.linking import link_listings
-    from pricewatch.ml.train import MODEL_VERSION, UNCERTAIN_REASON, train
+    from pricewatch.ml.train import MODEL_VERSION, train, uncertain_reason
 
     await apply_migrations(conn)
     rng = np.random.default_rng(1)
@@ -391,7 +391,8 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
     await train(conn, figures=None)
 
     rows = await conn.fetch(
-        "SELECT l.title, i.fair_uncertain, i.fair_price, i.deal_score, i.recommendation, "
+        "SELECT l.title, i.fair_uncertain, i.fair_price, i.pct_vs_fair, i.deal_score, "
+        "i.recommendation, "
         "i.recommendation_reason, i.model_version "
         "FROM listing_insights i JOIN merchant_listings l ON l.id = i.listing_id"
     )
@@ -403,7 +404,7 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
         assert r["fair_price"] is not None  # kept for the product page
         assert r["deal_score"] is None
         assert r["recommendation"] is None
-        assert r["recommendation_reason"] == UNCERTAIN_REASON
+        assert r["recommendation_reason"] == uncertain_reason(float(r["pct_vs_fair"]))
     assert {r["model_version"] for r in rows} == {MODEL_VERSION}
     # Every other scored listing keeps a recommendation with a plain reason.
     rest = [r for r in rows if not r["fair_uncertain"] and r["deal_score"] is not None]

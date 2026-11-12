@@ -26,20 +26,47 @@ export function formatBand(errorPct: number | null | undefined): string {
   return errorPct === null || errorPct === undefined ? "" : `± ${wholePct(errorPct)}%`;
 }
 
-/**
- * Why an uncertain fair price (over 40% from the listing's price) is not
- * ranked: states the measured gap only, never a guessed cause. The card, the
- * chip tooltip and the product page all print this sentence.
- */
-export const UNCERTAIN_NOTE =
-  "ราคายุติธรรมของรุ่นนี้ต่างจากราคาจริงเกิน 40% โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล";
+/** Second half of every "ประเมินไม่แน่นอน" sentence: what follows from the gap. */
+export const UNCERTAIN_FIT = "โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล";
 
 /**
- * The pipeline's reason for such a listing (`train.UNCERTAIN_REASON`, model
- * 2026.11-v11), shown in place of the stored one so a 2026.11-v10 run, whose
- * stored reason guessed a cause, reads the same.
+ * Fallback note for an uncertain fair price when the gap is unknown. It
+ * quotes no threshold: "เกิน 40%" next to a gap the shopper computes the other
+ * way (fair / price) read as a mistake (SPEC round 14).
  */
-export const UNCERTAIN_REASON = `ประเมินไม่แน่นอน: ${UNCERTAIN_NOTE}`;
+export const UNCERTAIN_NOTE = `ราคาจริงต่างจากราคายุติธรรมมาก ${UNCERTAIN_FIT}`;
+
+/**
+ * The listing's own gap in words, "ราคาจริงแพงกว่าราคายุติธรรม 42%" or
+ * "ราคาจริงถูกกว่าราคายุติธรรม 60%" (`wholePct` of `pct_vs_fair`, the number
+ * the shopper can check against the two prices); null without a gap. O(1).
+ *
+ * @param pct price / fair - 1 of the listing.
+ */
+export function uncertainGap(pct: number | null | undefined): string | null {
+  if (pct === null || pct === undefined || !Number.isFinite(pct) || wholePct(Math.abs(pct)) === 0) return null;
+  return `ราคาจริง${pct > 0 ? "แพงกว่า" : "ถูกกว่า"}ราคายุติธรรม ${wholePct(Math.abs(pct))}%`;
+}
+
+/**
+ * Why an uncertain fair price is not ranked: the listing's measured gap,
+ * then `UNCERTAIN_FIT`, never a guessed cause. The card line, the chip
+ * tooltip and the product page all print this. O(1).
+ */
+export function uncertainNote(pct: number | null | undefined): string {
+  const gap = uncertainGap(pct);
+  return gap === null ? UNCERTAIN_NOTE : `${gap} ${UNCERTAIN_FIT}`;
+}
+
+/**
+ * The pipeline's reason for such a listing (`train.uncertain_reason`, model
+ * 2026.11-v12, same words and `shown_pct` rounding). The web rebuilds it
+ * from the stored gap, so rows stored by older models (fixed "เกิน 40%"
+ * wording) read the same.
+ */
+export function uncertainReason(pct: number | null | undefined): string {
+  return `ประเมินไม่แน่นอน: ${uncertainNote(pct)}`;
+}
 
 export function formatDateTime(iso: string | null): string {
   if (!iso) return "–";

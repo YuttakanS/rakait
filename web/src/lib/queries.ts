@@ -33,8 +33,13 @@ const ACTIVE = sql`l.last_scraped_at > now() - interval '2 days' AND l.current_p
  */
 const MODEL_CLUSTER = sql`mode() WITHIN GROUP (ORDER BY i.demand_cluster)`;
 
-/** price_history window behind `max_seen_price`: the pipeline's DEMAND_WINDOW_DAYS (120). */
-const SEEN_WINDOW = sql`interval '120 days'`;
+/**
+ * Days of price_history behind `max_seen_price`: the pipeline's
+ * DEMAND_WINDOW_DAYS. Exported so the hero's "สูงสุดที่เคยเห็นใน N วัน"
+ * quotes the same window the query uses.
+ */
+export const SEEN_WINDOW_DAYS = 120;
+const SEEN_WINDOW = sql`make_interval(days => ${SEEN_WINDOW_DAYS})`;
 
 export interface ProductFilter {
   category?: Category;

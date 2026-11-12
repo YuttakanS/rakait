@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { ClusterBadge, DealTag, FairGapTag, UncertainTag, VerdictBadges } from "@/components/badges";
 import { ProductImage } from "@/components/product-image";
 import { cardReason } from "@/lib/card-reason";
-import { CATEGORY_LABELS, UNCERTAIN_NOTE, formatBand, formatTHB } from "@/lib/format";
+import { CATEGORY_LABELS, formatBand, formatTHB, uncertainNote } from "@/lib/format";
 import type { ProductSummary } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
 
@@ -102,9 +102,9 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
           <div className="space-y-1.5">
             {p.fairUncertain ? (
               <>
-                <UncertainTag />
+                <UncertainTag pct={p.bestPctVsFair} />
                 {/* Visible, not a tooltip: phones cannot hover. */}
-                <p className="text-xs leading-snug text-muted">{UNCERTAIN_NOTE}</p>
+                <p className="text-xs leading-snug text-muted">{uncertainNote(p.bestPctVsFair)}</p>
               </>
             ) : p.fairPrice === null ? (
               // Visible in place of the gap tag, so the card never just goes blank.

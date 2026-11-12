@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CLUSTER_LABELS, RECOMMENDATION_LABELS, UNCERTAIN_NOTE, wholePct } from "@/lib/format";
+import { CLUSTER_LABELS, RECOMMENDATION_LABELS, uncertainNote, wholePct } from "@/lib/format";
 import type { DemandCluster, Recommendation } from "@/lib/types";
 import type { Verdict } from "@/lib/verdict";
 
@@ -29,11 +29,25 @@ export function RecommendationBadge({ value }: { value: Recommendation | null })
   return <span className={`chip ${tone}`}>{RECOMMENDATION_LABELS[value]}</span>;
 }
 
+/**
+ * Demand-group chip. The label may wrap on a narrow card, but only at the
+ * space between its words ("ขายดี แต่คนดูน้อย"): each word is a nowrap span,
+ * since the browser's Thai dictionary would otherwise break inside one. The
+ * text sits in one inner span so the flex chip keeps the spaces. O(words).
+ */
 export function ClusterBadge({ value }: { value: DemandCluster }) {
   const { label, hint } = CLUSTER_LABELS[value];
+  const words = label.split(" ");
   return (
-    <span className="chip font-medium text-muted" title={hint}>
-      {label}
+    <span className="chip max-w-full font-medium whitespace-normal text-muted" title={hint}>
+      <span>
+        {words.map((word, i) => (
+          <span key={i}>
+            <span className="whitespace-nowrap">{word}</span>
+            {i < words.length - 1 && " "}
+          </span>
+        ))}
+      </span>
     </span>
   );
 }
@@ -101,11 +115,12 @@ export function FairGapTag({ pct }: { pct: number | null }) {
 
 /**
  * Fair price too far from the market to trust (|price / fair - 1| > 40%).
- * Words in an orange chip; the reason is printed next to it.
+ * Words in an orange chip; the reason, with this listing's own gap
+ * (`uncertainNote(pct)`), is the tooltip and is also printed next to it.
  */
-export function UncertainTag() {
+export function UncertainTag({ pct }: { pct: number | null }) {
   return (
-    <span className="chip text-warn" title={UNCERTAIN_NOTE}>
+    <span className="chip text-warn" title={uncertainNote(pct)}>
       ประเมินไม่แน่นอน
     </span>
   );

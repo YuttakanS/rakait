@@ -828,12 +828,19 @@ def test_mid_score_reason_names_a_gap_of_five_percent_or_more() -> None:
     assert "ชัดเจน" not in cheap + dear
 
 
-def test_uncertain_reason_does_not_guess_a_cause() -> None:
-    """SPEC round 13, criterion 2: neutral wording, no guessed cause."""
-    from pricewatch.ml.train import UNCERTAIN_REASON
+def test_uncertain_reason_quotes_the_listings_own_gap() -> None:
+    """SPEC rounds 13-14: the real direction and gap, no threshold, no guessed cause."""
+    from pricewatch.ml.train import uncertain_reason
 
-    assert "40%" in UNCERTAIN_REASON and "ไม่ใช้จัดอันดับดีล" in UNCERTAIN_REASON
-    assert "แยกรุ่นเก่า" not in UNCERTAIN_REASON and "แบรนด์" not in UNCERTAIN_REASON
+    dear = uncertain_reason(0.415)
+    cheap = uncertain_reason(-0.6)
+    assert dear == (
+        "ประเมินไม่แน่นอน: ราคาจริงแพงกว่าราคายุติธรรม 42% โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล"
+    )
+    assert cheap.startswith("ประเมินไม่แน่นอน: ราคาจริงถูกกว่าราคายุติธรรม 60% ")
+    for reason in (dear, cheap):
+        assert "เกิน 40%" not in reason
+        assert "แยกรุ่นเก่า" not in reason and "แบรนด์" not in reason
 
 
 def test_percents_round_half_up_like_the_web() -> None:
@@ -1078,7 +1085,7 @@ def test_gpu_mlr_leaves_out_vendor_incomparable_specs() -> None:
 
 
 def test_fair_price_far_from_market_is_flagged_and_never_ranked() -> None:
-    from pricewatch.ml.train import UNCERTAIN_GAP, UNCERTAIN_REASON
+    from pricewatch.ml.train import UNCERTAIN_GAP, uncertain_reason
 
     current = _gpu_catalogue(7)
     # Every store sells one product at ~35% of its spec-implied price: a gap
@@ -1094,7 +1101,10 @@ def test_fair_price_far_from_market_is_flagged_and_never_ranked() -> None:
     assert ins.loc[flagged, "fair_price"].notna().all()  # kept for reference
     assert ins.loc[flagged, "deal_score"].isna().all()  # so never ranked
     assert ins.loc[flagged, "recommendation"].isna().all()
-    assert (ins.loc[flagged, "recommendation_reason"] == UNCERTAIN_REASON).all()
+    expected = [uncertain_reason(p) for p in ins.loc[flagged, "pct_vs_fair"]]
+    assert ins.loc[flagged, "recommendation_reason"].tolist() == expected
+    # The product sold at ~35% of its value reads cheaper, with its own gap.
+    assert ins.loc[odd, "recommendation_reason"].str.contains("ราคาจริงถูกกว่าราคายุติธรรม").all()
     # Everything else keeps a score and an honest error band.
     rest = ins["fair_price"].notna() & ~flagged
     assert rest.any() and ins.loc[rest, "deal_score"].notna().all()

@@ -4,7 +4,7 @@ import { ClusterBadge, DealScore, NoteText, SoldOutTag, VerdictBadges } from "@/
 import { DealMeter } from "@/components/deal-meter";
 import { PriceChart } from "@/components/price-chart";
 import { ProductImage } from "@/components/product-image";
-import { CATEGORY_LABELS, UNCERTAIN_REASON, formatSpecValue, formatTHB } from "@/lib/format";
+import { CATEGORY_LABELS, formatSpecValue, formatTHB, uncertainReason } from "@/lib/format";
 import { salesRate } from "@/lib/market";
 import { getPriceHistory, getProduct } from "@/lib/queries";
 import type { DemandCluster, Offer } from "@/lib/types";
@@ -87,11 +87,12 @@ function verdictOf(o: Offer, cluster: DemandCluster | null = null) {
  * recommendation.
  */
 /**
- * The reason printed for an offer. An uncertain fair price always reads the
- * current `UNCERTAIN_REASON`, whichever model version stored the row.
+ * The reason printed for an offer. An uncertain fair price always reads
+ * `uncertainReason` built from the offer's own gap ("ราคาจริงแพงกว่าราคา
+ * ยุติธรรม 42% …"), whichever model version stored the row.
  */
 function reasonOf(o: Offer): string | null {
-  return o.fairUncertain ? UNCERTAIN_REASON : o.recommendationReason;
+  return o.fairUncertain ? uncertainReason(o.pctVsFair) : o.recommendationReason;
 }
 
 function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {

@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v11"
+MODEL_VERSION = "2026.11-v12"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -435,11 +435,8 @@ def current_timing_features(history: pd.DataFrame, current: pd.DataFrame) -> pd.
 #: market: the listing keeps its fair price for reference but gets no Deal
 #: Score (so it never ranks as a deal) and no recommendation.
 UNCERTAIN_GAP = 0.40
-#: The reason states only what was measured (the gap and that the fit is
-#: weak here), never a guessed cause such as old models or unseen brands.
-UNCERTAIN_REASON = (
-    "ประเมินไม่แน่นอน: ราคายุติธรรมของรุ่นนี้ต่างจากราคาจริงเกิน 40% โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล"
-)
+#: What follows from an uncertain gap; the tail of every uncertain reason.
+UNCERTAIN_FIT = "โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล"
 
 #: Reason shown when no fair price could be estimated for a listing.
 NO_FAIR_PRICE = "ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ"
@@ -464,6 +461,27 @@ def shown_pct(fraction: float) -> int:
     value = fraction * 100
     whole = math.floor(value)
     return whole + 1 if value - whole >= 0.5 else whole
+
+
+def uncertain_reason(pct_vs_fair: float) -> str:
+    """Reason stored for a listing whose fair price is flagged uncertain.
+
+    States only what was measured, the listing's own gap in the direction
+    and whole percent the web prints ("ราคาจริงแพงกว่าราคายุติธรรม 42%",
+    ``shown_pct``), then ``UNCERTAIN_FIT``; never a guessed cause, and no
+    "เกิน 40%" threshold a shopper cannot check against the two prices
+    (SPEC round 14). Mirrors ``uncertainReason`` in web/src/lib/format.ts.
+    O(1).
+
+    Args:
+        pct_vs_fair: price / fair - 1 of the listing; |value| > UNCERTAIN_GAP.
+
+    Returns:
+        The full reason, prefixed "ประเมินไม่แน่นอน: ".
+    """
+    direction = "แพงกว่า" if pct_vs_fair > 0 else "ถูกกว่า"
+    gap = shown_pct(abs(pct_vs_fair))
+    return f"ประเมินไม่แน่นอน: ราคาจริง{direction}ราคายุติธรรม {gap}% {UNCERTAIN_FIT}"
 
 
 def gap_clears_band(pct_vs_fair: float, fair_error_pct: float) -> bool:
@@ -828,7 +846,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     # market cannot back a buy / wait call.
     flagged = insights["fair_uncertain"].astype(bool)
     insights.loc[flagged, "recommendation"] = None
-    insights.loc[flagged, "recommendation_reason"] = UNCERTAIN_REASON
+    insights.loc[flagged, "recommendation_reason"] = [
+        uncertain_reason(float(p)) for p in insights.loc[flagged, "pct_vs_fair"]
+    ]
     return report
 
 

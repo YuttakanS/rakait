@@ -1,4 +1,4 @@
-import { formatBand, formatTHB } from "@/lib/format";
+import { formatBand, formatTHB, wholePct } from "@/lib/format";
 
 const RANGE = 0.4; // ±40% fills half the track; beyond that the bar is clamped.
 
@@ -30,7 +30,10 @@ export function DealMeter({
       <div className="w-full min-w-[140px] space-y-0.5 text-xs">
         <span className="font-semibold text-warn">ประเมินไม่แน่นอน</span>
         <p className="tabular text-muted">
-          ยุติธรรม {formatTHB(fair)} {formatBand(errorPct)} · ต่างจากราคาจริงเกิน 40%
+          ยุติธรรม {formatTHB(fair)} {formatBand(errorPct)} ·{" "}
+          <span className="whitespace-nowrap">
+            ราคาจริง{pct > 0 ? "แพงกว่า" : "ถูกกว่า"} {wholePct(Math.abs(pct))}%
+          </span>
         </p>
       </div>
     );
