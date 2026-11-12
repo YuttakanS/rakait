@@ -3,6 +3,18 @@
 /**
  * A native <select> inside a GET form that submits on change. Without
  * JavaScript it still works: the form's submit button applies it.
+ *
+ * It stays uncontrolled (the form reads the DOM value), so `defaultValue`
+ * only applies on mount. A client-side navigation (navbar link, cluster chip,
+ * back button) re-renders the page with a new `value` but keeps the same DOM
+ * node, which would leave the select on the old option and submit a stale
+ * value. `key={value}` remounts the element whenever the URL-derived value
+ * changes: O(options) DOM work per navigation, no extra state or effect.
+ *
+ * `autoComplete="off"` stops the browser restoring the option the user last
+ * picked when the back button reloads this document (the GET submit is a full
+ * page load); without it the restored option overrides the server-rendered
+ * one and the next change submits the wrong value.
  */
 export function AutoSubmitSelect({
   name,
@@ -19,6 +31,8 @@ export function AutoSubmitSelect({
     <label className="relative flex min-w-[130px] flex-1 items-center sm:flex-none">
       <span className="sr-only">{label}</span>
       <select
+        key={value}
+        autoComplete="off"
         name={name}
         defaultValue={value}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}

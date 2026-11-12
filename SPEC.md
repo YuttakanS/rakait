@@ -101,3 +101,21 @@
 13. แนบภาพ before/after ที่ 375px และ 1280px ของหน้าแรก หน้าสินค้า และ /insights ทั้ง light และ dark
 
 > หมายเหตุ (2026-11-12): ผู้ใช้ให้ `.claude/skills/design.md` เป็นสัญญาการออกแบบเพียงไฟล์เดียว เนื้อหาเดิมทั้งหมดของ `ux-ui.md` (glossary, กฎข้อมูล, tokens, checklist) ย้ายไปอยู่ในส่วน "RakaIT project adaptation" ของไฟล์นั้นแล้ว และลบ `ux-ui.md` ออก
+
+---
+
+## รอบ 5: บั๊ก navbar กับตัวกรอง (ผู้ใช้แจ้ง 2026-11-12)
+
+### อาการ
+1. กด "การ์ดจอ" ใน navbar แล้วเปลี่ยน "เรียง" ผลกลับไปเป็นทุกหมวดหมู่ สาเหตุคือ `AutoSubmitSelect` ใช้ `defaultValue` ซึ่ง React ไม่อัปเดตตอนเปลี่ยนหน้าฝั่ง client select หมวดจึงค้าง "ทุกหมวดหมู่" และฟอร์มส่ง `category=` ว่าง
+2. ไฮไลต์ navbar ค้างที่ "หน้าแรก" ตลอด สาเหตุคือ `site-nav.tsx` ตั้ง `active: false` ให้ลิงก์หมวดหมู่ และใช้ `pathname === "/"` กับหน้าแรกโดยไม่ดู query
+
+### เกณฑ์ผ่าน
+1. หลังเปลี่ยนหน้าฝั่ง client ทุกแบบ (กด navbar, ชิปกลุ่ม, ปุ่มย้อนกลับของเบราว์เซอร์) select "หมวดหมู่" และ "เรียง" ต้องแสดงค่าตาม URL ปัจจุบัน และการเปลี่ยน "เรียง" ต้องคง category, cluster และ q เดิมไว้
+2. ไฮไลต์ (`aria-current="page"` และสไตล์ active) ใน navbar:
+   - ลิงก์หมวด active เมื่อ `?category=` ตรงกับหมวดนั้น ไม่ว่าจะมี sort, cluster หรือ q อยู่ด้วยหรือไม่
+   - "หน้าแรก" active เฉพาะเมื่ออยู่ที่ `/` และไม่มี category
+   - "ภาพรวมตลาด" active ที่ `/insights`
+   - ใช้ได้ทั้งแถบบนเดสก์ท็อปและเมนูหมวดหมู่บนมือถือ (ถ้ามีสถานะ active)
+3. ไม่เกิด hydration warning ใน console และถ้าใช้ `useSearchParams` ต้องห่อด้วย `<Suspense>` ให้ build ผ่าน (หน้าแบบ static/ISR ยังเป็นแบบเดิม)
+4. `cd web && npx tsc --noEmit && npx eslint src && npm run build` ผ่าน

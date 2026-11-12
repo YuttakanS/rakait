@@ -417,7 +417,7 @@ variables sit on `<html>` so the stacks resolve at `:root`.
 | Component | File | Rules |
 |---|---|---|
 | **HeaderSearch** | `header-search.tsx` (client) | GET `<form action="/">`, prefilled from `?q=` and keeping `?category=`; 44 px; the button reads "ค้นหา" on every width; Suspense fallback is the same form empty, so prerendered pages keep it. |
-| **SiteNav** | `site-nav.tsx` (client) | Category menu + links; reads the pathname only (prerender-safe). |
+| **SiteNav** | `site-nav.tsx` (client) | Category menu + links; marks the current page from the pathname and `?category=` (category link on "/" with that category, "หน้าแรก" on "/" with none, "ภาพรวมตลาด" under /insights; also in the category menu). Only the link row and menu items read the query (`useSearchParams`, each in its own `<Suspense>` with a no-category fallback), so prerendered pages stay static and the menu button hydrates outside any boundary. |
 | **Hero banner** | `app/page.tsx` | Landing only (no filter/search/sort). `.inverted .card-heavy` block, one link to the product: "Deal of the week" eyebrow (`.caps`, mono), model in Archivo Black, price, fair price + % below, primary CTA "ดูราคา N ร้าน →" (inverts on hover), photo on a white tile. The product is the best Deal ≥ 60 that is in stock at ≥ 2 stores; no hero when none qualifies. |
 | **Promo tiles** | `app/page.tsx` | Three `.card.invert-hover` tiles under the hero: เทียบหลายร้าน, ราคายุติธรรม, ซื้อเลยหรือรอ, each linking to the real page; title in `.display`, body line hidden on phones, "→". |
 | **Listing toolbar** | `app/page.tsx` | Heading (search term / category / segment / "ดีลแนะนำวันนี้") + count left, category and sort AutoSubmitSelects right; cluster chips below; "ล้างทั้งหมด" link when anything is set. |
