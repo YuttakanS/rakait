@@ -34,8 +34,25 @@ type Segment = {
   label: DemandCluster;
   size: number;
   views: number;
+  /**
+   * Raw rate summed over stores. From 2026.11-v9 it adds up store metrics
+   * that are not comparable (SPEC round 9), so it is shown only for older
+   * payloads.
+   */
   sales_per_day: number;
   normalized_price: number;
+  /**
+   * Mean within-store sales percentile (0–1], average rank for ties: the
+   * clustered feature (2026.11-v9+). Not shown: tied zero sellers rank
+   * mid-table.
+   */
+  sales_rank_pct?: number;
+  /**
+   * Mean share [0–1) of the store's listings that sold strictly less
+   * (2026.11-v9+): the shopper-facing "ขายดีกว่า ~N%". Absent in older
+   * payloads, which show `sales_per_day`.
+   */
+  sales_beats_pct?: number;
 };
 /** A K-Means centroid as stored by models before 2026.11-v7 (one label each). */
 type Centroid = Segment & { cluster: number };
@@ -203,8 +220,11 @@ export default async function InsightsPage() {
   // from the training payload. A group with no model on sale gets no tile.
   const segments = demandSegments(kmeans).filter((c) => (modelCounts[c.label] ?? 0) > 0);
   const clustered = segments.reduce((s, c) => s + (modelCounts[c.label] ?? 0), 0);
-  // 2026.11-v8+ clusters product models (views and sales summed over stores).
+  // 2026.11-v8+ clusters product models (views summed over stores).
   const perModel = kmeans?.unit === "model";
+  // 2026.11-v9+ clusters on the within-store sales percentile, not the summed
+  // rate: stores measure sales differently (SPEC round 9). v8 has no key.
+  const rankedSales = kmeans?.sales_feature === "store_rank_pct";
   // Views at which best sellers are split into community_favorite / hidden_gem (2026.11-v7+).
   const splitViews = num(kmeans?.split_views);
   // Group names quoted inside the split sentence; nowrap so a name never breaks across lines.
@@ -382,13 +402,21 @@ export default async function InsightsPage() {
       <Section
         id="demand"
         title="ของที่คนซื้อจริง"
-        subtitle={`จัดกลุ่มรุ่นสินค้าจากยอดเข้าชมและยอดขายจริง${perModel ? "ของทุกร้านรวมกัน" : ""}ด้วย K-Means รุ่นหนึ่งอยู่กลุ่มเดียว · ใช้ข้อมูลเฉพาะร้านที่เปิดเผยตัวเลขเหล่านี้`}
+        subtitle={
+          rankedSales
+            ? "จัดกลุ่มรุ่นสินค้าจากยอดเข้าชมของทุกร้านรวมกัน และอันดับยอดขายภายในแต่ละร้าน ด้วย K-Means รุ่นหนึ่งอยู่กลุ่มเดียว · ใช้ข้อมูลเฉพาะร้านที่เปิดเผยตัวเลขเหล่านี้"
+            : `จัดกลุ่มรุ่นสินค้าจากยอดเข้าชมและยอดขายจริง${perModel ? "ของทุกร้านรวมกัน" : ""}ด้วย K-Means รุ่นหนึ่งอยู่กลุ่มเดียว · ใช้ข้อมูลเฉพาะร้านที่เปิดเผยตัวเลขเหล่านี้`
+        }
       >
         {segments.length > 0 ? (
           <div className={`grid gap-4 sm:grid-cols-2 ${segments.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-4"}`}>
             {segments.map((c) => {
               const models = modelCounts[c.label] ?? 0;
               const share = clustered ? models / clustered : 0;
+              // v9+: share of the same store's items the group's models outsell
+              // (strictly), as a whole percent; not sales_rank_pct, whose
+              // average rank puts tied zero sellers mid-table.
+              const beatsPct = num(c.sales_beats_pct);
               return (
                 <Link
                   key={c.label}
@@ -399,19 +427,29 @@ export default async function InsightsPage() {
                     <div className="display text-xl">{CLUSTER_LABELS[c.label].label}</div>
                     <div className="text-xs text-muted">{CLUSTER_LABELS[c.label].hint}</div>
                   </div>
-                  {/* Two stat tiles side by side while each fits "~1 ชิ้น / NNN วัน" on
-                      one line (9rem = 119 px of text + padding; values are nowrap),
-                      stacked on narrower cards (4-up desktop). Same width per row of
-                      cards, so tiles stack alike. */}
+                  {/* Two stat tiles side by side while each fits "~1 ชิ้น / NNN วัน" (or
+                      "ขายดีกว่า ~NN%") on one line (9rem = 119 px of text + padding;
+                      values are nowrap), stacked on narrower cards (4-up desktop). Same
+                      width per row of cards, so tiles stack alike. */}
                   <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-2 text-xs">
                     <div className="border-2 border-border p-2.5">
                       <dt className="text-muted">คนดูเฉลี่ย</dt>
                       <dd className="tabular text-sm font-semibold">{Math.round(c.views).toLocaleString("th-TH")} ครั้ง</dd>
                     </div>
-                    <div className="border-2 border-border p-2.5">
-                      <dt className="text-muted">ขายได้</dt>
-                      <dd className="tabular text-sm font-semibold whitespace-nowrap">{salesRate(c.sales_per_day)}</dd>
-                    </div>
+                    {Number.isFinite(beatsPct) ? (
+                      <div className="border-2 border-border p-2.5">
+                        <dt className="text-muted">อันดับยอดขาย</dt>
+                        <dd className="tabular text-sm font-semibold whitespace-nowrap">
+                          ขายดีกว่า ~{Math.round(beatsPct * 100)}%
+                        </dd>
+                        <dd className="text-muted">ของสินค้าในร้านเดียวกัน</dd>
+                      </div>
+                    ) : (
+                      <div className="border-2 border-border p-2.5">
+                        <dt className="text-muted">ขายได้</dt>
+                        <dd className="tabular text-sm font-semibold whitespace-nowrap">{salesRate(c.sales_per_day)}</dd>
+                      </div>
+                    )}
                   </dl>
                   <div className="mt-auto flex items-baseline justify-between gap-2 text-xs text-muted">
                     <span className="tabular">
@@ -428,9 +466,17 @@ export default async function InsightsPage() {
         )}
         {Number.isFinite(splitViews) && (
           <p className="max-w-3xl text-xs leading-relaxed text-muted">
-            {favoriteName} และ {hiddenGemName} คือสินค้าที่ขายดีกว่าค่าเฉลี่ยทั้งคู่ แล้วแยกกันด้วยยอดเข้าชม: คนดูมากกว่า{" "}
+            {favoriteName} และ {hiddenGemName} คือสินค้าที่ขายดีกว่าค่าเฉลี่ยชัดเจนทั้งคู่
+            {rankedSales && " (เทียบอันดับยอดขายภายในร้าน)"} แล้วแยกกันด้วยยอดเข้าชม: คนดูมากกว่า{" "}
             <span className="tabular whitespace-nowrap">{Math.round(splitViews).toLocaleString("th-TH")} ครั้ง</span>{" "}
             (มัธยฐานของกลุ่มขายดี) เป็น {favoriteName} ไม่เกินนั้นเป็น {hiddenGemName}
+          </p>
+        )}
+        {rankedSales && (
+          <p className="max-w-3xl text-xs leading-relaxed text-muted">
+            แต่ละร้านวัดยอดขายต่างกัน: JIB ใช้ยอดขายที่ร้านประกาศ ส่วน IHAVECPU ใช้สต็อกที่ลดลง
+            (อาจรวมการขายส่งหรือโอนสาขา) ตัวเลขชิ้นต่อวันจึงเทียบข้ามร้านไม่ได้ ระบบจึงจัดอันดับยอดขายภายในร้านเดียวกันก่อน
+            แล้วเฉลี่ยอันดับของรุ่นจากทุกร้านที่มีข้อมูล
           </p>
         )}
       </Section>
@@ -655,7 +701,10 @@ export default async function InsightsPage() {
             <div className="space-y-1">
               <h3 className="display text-base">K-Means และ Hierarchical Clustering</h3>
               <p className="tabular text-xs text-muted">
-                X = [log(Views+1), log(SalesVelocity+1), NormalizedPrice] (StandardScaler) · k={String(kmeans.k)} เลือกจาก
+                {rankedSales
+                  ? "X = [log(Views+1), SalesRankPct, NormalizedPrice] (StandardScaler; SalesRankPct = เปอร์เซ็นไทล์ยอดขายภายในร้าน เพราะ JIB วัดจากยอดขายที่ร้านประกาศ แต่ IHAVECPU วัดจากสต็อกที่ลดลง เฉลี่ยข้ามร้านที่มีข้อมูล)"
+                  : "X = [log(Views+1), log(SalesVelocity+1), NormalizedPrice] (StandardScaler)"}{" "}
+                · k={String(kmeans.k)} เลือกจาก
                 silhouette = {fixed(kmeans.silhouette)} · n={String(kmeans.n)} {perModel ? "รุ่น (รวมรายการที่ยังจับคู่รุ่นไม่ได้ รายการละหนึ่งรุ่น)" : "รายการ"}
                 {hierarchy &&
                   ` · Ward (k=${String(hierarchy.k)}): silhouette ${fixed(hierarchy.silhouette)}, ARI กับ K-Means ${fixed(hierarchy.ari_vs_kmeans)}, cophenetic r ${fixed(hierarchy.cophenetic_corr)}`}

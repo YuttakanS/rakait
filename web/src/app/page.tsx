@@ -200,7 +200,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         <div className="flex flex-wrap items-center gap-2">
           <span
             className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted"
-            title="จัดกลุ่มด้วย K-Means จากยอดเข้าชม ยอดขายต่อวัน และราคาเทียบกับรุ่นเดียวกัน"
+            title="จัดกลุ่มด้วย K-Means จากยอดเข้าชม อันดับยอดขายในร้าน และราคาเทียบกับรุ่นเดียวกัน"
           >
             กลุ่มความต้องการ <span className="tabular" aria-hidden>(i)</span>
           </span>

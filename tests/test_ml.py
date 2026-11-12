@@ -387,9 +387,17 @@ def test_name_segments_marks_above_average_sellers_for_the_views_split() -> None
 
 
 def test_name_segments_finds_hype_and_requires_a_margin() -> None:
-    assert m.name_segments([(0.19, -0.37), (0.1, 0.3)]) == [m.HYPE, m.BEST_SELLERS]
+    assert m.name_segments([(0.19, -0.37), (0.1, 0.8)]) == [m.HYPE, m.BEST_SELLERS]
     # Views barely above sales is not hype.
     assert m.name_segments([(0.2, -0.1)]) == [m.NICHE]
+
+
+def test_name_segments_needs_sales_clearly_above_average_for_best_sellers() -> None:
+    # SPEC round 9 addendum (rule A): 0 < sales_z <= 0.5 is not a best seller.
+    # The live v9 shape: many views, average sales (sales_z 0.002) is hype; a
+    # price outlier with sales_z 0.12 and modest views is niche.
+    names = m.name_segments([(1.29, 0.002), (0.36, 0.12), (-0.2, 0.5), (-0.2, 0.51)])
+    assert names == [m.HYPE, m.NICHE, m.NICHE, m.BEST_SELLERS]
 
 
 def _demand_blobs(blobs: list[tuple[float, float, int]], seed: int) -> pd.DataFrame:
@@ -482,6 +490,158 @@ def test_model_demand_sums_stores_per_model_and_keeps_unlinked_listings_apart() 
     assert models.loc[30.0, "views"] == 15 and models.loc[30.0, "sales_per_day"] == 0
     unlinked = models.loc[key.iloc[4]]
     assert (unlinked["views"], unlinked["normalized_price"]) == (50, 1.0)
+    # No merchant column: one store. Rates 0.5, 0.1, 0.2, 0 (clipped), 0
+    # rank 5, 3, 4, 1.5, 1.5 of 5; model 10 averages its two listings.
+    assert models.loc[10.0, "sales_rank_pct"] == pytest.approx((1.0 + 0.6) / 2)
+    assert models.loc[30.0, "sales_rank_pct"] == pytest.approx(0.3)
+    assert np.isnan(models.loc[20.0, "sales_rank_pct"])
+    # Sold strictly less: 0.5 beats 4 of 5, 0.1 beats the two zeros; zeros beat none.
+    assert models.loc[10.0, "sales_beats_pct"] == pytest.approx((0.8 + 0.4) / 2)
+    assert models.loc[30.0, "sales_beats_pct"] == 0
+    assert np.isnan(models.loc[20.0, "sales_beats_pct"])
+
+
+def test_zero_sales_listings_beat_nobody_though_their_average_rank_is_mid_table() -> None:
+    rates = [0.0] * 7 + [0.1, 0.2, 0.3]
+    frame = pd.DataFrame(
+        {
+            "listing_id": range(10),
+            "canonical_id": range(10),
+            "merchant": "jib",
+            "sales_per_day": rates,
+            "view_count": 100.0,
+            "price": 1000.0,
+        }
+    )
+
+    _, models = model_demand(frame)
+
+    zeros = models.loc[[float(i) for i in range(7)]]
+    # Average rank of 7 tied zeros is 4 of 10: fine for clustering, but a
+    # shopper would read "sells better than ~40%".
+    assert zeros["sales_rank_pct"].to_numpy() == pytest.approx([0.4] * 7)
+    assert (zeros["sales_beats_pct"] == 0).all()
+    assert models.loc[[7.0, 8.0, 9.0], "sales_beats_pct"].to_numpy() == pytest.approx(
+        [0.7, 0.8, 0.9]
+    )
+
+
+def test_store_percentiles_are_averaged_per_store_before_across_stores() -> None:
+    frame = pd.DataFrame(
+        {
+            "listing_id": [1, 2, 3, 4, 5],
+            "canonical_id": [1, 1, 2, 1, 3],
+            "merchant": ["jib", "jib", "jib", "ihavecpu", "ihavecpu"],
+            "sales_per_day": [0.1, 0.3, 0.2, 50.0, 10.0],
+            "view_count": 100.0,
+            "price": 1000.0,
+        }
+    )
+
+    _, models = model_demand(frame)
+
+    # Model 1: JIB's two listings (1/3, 1) average to 2/3 first, then with
+    # IHAVECPU's 1.0: 5/6. Pooling the three listings would give 7/9.
+    assert models.loc[1.0, "sales_rank_pct"] == pytest.approx(5 / 6)
+    # Beats: JIB 0 and 2/3 -> 1/3; IHAVECPU 1/2 -> (1/3 + 1/2) / 2.
+    assert models.loc[1.0, "sales_beats_pct"] == pytest.approx((1 / 3 + 1 / 2) / 2)
+
+
+def _two_store_frame(scale: float) -> pd.DataFrame:
+    """Models 0-4 at JIB, 5-9 at IHAVECPU (rates ``scale`` x larger), 10-14 at both."""
+    jib_rates = [0.01, 0.02, 0.03, 0.04, 0.05]
+    rows = [
+        {"canonical_id": model, "merchant": "jib", "sales_per_day": rate}
+        for model, rate in enumerate(jib_rates)
+    ]
+    rows += [
+        {"canonical_id": 5 + model, "merchant": "ihavecpu", "sales_per_day": rate * scale}
+        for model, rate in enumerate(jib_rates)
+    ]
+    rows += [
+        {"canonical_id": 10 + model, "merchant": store, "sales_per_day": rate * factor}
+        for model, rate in enumerate(jib_rates)
+        for store, factor in (("jib", 1.0), ("ihavecpu", scale))
+    ]
+    frame = pd.DataFrame(rows)
+    frame["listing_id"] = range(len(frame))
+    frame["price"] = 1000.0
+    frame["view_count"] = 100.0
+    return frame
+
+
+def test_sales_rank_is_store_relative_so_a_100x_larger_scale_ranks_alike() -> None:
+    _, models = model_demand(_two_store_frame(scale=100.0))
+
+    rank = models["sales_rank_pct"]
+    # Same order at each store: same signal, despite rates 100x apart.
+    assert rank.loc[[0.0, 1.0, 2.0, 3.0, 4.0]].to_numpy() == pytest.approx(
+        rank.loc[[5.0, 6.0, 7.0, 8.0, 9.0]].to_numpy()
+    )
+    # Listed at both stores: the mean of two equal percentiles.
+    assert rank.loc[[10.0, 11.0, 12.0, 13.0, 14.0]].to_numpy() == pytest.approx(
+        rank.loc[[0.0, 1.0, 2.0, 3.0, 4.0]].to_numpy()
+    )
+    # The raw sum is still kept for reporting, and is dominated by the larger scale.
+    assert models.loc[14.0, "sales_per_day"] == pytest.approx(0.05 * 101)
+
+
+def test_sales_rank_of_a_model_at_one_store_is_that_stores_percentile() -> None:
+    frame = pd.DataFrame(
+        {
+            "listing_id": [1, 2, 3, 4, 5],
+            "canonical_id": [10, 20, 30, 10, 40],
+            "merchant": ["jib", "jib", "jib", "ihavecpu", "ihavecpu"],
+            "sales_per_day": [0.3, 0.1, 0.2, np.nan, 50.0],
+            "view_count": [10, 20, 30, np.nan, np.nan],
+            "price": [100.0] * 5,
+        }
+    )
+
+    _, models = model_demand(frame)
+
+    # Model 10: IHAVECPU has no rate, so JIB's percentile (3 of 3) alone.
+    assert models.loc[10.0, "sales_rank_pct"] == pytest.approx(1.0)
+    assert models.loc[20.0, "sales_rank_pct"] == pytest.approx(1 / 3)
+    # IHAVECPU's percentile counts only its listings with a rate (1 of 1).
+    assert models.loc[40.0, "sales_rank_pct"] == pytest.approx(1.0)
+
+
+def test_model_without_any_sales_rate_gets_no_group() -> None:
+    rng = np.random.default_rng(5)
+    n = 60
+    frame = pd.DataFrame(
+        {
+            "listing_id": range(n),
+            "canonical_id": range(n),
+            "merchant": ["jib", "ihavecpu"] * (n // 2),
+            "view_count": rng.lognormal(6, 1, n),
+            "sales_per_day": rng.lognormal(-3, 1, n),
+            "price": rng.uniform(900, 1100, n),
+        }
+    )
+    frame.loc[:4, "sales_per_day"] = np.nan  # views, but no store has a rate
+
+    key, models = model_demand(frame)
+    seg = m.segment_demand(
+        models["views"],
+        models["sales_per_day"],
+        models["normalized_price"],
+        sales_rank_pct=models["sales_rank_pct"],
+        sales_beats_pct=models["sales_beats_pct"],
+        k_range=range(4, 5),
+    )
+
+    labels = key.map(seg.labels)
+    assert labels.iloc[:5].isna().all()
+    assert labels.iloc[5:].notna().all()
+    assert sum(s["size"] for s in seg.segments) == n - 5
+    # Segments carry both the raw rate and the mean store percentile.
+    for summary in seg.segments:
+        assert 0 < float(summary["sales_rank_pct"]) <= 1
+        assert 0 <= float(summary["sales_beats_pct"]) < float(summary["sales_rank_pct"])
+        assert float(summary["sales_per_day"]) >= 0
+    assert all("sales_rank_pct" in c for c in seg.centroids)
 
 
 def _multi_store_catalogue(seed: int) -> pd.DataFrame:
@@ -556,6 +716,9 @@ def test_demand_segments_count_models_not_listings() -> None:
     kmeans = report.market[("all", "demand_kmeans")]
     models = 80 + 8  # linked models + unlinked listings, each a model
     assert kmeans["unit"] == "model"
+    assert kmeans["sales_feature"] == "store_rank_pct"
+    assert all(0 < s["sales_rank_pct"] <= 1 for s in kmeans["segments"])
+    assert all(0 <= s["sales_beats_pct"] < 1 for s in kmeans["segments"])
     assert kmeans["n"] == models
     assert sum(s["size"] for s in kmeans["segments"]) == models
     assert sum(c["size"] for c in kmeans["centroids"]) == models

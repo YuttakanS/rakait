@@ -499,7 +499,7 @@ def fit_tier_tree(features: pd.DataFrame, price: pd.Series) -> TierTree:
 # ---------------------------------------------------- D. K-Means segmentation
 
 HIDDEN_GEM, FAVORITE, HYPE, NICHE = "hidden_gem", "community_favorite", "overpriced_hype", "niche"
-#: Cluster-level name for centroids that sell above average. Never a listing
+#: Cluster-level name for centroids that sell clearly above average. Never a listing
 #: label: :func:`split_best_sellers` divides their members by views into
 #: :data:`FAVORITE` and :data:`HIDDEN_GEM`.
 BEST_SELLERS = "best_sellers"
@@ -507,17 +507,24 @@ BEST_SELLERS = "best_sellers"
 SEGMENT_LABELS = (HIDDEN_GEM, FAVORITE, HYPE, NICHE)
 # Minimum gap, in standard deviations, between a centroid's views and sales.
 _CONVERSION_MARGIN = 0.5
+# Minimum sales_z, in standard deviations, of a best-selling centroid (SPEC
+# round 9 addendum, rule A). With the within-store rank feature a cluster of
+# much-viewed models selling about average sat at sales_z = 0.002 and, at
+# "> 0", was named best sellers (19 of its models had zero sales); the same
+# margin as for conversion keeps such clusters hype or niche.
+_BEST_SELLER_MARGIN = _CONVERSION_MARGIN
 
 
 def name_segments(centers: list[tuple[float, float]]) -> list[str]:
     """Name clusters from their standardised (views_z, sales_z) centroids.
 
-    * best sellers: centroids that sell above average (``sales_z > 0``). Their
+    * best sellers: centroids that sell clearly above average
+      (``sales_z >`` :data:`_BEST_SELLER_MARGIN`, 0.5 SD). Their
       listings are split by views afterwards (:func:`split_best_sellers`), so
       both well-selling profiles of CLAUDE.md section 2D, community favourite
       (many views) and hidden gem (few views), are read from the listings
       rather than from one centroid each;
-    * overpriced hype: below-average sellers whose views exceed sales by the
+    * overpriced hype: the other centroids whose views exceed sales by the
       margin (attention that does not convert);
     * niche: everything else (little attention, few sales).
 
@@ -529,7 +536,7 @@ def name_segments(centers: list[tuple[float, float]]) -> list[str]:
     """
     names = [NICHE] * len(centers)
     for i, (views, sales) in enumerate(centers):
-        if sales > 0:
+        if sales > _BEST_SELLER_MARGIN:
             names[i] = BEST_SELLERS
         elif views - sales > _CONVERSION_MARGIN:
             names[i] = HYPE
@@ -553,7 +560,7 @@ def split_best_sellers(
 
     Returns:
         The listing labels and the median ``log1p(views)`` used for the split
-        (``None`` when no cluster sells above average).
+        (``None`` when no cluster is a best seller).
     """
     sellers = cluster_names == BEST_SELLERS
     if not sellers.any():
@@ -631,7 +638,11 @@ def compare_hierarchical(x: np.ndarray, kmeans_labels: np.ndarray, k: int) -> Hi
 
 @dataclass(frozen=True)
 class DemandSegments:
-    """K-Means over ``[log(views+1), log(sales/day+1), normalised price]``.
+    """K-Means over ``[log(views+1), sales signal, normalised price]``.
+
+    The sales signal is the within-store sales percentile (``sales_rank_pct``,
+    2026.11-v9+) when :func:`segment_demand` gets one, else
+    ``log(sales/day+1)``.
 
     Attributes:
         k: Chosen cluster count.
@@ -645,7 +656,7 @@ class DemandSegments:
             members are omitted.
         split_views: Views at the best-seller split (the median of
             ``log1p(views)``, back-transformed), or ``None`` when no cluster
-            sells above average.
+            is a best seller.
         silhouette_by_k: Silhouette per candidate k.
         hierarchy: Ward comparison, when ``n`` is small enough.
     """
@@ -670,7 +681,12 @@ _SEGMENT_STATS = (
 
 
 def summarise_segments(
-    labels: pd.Series, views: pd.Series, sales_per_day: pd.Series, normalized_price: pd.Series
+    labels: pd.Series,
+    views: pd.Series,
+    sales_per_day: pd.Series,
+    normalized_price: pd.Series,
+    sales_rank_pct: pd.Series | None = None,
+    sales_beats_pct: pd.Series | None = None,
 ) -> list[dict[str, float | int | str]]:
     """Per-label size and demand averages from the listings themselves.
 
@@ -679,8 +695,15 @@ def summarise_segments(
     Args:
         labels: Listing label per row (rows without a label are skipped).
         views: Cumulative page views.
-        sales_per_day: Sales velocity (negative values clipped to 0).
+        sales_per_day: Sales velocity (negative values clipped to 0), raw as
+            measured. For reporting only: per model it sums store metrics
+            that are not comparable (SPEC round 9).
         normalized_price: Price relative to the model's typical price.
+        sales_rank_pct: Within-store sales percentile per row (average rank,
+            the clustered feature); when given, its mean per label is added.
+        sales_beats_pct: Share of the store's listings that sold strictly
+            less (the shopper-facing figure); when given, its mean per label
+            is added.
 
     Returns:
         One dict per label that has members, in :data:`SEGMENT_LABELS` order.
@@ -692,20 +715,28 @@ def summarise_segments(
             "sales_per_day": sales_per_day.astype(float).clip(lower=0),
             "normalized_price": normalized_price.astype(float),
         }
-    ).dropna(subset=["label"])
-    grouped = frame.groupby("label").agg(
-        size=("views", "size"),
-        views=("views", "mean"),
-        views_median=("views", "median"),
-        sales_per_day=("sales_per_day", "mean"),
-        sales_per_day_median=("sales_per_day", "median"),
-        normalized_price=("normalized_price", "mean"),
     )
+    stats: tuple[str, ...] = _SEGMENT_STATS
+    aggregations: dict[str, tuple[str, str]] = {
+        "size": ("views", "size"),
+        "views": ("views", "mean"),
+        "views_median": ("views", "median"),
+        "sales_per_day": ("sales_per_day", "mean"),
+        "sales_per_day_median": ("sales_per_day", "median"),
+        "normalized_price": ("normalized_price", "mean"),
+    }
+    optional = {"sales_rank_pct": sales_rank_pct, "sales_beats_pct": sales_beats_pct}
+    for column, values in optional.items():
+        if values is not None:
+            frame[column] = values.astype(float)
+            stats = (*stats, column)
+            aggregations[column] = (column, "mean")
+    grouped = frame.dropna(subset=["label"]).groupby("label").agg(**aggregations)
     return [
         {
             "label": label,
             "size": int(grouped.at[label, "size"]),
-            **{column: float(grouped.at[label, column]) for column in _SEGMENT_STATS},
+            **{column: float(grouped.at[label, column]) for column in stats},
         }
         for label in SEGMENT_LABELS
         if label in grouped.index
@@ -717,34 +748,50 @@ def segment_demand(
     sales_per_day: pd.Series,
     normalized_price: pd.Series,
     *,
+    sales_rank_pct: pd.Series | None = None,
+    sales_beats_pct: pd.Series | None = None,
     k_range: range = range(4, 7),
 ) -> DemandSegments:
     """Cluster rows by demand and label each row.
 
     Training passes one row per product model (``train.model_demand``: views
-    and sales summed over stores), so every listing of a model shares one
-    label; the function itself is agnostic to what a row is, and docstrings
-    below say "listing" for a row.
+    summed over stores, sales as the mean within-store percentile), so every
+    listing of a model shares one label; the function itself is agnostic to
+    what a row is, and docstrings below say "listing" for a row.
+
+    The sales feature is ``sales_rank_pct`` when given (SPEC round 9: stores
+    measure sales differently, JIB from its published sold counter and
+    IHAVECPU from warehouse stock drawdown, so only ranks within a store are
+    comparable), else ``log1p(sales_per_day)``. ``sales_per_day`` is still
+    summarised raw per label (and per centroid) either way, for reporting
+    only: per model it sums store metrics that are not comparable.
 
     k is chosen by silhouette score within ``k_range``; the floor of 4 follows
     the specification's three demand profiles plus a remainder segment.
     Clusters are named by :func:`name_segments`; the listings of clusters that
-    sell above average are then split by views (:func:`split_best_sellers`).
+    are best sellers are then split by views (:func:`split_best_sellers`).
 
     Args:
         views: Cumulative page views.
         sales_per_day: Sales velocity.
         normalized_price: Price relative to the model's typical price.
+        sales_rank_pct: Within-store sales percentile in ``(0, 1]``; replaces
+            ``log1p(sales_per_day)`` as the clustered sales feature.
+        sales_beats_pct: Share of the store's listings that sold strictly
+            less; not clustered, only summarised per label for display.
         k_range: Candidate cluster counts.
 
     Returns:
         The segmentation, indexed like ``views``; rows with missing inputs get
         no label.
     """
+    clipped_sales = sales_per_day.astype(float).clip(lower=0)
     raw = pd.DataFrame(
         {
             "log_views": np.log1p(views.astype(float)),
-            "log_sales_per_day": np.log1p(sales_per_day.astype(float).clip(lower=0)),
+            "sales": np.log1p(clipped_sales)
+            if sales_rank_pct is None
+            else sales_rank_pct.astype(float),
             "normalized_price": normalized_price.astype(float),
         }
     ).dropna()
@@ -767,10 +814,21 @@ def segment_demand(
     listing_labels, split_log_views = split_best_sellers(
         np.asarray(names, dtype=object)[km.labels_], raw["log_views"].to_numpy(float)
     )
+    # With the rank feature the centroid's sales coordinate is a percentile,
+    # not a rate; the raw rate is then the members' mean (one groupby, O(n)).
+    member_sales = clipped_sales.loc[raw.index].groupby(km.labels_).mean()
     centroids: list[dict[str, float | str | bool]] = []
     for idx, center in enumerate(km.cluster_centers_):
         views_z, sales_z, price_z = (float(v) for v in center)
         unscaled = scaler.inverse_transform(center.reshape(1, -1))[0]
+        sales_fields = (
+            {"sales_per_day": float(math.expm1(unscaled[1]))}
+            if sales_rank_pct is None
+            else {
+                "sales_per_day": float(member_sales.get(idx, math.nan)),
+                "sales_rank_pct": float(unscaled[1]),
+            }
+        )
         centroids.append(
             {
                 "cluster": idx,
@@ -781,7 +839,7 @@ def segment_demand(
                 "sales_z": sales_z,
                 "price_z": price_z,
                 "views": float(math.expm1(unscaled[0])),
-                "sales_per_day": float(math.expm1(unscaled[1])),
+                **sales_fields,
                 "normalized_price": float(unscaled[2]),
             }
         )
@@ -795,7 +853,9 @@ def segment_demand(
         silhouette=scores[best_k],
         centroids=centroids,
         labels=labels,
-        segments=summarise_segments(labels, views, sales_per_day, normalized_price),
+        segments=summarise_segments(
+            labels, views, sales_per_day, normalized_price, sales_rank_pct, sales_beats_pct
+        ),
         split_views=None if split_log_views is None else float(math.expm1(split_log_views)),
         silhouette_by_k=scores,
         hierarchy=hierarchy,

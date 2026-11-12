@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v8"
+MODEL_VERSION = "2026.11-v9"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -281,20 +281,38 @@ def model_demand(frame: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     * ``views``: sum of ``view_count`` over the stores that publish it, NaN
       when none does (such a model gets no group);
     * ``sales_per_day``: sum over the stores that publish it (negative rates
-      clipped to 0), NaN when none does;
+      clipped to 0), NaN when none does. For reporting only: it adds up
+      metrics the stores measure differently, so it is neither clustered nor
+      shown as a cross-store rate;
+    * ``sales_rank_pct``: the clustered sales signal (SPEC round 9). Each
+      listing's rate is ranked within its own store (``merchant``; average
+      rank for ties, percentile over the store's listings that have a rate).
+      JIB's rate comes from its published sold counter, IHAVECPU's from
+      warehouse stock drawdown (tens of units a day for bulk stock), so only
+      ranks are comparable across stores. NaN when no store has a rate (such
+      a model gets no group);
+    * ``sales_beats_pct``: the shopper-facing share of the store's listings
+      (with a rate) that sold strictly less, ``(min rank - 1) / count``. Not
+      the average rank: with many zero-sales ties the average rank of a zero
+      is mid-table (7 zeros of 10 rank 0.4), while it beats nobody (0);
+    * both percentiles are averaged per store first, then across the stores
+      that have one, so several listings of a model at one store do not
+      outweigh another store;
     * ``normalized_price``: the lowest in-stock price (every listing's when
       none is in stock) over the median price of all the model's listings.
 
     Pure ``groupby`` reductions over contiguous float columns (Cython, no
-    per-row Python): O(n) hashing into O(#models) groups, plus the medians.
+    per-row Python): O(n log n) for the per-store sort behind the rank, O(n)
+    hashing into O(#models) groups, plus the medians.
 
     Args:
         frame: Current listings with ``listing_id``, ``price`` and optionally
-            ``canonical_id``, ``view_count``, ``sales_per_day``, ``in_stock``.
+            ``canonical_id``, ``merchant`` (one store when absent),
+            ``view_count``, ``sales_per_day``, ``in_stock``.
 
     Returns:
         ``(key, models)``: the model key per listing (aligned with ``frame``)
-        and one row per model indexed by that key, with the three columns
+        and one row per model indexed by that key, with the five columns
         above.
     """
     key = product_key(frame)
@@ -304,10 +322,24 @@ def model_demand(frame: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
         if "in_stock" in frame
         else pd.Series(True, index=frame.index)
     )
+    store = frame["merchant"] if "merchant" in frame else pd.Series("", index=frame.index)
+    sales = numeric(frame, "sales_per_day").clip(lower=0)
+    # NaN rates keep NaN ranks and are not counted in the store's percentile.
+    by_store = sales.groupby(store)
+    percentiles = pd.DataFrame(
+        {
+            "sales_rank_pct": by_store.rank(method="average", pct=True),
+            "sales_beats_pct": (by_store.rank(method="min") - 1) / by_store.transform("count"),
+        },
+        index=frame.index,
+    )
+    # Store first, then model: mean skips NaN, so only stores with a rate
+    # count, each once; a model no store has a rate for stays NaN.
+    per_model = percentiles.groupby([key, store]).mean().groupby(level=0).mean()
     columns = pd.DataFrame(
         {
             "views": numeric(frame, "view_count"),
-            "sales_per_day": numeric(frame, "sales_per_day").clip(lower=0),
+            "sales_per_day": sales,
             "price": price,
             "in_stock_price": price.where(in_stock),
         },
@@ -323,6 +355,7 @@ def model_demand(frame: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
             "normalized_price": lowest / grouped["price"].median(),
         }
     )
+    models = models.join(per_model)
     return key, models
 
 
@@ -624,18 +657,30 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     # model's label, so the web's filter and card badge agree (SPEC round 8).
     model_key, models = model_demand(current)
     try:
-        seg = m.segment_demand(models["views"], models["sales_per_day"], models["normalized_price"])
+        seg = m.segment_demand(
+            models["views"],
+            models["sales_per_day"],
+            models["normalized_price"],
+            sales_rank_pct=models["sales_rank_pct"],
+            sales_beats_pct=models["sales_beats_pct"],
+        )
         insights["demand_cluster"] = model_key.map(seg.labels)
         report.market[("all", "demand_kmeans")] = {
             # Rows clustered: product models (2026.11-v8+); earlier payloads
             # have no "unit" and counted listings.
             "unit": "model",
+            # Clustered sales feature (2026.11-v9+): the mean within-store
+            # sales percentile; v8 and earlier have no key and used
+            # log1p(sales_per_day summed over stores).
+            "sales_feature": "store_rank_pct",
             "k": seg.k,
             "silhouette": seg.silhouette,
             "silhouette_by_k": seg.silhouette_by_k,
             "centroids": seg.centroids,
             # Per label, from the models (best-seller clusters are split by
-            # views, so a centroid no longer equals one label).
+            # views, so a centroid no longer equals one label). Their
+            # sales_per_day (and the centroids') sums incomparable store
+            # metrics: reporting only; the web shows sales_beats_pct.
             "segments": seg.segments,
             "split_views": seg.split_views,
             "n": int(seg.labels.notna().sum()),
@@ -931,7 +976,7 @@ def _plot_kmeans(out: Path, models: pd.DataFrame, seg: m.DemandSegments) -> None
         idx = labelled[labelled == label].index
         ax.scatter(
             np.log1p(models.loc[idx, "views"]),
-            np.log1p(models.loc[idx, "sales_per_day"]),
+            models.loc[idx, "sales_rank_pct"],
             s=12,
             alpha=0.7,
             label=label,
@@ -946,7 +991,7 @@ def _plot_kmeans(out: Path, models: pd.DataFrame, seg: m.DemandSegments) -> None
         )
     ax.set(
         xlabel="log(views + 1)",
-        ylabel="log(sales per day + 1)",
+        ylabel="sales percentile within store (mean over stores)",
         title=f"Demand segments per model (k={seg.k}, silhouette={seg.silhouette:.2f})",
     )
     ax.legend(fontsize=8)

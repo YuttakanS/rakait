@@ -206,10 +206,10 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | `buy_now` | ซื้อเลย | |
 | `wait` | รอก่อน | |
 | `fair_price` | ราคาเหมาะสม | |
-| `hidden_gem` | ขายดี แต่คนดูน้อย | ยอดขายต่อวันสูงกว่าค่าเฉลี่ย แต่ยอดเข้าชมไม่เกินมัธยฐานของกลุ่มขายดี |
-| `community_favorite` | ขายดี คนดูเยอะ | ยอดขายต่อวันสูงกว่าค่าเฉลี่ย และยอดเข้าชมสูงกว่ามัธยฐานของกลุ่มขายดี |
-| `overpriced_hype` | คนดูเยอะ แต่ขายน้อย | ยอดขายต่อวันต่ำกว่าค่าเฉลี่ย และต่ำกว่าที่ยอดเข้าชมบ่งบอกชัดเจน |
-| `niche` | คนดูน้อย ขายน้อย | ยอดขายต่อวันต่ำกว่าค่าเฉลี่ย และยอดเข้าชมไม่สูง |
+| `hidden_gem` | ขายดี แต่คนดูน้อย | อันดับยอดขายในร้านสูงกว่าค่าเฉลี่ยชัดเจน แต่ยอดเข้าชมไม่เกินมัธยฐานของกลุ่มขายดี |
+| `community_favorite` | ขายดี คนดูเยอะ | อันดับยอดขายในร้านสูงกว่าค่าเฉลี่ยชัดเจน และยอดเข้าชมสูงกว่ามัธยฐานของกลุ่มขายดี |
+| `overpriced_hype` | คนดูเยอะ แต่ขายน้อย | อันดับยอดขายในร้านไม่สูงกว่าค่าเฉลี่ยชัดเจน และต่ำกว่าที่ยอดเข้าชมบ่งบอกชัดเจน |
+| `niche` | คนดูน้อย ขายน้อย | อันดับยอดขายในร้านไม่สูงกว่าค่าเฉลี่ยชัดเจน และยอดเข้าชมไม่สูง |
 | Gap vs fair (card tag) | ▼ ถูกกว่าราคายุติธรรม x% · ▲ แพงกว่าราคายุติธรรม x% (`FairGapTag`) | |
 | Fair price untrusted (card) | ประเมินไม่แน่นอน + "ราคายุติธรรมของรุ่นนี้อาจผิด จึงไม่นับเป็นดีล" | |
 | No fair price (card) | ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ) | |
@@ -486,20 +486,37 @@ in `lib/market.ts`.
    EffectBars (% per SD) live in the statistics section.
 4. **ของที่คนซื้อจริง** (`#demand`): one clickable tile per segment name that
    has listings, in the fixed chip order, linking to `/?cluster=…`; average
-   views and sales as "~1 ชิ้น / N วัน"; **model** count and share. The count
+   views and a sales tile; **model** count and share. Sales tile (SPEC round
+   9): with model 2026.11-v9+ (`sales_feature: "store_rank_pct"`, per-segment
+   `sales_beats_pct`) it reads อันดับยอดขาย "ขายดีกว่า ~N%" + "ของสินค้าในร้านเดียวกัน"
+   (N = `sales_beats_pct` × 100, rounded: the share of the same store's
+   listings with a rate that sold strictly less, `(min rank − 1) / count`,
+   averaged per store, then across stores, then over the group's models), never a summed
+   ชิ้น/วัน, because stores measure sales differently (JIB = the store's
+   published sold count, IHAVECPU = stock drawdown); a note under the tiles
+   and the statistics line say so. Never show `sales_rank_pct` (average rank
+   for ties, the clustered feature): tied zero sellers rank mid-table (7
+   zeros of 10 → 0.4) though they outsell nobody. Payload fields per
+   segment: `sales_rank_pct`, `sales_beats_pct` (v9+); `sales_per_day` and
+   `sales_per_day_median` (also in centroids) sum incomparable store metrics
+   from v9 and are for reporting only. Older payloads without
+   `sales_beats_pct` keep ขายได้ "~1 ชิ้น / N วัน". The count
    is a live query counting models the way `/?cluster=…` does
    (`countModelsByCluster`, the same `MODEL_CLUSTER` aggregate), so a tile and
    the list's "พบ X รุ่น" always agree; a group with no model on sale gets no
    tile. Averages come from the per-label summary `segments` of
-   `demand_kmeans` (model 2026.11-v8: one row per product model, views and
-   sales summed over stores, `unit: "model"`; 2026.11-v7: per listing); older payloads fall back to merging centroids
-   by label. Labels (SPEC round 6): K-Means clusters whose centroid sells
-   above average (sales_z > 0) are pooled and split at the median
+   `demand_kmeans` (model 2026.11-v9: one row per product model, views
+   summed over stores, sales as the mean within-store percentile;
+   2026.11-v8: views and sales summed over stores, `unit: "model"`;
+   2026.11-v7: per listing); older payloads fall back to merging centroids
+   by label. Labels (SPEC round 6; margin from the round 9 addendum): K-Means
+   clusters whose centroid sells clearly above average (sales_z > 0.5, the
+   same margin as for hype) are pooled and split at the median
    log(views + 1) of their listings: above = ขายดี คนดูเยอะ, the rest =
    ขายดี แต่คนดูน้อย; other clusters are คนดูเยอะ แต่ขายน้อย or
    คนดูน้อย ขายน้อย as before (names: SPEC round 7; the hint says what each is
    measured from and never repeats the name). A line under
-   the tiles says both are "ขายดีกว่าค่าเฉลี่ย" and prints the split
+   the tiles says both are "ขายดีกว่าค่าเฉลี่ยชัดเจน" and prints the split
    ("คนดูมากกว่า N ครั้ง"), from `split_views`.
 5. **ป้าย ซื้อเลย / รอก่อน คิดจากอะไร** (`#advice`): while the tree is below
    its bar, the three rules as badge + sentence; the accuracy vs. 60% as a
