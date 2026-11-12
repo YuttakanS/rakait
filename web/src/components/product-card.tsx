@@ -33,6 +33,8 @@ function reasonLine(p: ProductSummary): ReactNode {
 /**
  * Storefront product card. The whole card is one link (no nested controls);
  * the CTA at the bottom is its visual call to action, styled as a button.
+ * No viewport prefetch: a grid of cards would render a dozen uncached product
+ * pages (one database connection each) at once.
  */
 export function ProductCard({ p, priority = false }: { p: ProductSummary; priority?: boolean }) {
   const inStock = p.inStockOffers > 0;
@@ -42,6 +44,7 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
   return (
     <Link
       href={`/product/${p.id}`}
+      prefetch={false}
       className="group card card-interactive flex h-full flex-col"
     >
       <div className="relative border-b-[3px] border-border bg-white">

@@ -222,6 +222,7 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | Header shortcuts | ดีลเด็ด · เทียบหลายร้าน · ภาพรวมตลาด | |
 | 404 title / line | ไม่พบหน้านี้ / ลิงก์อาจผิด หรือสินค้านี้ไม่มีขายแล้ว | |
 | 404 action | กลับไปหน้ารวม → | |
+| Error title / line / action | ระบบกำลังยุ่ง / โหลดหน้านี้ไม่สำเร็จ ลองใหม่อีกครั้งในอีกสักครู่ / ลองใหม่ | |
 
 No icons and no emoji (RawBlock rule 9; skill rule `no-emoji-icons`): every
 badge, button and link is its words. The only symbols are text characters
@@ -444,6 +445,7 @@ variables sit on `<html>` so the stacks resolve at `:root`.
 | **StatNote** | insights | `text-xs text-subtle` + "(i)"; the full statistic in `title`. |
 | **Statistics details** | insights | Native `<details>` card, collapsed by default, `.display` summary with "+" / "−". |
 | **Empty state** | anywhere | `.card` with centred muted text saying what is missing and why. |
+| **Error** | `app/error.tsx` (client) | Root error boundary, same block as the 404: h1 "ระบบกำลังยุ่ง", one line "โหลดหน้านี้ไม่สำเร็จ ลองใหม่อีกครั้งในอีกสักครู่", primary "ลองใหม่" (`router.refresh()` + `reset()`). No error message, digest or stack. |
 | **404** | `app/not-found.tsx` | `.card.card-heavy`: "404" (mono, `.caps`), h1 "ไม่พบหน้านี้", one line, primary "กลับไปหน้ารวม →". Used for unknown routes and unknown product ids. |
 
 ### 6. Page templates
@@ -666,6 +668,16 @@ export default async function Page() {
   once, then served from the edge near the visitor. The insights page is
   static with the same revalidation; the product list is dynamic (search
   params) and is the one page that always reaches the database.
+- Prefetch: bulk `/product/*` links (ProductCard grid, the hero, the insights
+  price ladder) take `prefetch={false}`. A product page not yet in the ISR
+  cache renders on prefetch, so a grid scrolled into view opened about a
+  dozen database connections at once and filled the pooler. Header and nav
+  links keep the default prefetch.
+- Database (`lib/db.ts`): one connection per instance (`max: 1`, closed after
+  5 s idle, 10 s connect timeout, no prepared statements). `next build` uses
+  `DATABASE_URL` (Supabase session pooler, 5432); serving uses
+  `DATABASE_RUNTIME_URL` if set, else the same URL on the transaction pooler
+  (6543), which frees the server connection after every transaction.
 - Five faces via `next/font/google`, self-hosted and preloaded only for the
   listed subsets (Archivo Black, Work Sans, Space Mono: latin; Kanit 700,
   Noto Sans Thai: thai). Work Sans and Noto Sans Thai are variable fonts (one

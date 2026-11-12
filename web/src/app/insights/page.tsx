@@ -294,13 +294,13 @@ export default async function InsightsPage() {
                           <span className="ml-1.5 text-xs font-normal text-subtle">{r.models} รุ่น</span>
                         </td>
                         <td className="py-2 text-right font-semibold">
-                          <Link href={`/product/${r.cheapest.id}`} className="link" title={r.cheapest.model}>
+                          <Link href={`/product/${r.cheapest.id}`} prefetch={false} className="link" title={r.cheapest.model}>
                             {formatTHB(r.from)}
                           </Link>
                         </td>
                         <td className="py-2 text-right text-muted">{formatTHB(r.typical)}</td>
                         <td className="hidden max-w-[11rem] truncate py-2 pl-4 font-sans sm:table-cell">
-                          <Link href={`/product/${r.cheapest.id}`} className="link" title={r.cheapest.model}>
+                          <Link href={`/product/${r.cheapest.id}`} prefetch={false} className="link" title={r.cheapest.model}>
                             {r.cheapest.model}
                           </Link>
                         </td>

@@ -1,5 +1,18 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Environment
+
+Set in `.env.local` (and in the Vercel project settings):
+
+| Variable | Used | Value |
+|---|---|---|
+| `DATABASE_URL` | always required; the only URL `next build` uses | Supabase **session** pooler, `…pooler.supabase.com:5432` (or a local database) |
+| `DATABASE_RUNTIME_URL` | optional; serving requests | Supabase **transaction** pooler (`:6543`). When unset and `DATABASE_URL` is a Supabase session pooler, the app switches it to port 6543 itself. |
+
+The session pooler allows 15 clients for the whole project, so serving
+traffic through it ran out of connections (`EMAXCONNSESSION`); see
+`src/lib/db.ts`.
+
 ## Getting Started
 
 First, run the development server:

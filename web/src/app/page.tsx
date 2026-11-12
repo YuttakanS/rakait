@@ -69,6 +69,7 @@ function Hero({ p }: { p: ProductSummary }) {
   return (
     <Link
       href={`/product/${p.id}`}
+      prefetch={false}
       className="inverted card card-heavy group grid border-background md:grid-cols-[1.4fr_1fr]"
     >
       <div className="flex flex-col justify-center gap-3 p-5 sm:p-8 lg:px-12 lg:py-10">

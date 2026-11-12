@@ -237,3 +237,33 @@ K-Means จัดกลุ่มทีละ listing (ร้าน x รุ่�
 - คลัสเตอร์จะนับเป็นกลุ่มขายดีได้เมื่อ centroid มี `sales_z > 0.5` (ใช้ margin เดียวกับ `_CONVERSION_MARGIN`) ถ้าไม่ถึงเกณฑ์นี้ ให้ใช้กฎ hype/niche ตามเดิม
 - ผลออฟไลน์บน prod ที่คาดไว้: k=4 แบ่งเป็น 46 / 45 / 64 / 153 รุ่น และไม่มีรุ่นในกลุ่มขายดีที่ยอดขายเป็น 0
 - ต้องมี unit test ของกรณีที่ sales_z อยู่ระหว่าง 0 ถึง 0.5 ซึ่งต้องไม่นับเป็นกลุ่มขายดี และต้องแก้ hint กับ glossary ถ้าคำอธิบายเปลี่ยน
+
+---
+
+## รอบ 10: เว็บล่ม HTTP 500 จาก connection pool เต็ม (ผู้ใช้สั่งแก้และ deploy, 2026-11-13)
+
+### อาการและสาเหตุ
+- user-tester เจอเว็บล่มสองช่วง ช่วงละราว 3 นาที หน้าแรกและหน้าสินค้าตอบ HTTP 500
+- log ของ Vercel: `EMAXCONNSESSION max clients reached in session mode - max clients are limited to pool_size: 15`
+- เว็บทุก instance ต่อ Supabase ผ่าน **session pooler (5432)** ได้รวมกันไม่เกิน 15 client
+  - ใน session mode แต่ละ instance ถือ connection ค้างไว้ตลอดเซสชัน (`postgres(url, { max: 1, idle_timeout: 20 })` ใน `web/src/lib/db.ts`)
+  - instance ที่ว่างจึงยังกินที่ได้อีก 20 วินาที
+  - ช่วงที่ deploy ติดกัน (build ทำ prerender ไปพร้อมกับ instance ของ deployment เก่า) หรือมี prefetch หน้าสินค้าราว 12 หน้าพร้อมกัน จึงเกิน 15 ได้ง่าย
+  - pipeline (`pricewatch` scrape/train) ก็ใช้ session pooler เดียวกัน
+- เหตุที่ยังใช้ 5432 อยู่: เคยลอง transaction pooler (6543) แล้ว**ตอน build** prerender ค้าง (ดูคอมเมนต์ใน `db.ts`) ปัญหานั้นเกิดเฉพาะตอน build
+
+### เกณฑ์ผ่าน
+1. **runtime ใช้ transaction pooler:** ตอนเว็บรับ request จริงให้ต่อผ่าน transaction pooler (6543) ซึ่งคืน connection ทุกครั้งที่จบ transaction จึงไม่ถือ session ค้าง ส่วน**ตอน build** (`process.env.NEXT_PHASE === "phase-production-build"`) ยังใช้ session pooler (5432) เหมือนเดิม
+   - ถ้ามี env `DATABASE_RUNTIME_URL` ให้ใช้ค่านั้นตอน runtime
+   - ถ้าไม่มี และ `DATABASE_URL` ชี้ไปที่ `*.pooler.supabase.com:5432` ให้ใช้ URL เดิมแต่เปลี่ยนเป็นพอร์ต 6543 ตอน runtime
+   - กรณีอื่นใช้ `DATABASE_URL` ตามเดิม (dev หรือ DB ในเครื่อง)
+   - `prepare: false` ยังต้องมี (transaction pooler ไม่รองรับ prepared statement)
+   - เขียนคอมเมนต์อธิบายเหตุผลใน `db.ts` และอย่าให้ URL หรือรหัสผ่านไปโผล่ใน log
+2. **ลดเวลาถือ connection:** `idle_timeout` เหลือไม่เกิน 5 วินาที ตั้ง `connect_timeout` ให้สมเหตุสมผล (เช่น 10 วินาที) และใช้ `max: 1` ต่อ instance เหมือนเดิม
+3. **ลด prefetch ที่ไม่จำเป็น:** ลิงก์ `/product/*` ที่อยู่เป็นกลุ่มใหญ่ (กริดสินค้าหน้าแรก, ตาราง/ลิงก์ใน /insights) ต้องไม่ prefetch ตอนโผล่ใน viewport (`prefetch={false}` หรือวิธีที่ถูกต้องใน Next 15) ส่วนลิงก์นำทางหลัก (header/nav) ไม่ต้องแก้
+4. **ล่มอย่างสุภาพ:** มี `error.tsx` (App Router error boundary) ระดับ root เขียนตาม design.md เป็นข้อความไทย เช่น "ระบบกำลังยุ่ง ลองใหม่อีกครั้ง" พร้อมปุ่ม "ลองใหม่" (เรียก `reset()`) แทนข้อความ "Application error" ของ Next และไม่ต้องแสดงรายละเอียดภายใน
+5. **ไม่ทำให้พฤติกรรมเดิมเสีย:** หน้า ISR/SSG (`/insights`, `/product/[id]`) ยัง build ได้ ส่วน `npm run build` ในเครื่องที่ต่อ prod DB (session pooler) ต้องผ่าน
+6. **การตรวจ:** `cd web && npx tsc --noEmit && npx eslint src && npm run build` ผ่าน
+   - ถ้าทำได้ ให้ทดสอบ `next start` ในเครื่องตอน runtime ว่าต่อผ่าน 6543 ได้จริงและหน้าแรก, หน้าสินค้า, /insights โหลดได้ (ยืนยันจาก query ที่ได้ผลถูกต้อง ไม่ต้องพิมพ์ URL)
+   - ห้ามยิง load test หนักใส่ prod DB ทดสอบ concurrency เบาๆ ได้ เช่น 20 request พร้อมกัน
+7. **อัปเดตเอกสาร:** `.claude/skills/design.md` ส่วน Performance ถ้ามีเรื่อง prefetch, และ README หรือคอมเมนต์ที่อธิบาย env ของเว็บ
