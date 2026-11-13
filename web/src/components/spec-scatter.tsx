@@ -91,7 +91,7 @@ export function SpecScatter({
         viewBox={`0 0 ${W} ${H}`}
         className="h-auto w-full touch-pan-y select-none"
         role="img"
-        aria-label={`ราคาเทียบกับ${xLabel}`}
+        aria-label={`ราคาเทียบกับ ${xLabel}`}
         onPointerMove={onMove}
         onPointerLeave={() => setHover(null)}
       >

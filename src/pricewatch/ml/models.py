@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm as _norm
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, silhouette_score
@@ -223,6 +224,8 @@ class FairValueModel:
     extrapolated: int = 0
     diagnostics: RegressionDiagnostics | None = None
     sigma: float = math.nan
+    #: Cross-validation folds actually used (``folds`` clamped to the data).
+    cv_folds: int = 0
 
     def error_pct(self) -> pd.Series:
         """Half-width of each row's 80% prediction interval, as a fraction.
@@ -285,10 +288,13 @@ def _design_matrix(features: pd.DataFrame, required: list[str]) -> pd.DataFrame:
 #: extrapolation error, so it gets no fair price rather than a guessed one.
 MAX_LEVERAGE = 1.0
 
-#: Standard-normal quantile of a two-sided 80% interval (the "± Y%" shown
-#: beside a fair price): wide enough to be honest about a 15-25% MAPE fit,
-#: narrow enough to tell a real gap from noise.
-Z_80 = 1.2816
+#: Coverage of the "± Y%" interval beside a fair price (persisted so the web
+#: never hard-codes it): 80% is wide enough to be honest about a 15-25% MAPE
+#: fit, narrow enough to tell a real gap from noise.
+INTERVAL_LEVEL = 0.80
+#: Its two-sided standard-normal quantile, derived so the two cannot drift
+#: apart: norm.ppf(0.90) = 1.28155...
+Z_80 = float(_norm.ppf(0.5 + INTERVAL_LEVEL / 2))
 
 
 def _oof_predict(
@@ -437,6 +443,7 @@ def fit_fair_value(
         extrapolated=int((lev > MAX_LEVERAGE).sum()),  # NaN compares False
         diagnostics=regression_diagnostics(x[fit_rows], y[fit_rows], model, columns),
         sigma=sigma,
+        cv_folds=folds,
     )
 
 
@@ -451,18 +458,108 @@ def deal_score(z_residual: pd.Series) -> pd.Series:
     return pd.Series(np.clip(np.rint(100 * (1 - phi)), 0, 100), index=z_residual.index)
 
 
+# ------------------------------------------------ Tree structure for the web
+
+
+def tree_nodes(
+    model: DecisionTreeRegressor | DecisionTreeClassifier,
+    features: list[str],
+    *,
+    log_target: bool = False,
+    x: pd.DataFrame | np.ndarray | None = None,
+    y: pd.Series | np.ndarray | None = None,
+) -> list[dict[str, Any]]:
+    """Serialise a fitted sklearn tree into JSON-ready nodes for a node-link chart.
+
+    Nodes keep sklearn's pre-order ids, so node 0 is the root and a parent's
+    id is always below its children's. Each node is
+    ``{id, feature, threshold, left, right, n, value, impurity}``; leaves have
+    ``feature``, ``threshold``, ``left`` and ``right`` set to ``None``. The
+    left child holds the rows with ``feature <= threshold``.
+
+    * Regressor: ``value`` is the node's mean target. With ``log_target`` the
+      tree was fitted on ``log(price)``, so the mean is back-transformed to
+      THB, ``exp(mean log price)`` (the node's geometric mean price), rounded
+      to whole baht. ``impurity`` stays on the fitted (log) scale.
+    * Classifier: sklearn stores (class-weighted) fractions in ``value``, not
+      counts. ``value`` becomes ``{"counts": {class: rows}, "winner": class}``:
+      ``winner`` is the class the tree predicts at the node (argmax of the
+      weighted fractions, what ``predict`` returns); ``counts`` are raw
+      training rows per class, from ``x`` / ``y`` via the decision path, else
+      ``n * fraction`` (exact only without class weights).
+
+    Cost: O(nodes * classes), plus O(n * depth) for the decision path.
+
+    Args:
+        model: A fitted DecisionTreeRegressor or DecisionTreeClassifier.
+        features: Column names in the order the tree was fitted on.
+        log_target: Regressor fitted on log(price); back-transform values.
+        x: Training features (classifier counts only).
+        y: Training labels aligned with ``x`` (classifier counts only).
+
+    Returns:
+        One dict per node, in id order.
+    """
+    tree = model.tree_
+    left, right = tree.children_left, tree.children_right
+    is_classifier = isinstance(model, DecisionTreeClassifier)
+    counts: np.ndarray | None = None
+    classes: list[str] = []
+    if is_classifier:
+        classes = [str(c) for c in model.classes_]
+        if x is not None and y is not None:
+            # path is n x nodes (0/1, sparse); path' @ onehot(y) counts every
+            # training row once at each node it passes: O(n * depth * C).
+            path = model.decision_path(x)
+            labels = np.asarray(y).astype(str)
+            onehot = (labels[:, None] == np.asarray(classes)[None, :]).astype(float)
+            counts = np.asarray(path.T @ onehot)
+        else:
+            counts = tree.value[:, 0, :] * tree.n_node_samples[:, None]
+    nodes: list[dict[str, Any]] = []
+    for i in range(tree.node_count):
+        leaf = left[i] == right[i]
+        if is_classifier and counts is not None:
+            value: Any = {
+                "counts": {
+                    c: int(round(float(v))) for c, v in zip(classes, counts[i], strict=True)
+                },
+                "winner": classes[int(np.argmax(tree.value[i, 0, :]))],
+            }
+        else:
+            mean = float(tree.value[i, 0, 0])
+            value = round(math.exp(mean)) if log_target else mean
+        nodes.append(
+            {
+                "id": i,
+                "feature": None if leaf else features[int(tree.feature[i])],
+                "threshold": None if leaf else float(tree.threshold[i]),
+                "left": None if leaf else int(left[i]),
+                "right": None if leaf else int(right[i]),
+                "n": int(tree.n_node_samples[i]),
+                "value": value,
+                "impurity": float(tree.impurity[i]),
+            }
+        )
+    return nodes
+
+
 # --------------------------------------------------------- C. Regression tree
 
 
 @dataclass(frozen=True)
 class TierTree:
-    """Depth-limited regression tree segmenting price tiers."""
+    """Depth-limited regression tree segmenting price tiers.
+
+    ``nodes`` is :func:`tree_nodes` of ``model`` with leaf values in THB.
+    """
 
     rules: str
     r2_cv: float
     leaves: int
     model: DecisionTreeRegressor
     features: list[str]
+    nodes: list[dict[str, Any]] = field(default_factory=list)
 
 
 _LEAF_VALUE_RE = re.compile(r"value: \[(-?\d+(?:\.\d+)?)\]")
@@ -493,6 +590,7 @@ def fit_tier_tree(features: pd.DataFrame, price: pd.Series) -> TierTree:
         leaves=int(tree.get_n_leaves()),
         model=tree,
         features=usable,
+        nodes=tree_nodes(tree, usable, log_target=True),
     )
 
 
@@ -634,6 +732,61 @@ def compare_hierarchical(x: np.ndarray, kmeans_labels: np.ndarray, k: int) -> Hi
         cophenetic_corr=float(cophenetic),
         linkage=tree,
     )
+
+
+#: Branches kept at the top of the web's dendrogram: thousands of leaves are
+#: unreadable, and the k-cluster cut is decided near the top.
+DENDROGRAM_BRANCHES = 30
+
+
+def cut_height(linkage: np.ndarray, k: int) -> float | None:
+    """Merge height halfway between the merges that leave k and k - 1 clusters.
+
+    A horizontal line there crosses exactly k branches, the same partition as
+    ``fcluster(linkage, k, "maxclust")``. O(1).
+
+    Args:
+        linkage: SciPy linkage matrix, ``(n - 1) x 4``, heights in column 2.
+        k: Number of clusters the cut should leave.
+
+    Returns:
+        The cut height, or ``None`` when k < 2 or k exceeds the merges.
+    """
+    if k < 2 or k > len(linkage):
+        return None
+    return float((linkage[-k, 2] + linkage[-k + 1, 2]) / 2)
+
+
+def truncated_dendrogram(
+    linkage: np.ndarray, k: int, branches: int = DENDROGRAM_BRANCHES
+) -> dict[str, Any]:
+    """Top of a Ward dendrogram as plain line segments, plus the k-cluster cut.
+
+    SciPy's ``dendrogram(truncate_mode="lastp")`` keeps the last ``branches``
+    merges; each drawn link is a "∩" of four points (``icoord`` x, ``dcoord``
+    height). Leaf ``i`` sits at x = 10 i + 5, and ``leaf_sizes`` says how
+    many rows hang below it. O(branches) once the linkage exists.
+
+    Args:
+        linkage: SciPy linkage matrix, ``(n - 1) x 4``.
+        k: Clusters the tree is cut into.
+        branches: Leaves kept at the top.
+
+    Returns:
+        ``icoord``, ``dcoord`` (heights rounded to 4 decimals),
+        ``leaf_sizes`` and ``cut_height`` (``None`` for k < 2).
+    """
+    from scipy.cluster.hierarchy import dendrogram
+
+    tree = dendrogram(linkage, truncate_mode="lastp", p=branches, no_plot=True)
+    sizes = [int(s.strip("()")) if s.startswith("(") else 1 for s in tree["ivl"]]
+    cut = cut_height(linkage, k)
+    return {
+        "icoord": [[round(float(v), 2) for v in seg] for seg in tree["icoord"]],
+        "dcoord": [[round(float(v), 4) for v in seg] for seg in tree["dcoord"]],
+        "leaf_sizes": sizes,
+        "cut_height": None if cut is None else round(cut, 4),
+    }
 
 
 @dataclass(frozen=True)
@@ -839,6 +992,8 @@ def segment_demand(
                 "sales_z": sales_z,
                 "price_z": price_z,
                 "views": float(math.expm1(unscaled[0])),
+                # The scatter's x axis (2026.11-v13): the centroid in log1p(views).
+                "log_views": float(unscaled[0]),
                 **sales_fields,
                 "normalized_price": float(unscaled[2]),
             }
@@ -866,6 +1021,15 @@ def segment_demand(
 
 
 BUY_NOW, WAIT, FAIR = "buy_now", "wait", "fair_price"
+#: Labelling and acceptance settings of the timing tree; persisted in its
+#: payload so the web quotes the values actually used.
+TIMING_HORIZON_DAYS = 35.0
+TIMING_MIN_LOOKAHEAD_DAYS = 14.0
+TIMING_DROP_PCT = 0.03
+#: Stock at or below this share of today's counts as scarcity ("buy_now").
+TIMING_STOCK_SHARE = 0.5
+TIMING_TEST_FRACTION = 0.25
+MIN_BALANCED_ACCURACY = 0.6
 TIMING_FEATURES = [
     "pct_vs_model_median",
     "price_percentile_own",
@@ -878,9 +1042,9 @@ TIMING_FEATURES = [
 def label_price_paths(
     history: pd.DataFrame,
     *,
-    horizon_days: float = 35.0,
-    min_lookahead_days: float = 14.0,
-    drop_pct: float = 0.03,
+    horizon_days: float = TIMING_HORIZON_DAYS,
+    min_lookahead_days: float = TIMING_MIN_LOOKAHEAD_DAYS,
+    drop_pct: float = TIMING_DROP_PCT,
 ) -> pd.DataFrame:
     """Turn observation history into supervised timing examples.
 
@@ -947,7 +1111,10 @@ def label_price_paths(
                 label = WAIT
             elif stock_ok[i] and (
                 (~stock_ok[later]).any()
-                or (qty[i] > 0 and np.nanmin(np.where(later, qty, np.nan)) <= qty[i] / 2)
+                or (
+                    qty[i] > 0
+                    and np.nanmin(np.where(later, qty, np.nan)) <= qty[i] * TIMING_STOCK_SHARE
+                )
             ):
                 label = BUY_NOW
             else:
@@ -991,10 +1158,15 @@ class TimingModel:
     n_test: int
     class_counts: dict[str, int]
     medians: dict[str, float]
+    #: :func:`tree_nodes` with raw training counts per class at every node.
+    nodes: list[dict[str, Any]] = field(default_factory=list)
 
 
 def fit_timing_tree(
-    examples: pd.DataFrame, *, test_fraction: float = 0.25, min_balanced_accuracy: float = 0.6
+    examples: pd.DataFrame,
+    *,
+    test_fraction: float = TIMING_TEST_FRACTION,
+    min_balanced_accuracy: float = MIN_BALANCED_ACCURACY,
 ) -> TimingModel:
     """Train the Buy/Wait tree with a chronological train/test split.
 
@@ -1041,6 +1213,7 @@ def fit_timing_tree(
         n_test=len(test),
         class_counts={str(k): int(v) for k, v in examples["label"].value_counts().items()},
         medians=medians,
+        nodes=tree_nodes(tree, TIMING_FEATURES, x=x_train, y=train["label"]),
     )
 
 

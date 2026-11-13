@@ -170,7 +170,7 @@ product-wide style recommendations do not: RawBlock is the visual direction.
 2. **Consumer first, statistics on request.** Pages speak to shoppers: hero
    numbers, pictures, charts. Model quality (R², MAPE, n, accuracy) stays visible
    but small (`text-xs text-subtle` with an "(i)" toggle panel), and full tables,
-   formulas and tree rules live in a collapsed "รายละเอียดทางสถิติ" section.
+   formulas, trees and model charts live on `/ml` ("เบื้องหลัง ML", SPEC round 15).
 3. **Honest models.** When a model is below its usefulness threshold, say so in
    plain Thai and say what is used instead. Never invent a value: missing is `–`.
 4. **Thai first.** UI copy is Thai; model terms stay in English where Thai readers
@@ -221,7 +221,7 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 | Inside-band reason (pipeline) | ถูกกว่า/แพงกว่าราคายุติธรรม x% แต่ยังอยู่ในช่วงคลาดเคลื่อน ±y% จึงยังสรุปไม่ได้ว่าถูกกว่า/แพงกว่าตลาดจริง | |
 | In stock / sold out | ● มีของ / ○ หมด (`SoldOutTag`); a model sold out everywhere: ○ หมดทุกร้าน | |
 | Categories | การ์ดจอ · ซีพียู · แรม · SSD | |
-| Nav | หมวดหมู่สินค้า (menu) · หน้าแรก · การ์ดจอ · ซีพียู · แรม · SSD · ภาพรวมตลาด | |
+| Nav | หมวดหมู่สินค้า (menu) · หน้าแรก · การ์ดจอ · ซีพียู · แรม · SSD · ภาพรวมตลาด · เบื้องหลัง ML | |
 | Header shortcuts | ดีลเด็ด · เทียบหลายร้าน · ภาพรวมตลาด | |
 | 404 title / line | ไม่พบหน้านี้ / ลิงก์อาจผิด หรือสินค้านี้ไม่มีขายแล้ว | |
 | 404 action | กลับไปหน้ารวม → | |
@@ -423,7 +423,7 @@ variables sit on `<html>` so the stacks resolve at `:root`.
 |---|---|---|
 | **HeaderSearch** | `header-search.tsx` (client) | GET `<form action="/">`, prefilled from `?q=` and keeping `?category=`; 44 px; the button reads "ค้นหา" on every width; Suspense fallback is the same form empty, so prerendered pages keep it. The input shrinks (`min-w-0` on the label and its grid cell). |
 | **Header shortcuts** | `app/layout.tsx` | ดีลเด็ด · เทียบหลายร้าน · ภาพรวมตลาด; `flex-wrap justify-end` with `min-w-0`, so below ~340 px the last one drops to a second line rather than scrolling the page (320 px has no sideways scroll). |
-| **SiteNav** | `site-nav.tsx` (client) | Category menu + links; marks the current page from the pathname and `?category=` (category link on "/" with that category, "หน้าแรก" on "/" with none, "ภาพรวมตลาด" under /insights; also in the category menu). Only the link row and menu items read the query (`useSearchParams`, each in its own `<Suspense>`), so prerendered pages stay static and the menu button hydrates outside any boundary. The Suspense fallbacks mark no "/" or category link (`active={null}`): prerendered HTML cannot know the query, so it never highlights "หน้าแรก" on "/?category=…" (SPEC round 11); "ภาพรวมตลาด" depends on the pathname only and is marked in the first HTML of /insights. |
+| **SiteNav** | `site-nav.tsx` (client) | Category menu + links; marks the current page from the pathname and `?category=` (category link on "/" with that category, "หน้าแรก" on "/" with none, "ภาพรวมตลาด" under /insights, "เบื้องหลัง ML" on /ml; also in the category menu). Only the link row and menu items read the query (`useSearchParams`, each in its own `<Suspense>`), so prerendered pages stay static and the menu button hydrates outside any boundary. The Suspense fallbacks mark no "/" or category link (`active={null}`): prerendered HTML cannot know the query, so it never highlights "หน้าแรก" on "/?category=…" (SPEC round 11); "ภาพรวมตลาด" depends on the pathname only and is marked in the first HTML of /insights. |
 | **Hero banner** | `app/page.tsx` | Landing only (no filter/search/sort). `.inverted .card-heavy` block, one link to the product: "Deal of the week" eyebrow (`.caps`, mono), model in Archivo Black, price, fair price + % below, caption "Deal Score สูงสุดในรุ่นที่มีขายหลายร้าน และราคายุติธรรมไม่สูงกว่าราคาสูงสุดที่ร้านเคยตั้งเกิน 10%" (the selection rule as it is), `DealTag` next to the eyebrow, "สูงสุดที่เคยเห็นใน 120 วัน ฿x" (`maxSeenPrice`, `SEEN_WINDOW_DAYS`) under the price, primary CTA "ดูราคา N ร้าน →" (inverts on hover), photo on a white tile. The product is the best Deal ≥ 60 that is in stock at ≥ 2 stores and whose fair price is at most 10% above the highest price any store recorded for the model in price_history over 120 days (`maxSeenPrice`; a fair price above every price the market set is the model overestimating, SPEC round 13); no hero when none qualifies. |
 | **Promo tiles** | `app/page.tsx` | Three `.card.invert-hover` tiles under the hero: เทียบหลายร้าน, ราคายุติธรรม, ซื้อเลยหรือรอ, each linking to the real page; title in `.display`, body line hidden on phones, "→". |
 | **Listing toolbar** | `app/page.tsx` | Heading (search term / category / segment / "ดีลแนะนำวันนี้") + count left ("พบ X รุ่น", X = every matching model, with "(แสดง N อันดับแรก)" past the page limit; when a group is filtered and the heading is not already its name, "พบ X รุ่นในกลุ่ม “ชื่อกลุ่ม”"); while a group is selected its hint is a visible line under the count; category and sort AutoSubmitSelects right; cluster chips below; "ล้างทั้งหมด" link when anything is set. |
@@ -448,7 +448,11 @@ variables sit on `<html>` so the stacks resolve at `:root`.
 | **Driver ranks** | insights | Rank in a black 24 px square, importance bar = `--foreground` fill in a 2 px bordered track. |
 | **Segment tiles** | insights | `.card.invert-hover` links, name in `.display`, two 2 px stat tiles (values `whitespace-nowrap`: "~1 ชิ้น / N วัน" never wraps). |
 | **StatNote** | `stat-note.tsx` (client) | `text-xs text-subtle` toggle `<button>` "text (i)" with `aria-expanded` / `aria-controls` (dotted underline; `py-3.5 -my-3.5`: 44 px hit area, no layout shift); opens a sunken 2 px panel (mono) under it with the full statistic. A button, not `<details>`, because it sits inside `<p>` sentences. The panel is server-rendered with `hidden`, so the text is in the HTML. Never `title` alone. |
-| **Statistics details** | insights | Native `<details>` card, collapsed by default, `.display` summary with "+" / "−". |
+| **Statistics link** | insights | `.card.invert-hover` link at the end of /insights to `/ml` (the former collapsed "รายละเอียดทางสถิติ" moved there, SPEC round 15). |
+| **TreeDiagram** | `tree-diagram.tsx` (+ client `tree-scroll.tsx`) | Node-link tree from the payload's `tree.nodes`, drawn top-down at real size (12 px text): compact tidy layout (Reingold–Tilford contour packing; 172 px question boxes, 112 px leaves, ≥ 14 px between any two boxes on a row, parent midway between its children), so boxes never overlap. Inner nodes: sunken 2 px box, Thai split via `splitText` (`lib/ml.ts`, `featureLabel` + unit; GPU class as "≤ xx60 Ti / XT"; yes/no specs asked positively, "เป็น AMD?") and n. Every edge labelled from `edgeWords`: ใช่ (left, ≤) / ไม่ใช่ (right, >), swapped for yes/no specs (left = ≤ 0.5 = ไม่ใช่). Price leaves: 3 px box, price in mono, a decorative top strip shaded light → dark by log price (`color-mix` of `--foreground` into `--surface`; no text on it). Class leaves: 3 px frame and label in the RecommendationBadge tone. Scrolls sideways inside its own bordered box (focusable, scrolled to the root on mount); `role="img"` + `aria-label`; a `<details>` "ดูต้นไม้นี้เป็นข้อความ" holds the same tree as text. Payloads without `tree` show the old text rules with Thai feature names (`translateRules`), and the reading guide describes the indented text instead of boxes. |
+| **Formula / ScrollTable** | `app/ml/page.tsx` | Formula: mono on a sunken 2 px block that wraps (`whitespace-normal break-words`), never a one-line scroller. ScrollTable: wide tables scroll inside `overflow-x-auto` with a visible "เลื่อนตารางไปทางขวาได้ →" cue below md. Section anchors use `lg:scroll-mt-40` to clear the sticky header. |
+| **CategoryTabs** | `category-tabs.tsx` (client) | Filter-chip buttons (`aria-pressed`, 44 px) switching server-rendered panels (others `hidden`). |
+| **ML charts** | `ml-charts.tsx` (client) | FitScatter (listed vs fair price, log axes, solid y = x, dashed ± the payload's `uncertain_gap`, omitted when absent, nearest-point tooltip), ResidualHistogram (bins from the payload, 0 solid, ± `uncertain_gap` dashed), DemandScatter (marker shape per demand group: filled square, hollow square, hollow triangle, cross; numbered black diamonds = centroids; dashed best-seller views split), DendrogramChart (top 30 Ward merges; dashed cut "เส้นตัด k = n" midway between the merges leaving k and k − 1 clusters, y axis stretched around it when that gap is under 36 px with a note; numbered black squares 1..k where the cut crosses; each group's subtree below the cut on an alternating `--surface-muted` band), LinkageCurve (precision solid + squares, coverage dotted + triangles, chosen threshold long-dashed). Coordinates rounded to 0.01 px so server and browser render the same numbers; per-point style sits on the enclosing `<g>` to keep the HTML small. Every threshold quoted in /ml copy (uncertain gap, bin width, CV folds, max depth, timing horizon / drop / test share / accuracy bar) is read from the payload and left out when an older payload lacks it. |
 | **Empty state** | anywhere | `.card` with centred muted text saying what is missing and why. |
 | **Global error** | `app/global-error.tsx` (client) | When the root layout itself fails: its own `<html lang="th"><body>`, imports globals.css for the RawBlock classes (site fonts not loaded, system Thai face), same block and copy as Error with `role="alert"`; "ลองใหม่" reloads the page (the router context is inside the failed layout). |
 | **Error** | `app/error.tsx` (client) | Root error boundary, same block as the 404, `role="alert"`: h1 "ระบบกำลังยุ่ง", one line "โหลดหน้านี้ไม่สำเร็จ ลองใหม่อีกครั้งในอีกสักครู่", primary "ลองใหม่" (`router.refresh()` + `reset()`). No error message, digest or stack. |
@@ -535,9 +539,21 @@ in `lib/market.ts`.
 5. **ป้าย ซื้อเลย / รอก่อน คิดจากอะไร** (`#advice`): while the tree is below
    its bar, the three rules as badge + sentence; the accuracy vs. 60% as a
    StatNote.
-6. **รายละเอียดทางสถิติ** (collapsed): data coverage, SLR table, record
-   linkage, MLR EffectBars + β table + OLS diagnostics, regression-tree rules,
-   K-Means vs Ward, decision-tree rules.
+6. A link card to `/ml` (the statistics moved there in SPEC round 15).
+
+#### 6.3a Behind the models (`/ml`, nav "เบื้องหลัง ML")
+
+ISR like /insights. h1 + purpose + computed time, jump-link chips, the data
+coverage table, then one section per method in this order: Simple Linear
+Regression, Multiple Linear Regression, Regression Tree, K-Means, Hierarchical
+(Ward), Decision Tree, record linkage. Every section has, in order: วิธีนี้ทำอะไร
+(1–3 plain sentences + a mono formula block), a card "กราฟจากข้อมูลล่าสุด"
+(per-category charts behind CategoryTabs), อ่านกราฟนี้อย่างไร (axes, marks,
+lines, nodes, plus one worked example taken from the payload), ผลที่ได้บอกอะไร
+(the payload's metrics with each term explained on first use, and the
+limits). No number is written into the copy; all come from `market_insights`
+(chart data from model 2026.11-v13; older payloads show a "กราฟจะขึ้นหลังระบบ
+train รอบถัดไป" note or the text rules).
 
 #### 6.4 Adding a page
 
@@ -672,7 +688,8 @@ export default async function Page() {
 
 - Server components with `revalidate = 900`; data through `lib/queries.ts`
   (parameterised SQL aggregated in Postgres, O(1) round trips per page).
-- Client JS is limited to `PriceChart`, `SpecScatter` and `AutoSubmitSelect`;
+- Client JS is limited to `PriceChart`, `SpecScatter`, `AutoSubmitSelect` and
+  the /ml charts, tabs and tree scroller;
   charts are hand-written SVG (no chart library), O(points) per render, hover
   is O(points) per pointer move.
 - Images (see `lib/images.ts`): served straight from the merchants' CDNs at

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { RecommendationBadge } from "@/components/badges";
-import { EffectBars, type Effect } from "@/components/effect-bars";
+import type { Effect } from "@/components/effect-bars";
 import { SpecScatter } from "@/components/spec-scatter";
 import { StatNote } from "@/components/stat-note";
 import { CATEGORY_LABELS, CLUSTER_LABELS, featureLabel, formatDateTime, formatTHB } from "@/lib/format";
@@ -14,19 +14,12 @@ import {
   salesRate,
   tierLabel,
 } from "@/lib/market";
-import { countModelsByCluster, getCoverage, getMarketInsights, getSpecPoints } from "@/lib/queries";
+import { countModelsByCluster, getMarketInsights, getSpecPoints } from "@/lib/queries";
 import type { Category, DemandCluster, MarketInsight, Recommendation } from "@/lib/types";
 
 export const revalidate = 900;
 
 type Coefficient = Effect & { beta: number };
-type Diagnostics = {
-  max_vif: number;
-  skew: number;
-  excess_kurtosis: number;
-  jarque_bera_p: number;
-  breusch_pagan_p: number;
-};
 /**
  * One shopper-facing demand segment as stored: size and averages over the
  * clustered rows (product models from 2026.11-v8, listings before).
@@ -63,16 +56,6 @@ type Segment = {
 };
 /** A K-Means centroid as stored by models before 2026.11-v7 (one label each). */
 type Centroid = Segment & { cluster: number };
-type CurvePoint = { threshold: number; coverage: number; precision: number | null };
-type CategoryLinkage = {
-  listings: number;
-  rule_linked: number;
-  excluded: number;
-  products: number;
-  similarity_linked?: number;
-  evaluation?: { threshold: number | null; curve: CurvePoint[] };
-  duplicate_candidates?: { a: string; b: string; cosine: number }[];
-};
 
 /** Consumer-facing unit per category; SSD is shown per TB, not per GB. */
 const UNIT: Record<Category, { scale: number; axis: string; axisUnit: string; step: string }> = {
@@ -160,17 +143,6 @@ function find(insights: MarketInsight[], category: string, kind: string) {
   return insights.find((i) => i.category === category && i.kind === kind)?.payload;
 }
 
-/** One-line OLS assumption checks under an MLR coefficient table. */
-function DiagnosticsLine({ d }: { d: Diagnostics }) {
-  const p = (v: number): string => (v < 0.001 ? "<0.001" : fixed(v, 3));
-  return (
-    <p className="tabular mt-2 border-t-2 border-border pt-2 text-xs text-muted">
-      max VIF {fixed(d.max_vif, 1)} · skew {fixed(d.skew)} · excess kurt {fixed(d.excess_kurtosis)} · JB p{" "}
-      {p(d.jarque_bera_p)} · BP p {p(d.breusch_pagan_p)}
-    </p>
-  );
-}
-
 function Section({
   id,
   title,
@@ -197,17 +169,14 @@ const hint = (c: Category, feature: string): string | undefined =>
   FACTOR_HINTS[`${c}.${feature}`] ?? FACTOR_HINTS[feature];
 
 export default async function InsightsPage() {
-  const [insights, coverage, points, modelCounts] = await Promise.all([
+  const [insights, points, modelCounts] = await Promise.all([
     getMarketInsights(),
-    getCoverage(),
     getSpecPoints(),
     countModelsByCluster(),
   ]);
   const categories = Object.keys(CATEGORY_LABELS) as Category[];
   const kmeans = find(insights, "all", "demand_kmeans");
-  const hierarchy = find(insights, "all", "demand_hierarchical");
   const timing = find(insights, "all", "timing_tree");
-  const linkage = find(insights, "all", "linkage_quality") as Record<string, CategoryLinkage> | undefined;
   // linkage_quality is written by the link step, not training: exclude it from "computed at".
   const computedAt = insights.find((i) => i.kind !== "linkage_quality")?.computedAt ?? null;
   // Tiles count models exactly as "/?cluster=…" does (live query, one group
@@ -390,7 +359,11 @@ export default async function InsightsPage() {
         </div>
         <p className="text-xs text-muted">
           แถบยาว = มีผลต่อราคามาก เทียบกับปัจจัยอันดับ 1 ของหมวดนั้น · มาจากโมเดลเดียวกับที่คิดราคายุติธรรมและ Deal Score
-          (ตัวเลขละเอียดอยู่ในรายละเอียดทางสถิติด้านล่าง)
+          (ตัวเลขละเอียดและกราฟอยู่ที่{" "}
+          <Link href="/ml#mlr" className="link">
+            เบื้องหลัง ML
+          </Link>
+          )
         </p>
       </Section>
 
@@ -514,218 +487,15 @@ export default async function InsightsPage() {
         </div>
       </Section>
 
-      <details className="card group p-5">
-        <summary className="flex min-h-11 items-center justify-between gap-2">
-          <span className="display text-lg sm:text-xl">รายละเอียดทางสถิติ (สำหรับคนที่อยากรู้ลึก)</span>
-          <span aria-hidden className="disclosure text-xl" />
-        </summary>
-        <div className="mt-5 space-y-8 text-sm">
-          <div className="space-y-2">
-            <h3 className="display text-base">ข้อมูลที่ใช้</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[480px]">
-                <thead className="text-left text-xs text-muted">
-                  <tr>
-                    <th className="py-1 font-medium">ร้าน</th>
-                    <th className="py-1 text-right font-medium">สินค้าที่ขายอยู่</th>
-                    <th className="py-1 text-right font-medium">จับคู่รุ่นได้</th>
-                    <th className="py-1 text-right font-medium">จุดข้อมูลราคา</th>
-                    <th className="py-1 text-right font-medium">ข้อมูลเก่าสุด</th>
-                  </tr>
-                </thead>
-                <tbody className="tabular">
-                  {coverage.map((c) => (
-                    <tr key={c.merchant} className="border-t-2 border-border">
-                      <td className="py-1.5">{c.merchantName}</td>
-                      <td className="py-1.5 text-right">{c.listings.toLocaleString("th-TH")}</td>
-                      <td className="py-1.5 text-right">
-                        {c.listings ? `${Math.round((c.linked / c.listings) * 100)}%` : "–"}
-                      </td>
-                      <td className="py-1.5 text-right">{c.historyRows.toLocaleString("th-TH")}</td>
-                      <td className="py-1.5 text-right">{c.firstObservation?.slice(0, 10) ?? "–"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="display text-base">Simple Linear Regression: ราคาต่อหน่วยสเปก</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[420px]">
-                <thead className="text-left text-xs text-muted">
-                  <tr>
-                    <th className="py-1 font-medium">หมวด</th>
-                    <th className="py-1 font-medium">X</th>
-                    <th className="py-1 text-right font-medium">β₁ (บาท/หน่วย)</th>
-                    <th className="py-1 text-right font-medium">β₀</th>
-                    <th className="py-1 text-right font-medium">R²</th>
-                    <th className="py-1 text-right font-medium">n</th>
-                  </tr>
-                </thead>
-                <tbody className="tabular">
-                  {categories.map((c) => {
-                    const p = find(insights, c, "simple_regression");
-                    if (!p) return null;
-                    return (
-                      <tr key={c} className="border-t-2 border-border">
-                        <td className="py-1.5">{CATEGORY_LABELS[c]}</td>
-                        <td className="py-1.5">{String(p.feature)}</td>
-                        <td className="py-1.5 text-right">{fixed(p.slope_thb_per_unit, 1)}</td>
-                        <td className="py-1.5 text-right">{fixed(p.intercept_thb, 0)}</td>
-                        <td className="py-1.5 text-right">{fixed(p.r2)}</td>
-                        <td className="py-1.5 text-right">{String(p.n)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {linkage && (
-            <div className="space-y-2">
-              <h3 className="display text-base">การจับคู่สินค้า: กฎ Regex + TF-IDF Similarity</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px]">
-                  <thead className="text-left text-xs text-muted">
-                    <tr>
-                      <th className="py-1 font-medium">หมวด</th>
-                      <th className="py-1 text-right font-medium">จับคู่ด้วยกฎ</th>
-                      <th className="py-1 text-right font-medium">ไม่อยู่ในขอบเขต</th>
-                      <th className="py-1 text-right font-medium">threshold (cosine)</th>
-                      <th className="py-1 text-right font-medium">precision · coverage</th>
-                      <th className="py-1 text-right font-medium">จับคู่ด้วย similarity</th>
-                    </tr>
-                  </thead>
-                  <tbody className="tabular">
-                    {categories.map((c) => {
-                      const l = linkage[c];
-                      if (!l) return null;
-                      const t = l.evaluation?.threshold ?? null;
-                      const point = l.evaluation?.curve.find((p) => p.threshold === t);
-                      return (
-                        <tr key={c} className="border-t-2 border-border">
-                          <td className="py-1.5">{CATEGORY_LABELS[c]}</td>
-                          <td className="py-1.5 text-right">
-                            {l.listings ? `${Math.round((l.rule_linked / l.listings) * 100)}%` : "–"}
-                          </td>
-                          <td className="py-1.5 text-right">{l.excluded}</td>
-                          <td className="py-1.5 text-right">{t === null ? "ปิด" : fixed(t)}</td>
-                          <td className="py-1.5 text-right">
-                            {point
-                              ? `${fixed(num(point.precision) * 100, 1)}% · ${fixed(point.coverage * 100, 0)}%`
-                              : "–"}
-                          </td>
-                          <td className="py-1.5 text-right">{l.similarity_linked ?? 0}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="text-xs text-muted">
-                threshold เลือกจากการทดสอบ leave-one-out เทียบกับผลของกฎ ให้ขอบล่าง 95% (Wilson) ของ precision ≥ 95% ·
-                “ปิด” = ยังไม่มี threshold ที่ผ่านเกณฑ์ ระบบจึงไม่เดา · การ์ดจอ workstation และแรมโน้ตบุ๊กไม่อยู่ในขอบเขตโดยตั้งใจ
-              </p>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            <h3 className="display text-base">Multiple Linear Regression: สัมประสิทธิ์</h3>
-            <p className="text-xs text-muted">
-              log(Price) = β₀ + Σβⱼxⱼ + ε บนฟีเจอร์ที่ standardize แล้ว · แถบ = % ราคาที่เปลี่ยนเมื่อฟีเจอร์เพิ่ม 1 SD ·
-              residual eᵢ ติดลบมาก = ถูกกว่าตลาด → Deal Score สูง
-            </p>
-            <div className="grid gap-4 lg:grid-cols-2">
-              {categories.map((c) => {
-                const p = find(insights, c, "fair_value_mlr");
-                if (!p) return null;
-                return (
-                  // min-w-0: a grid item defaults to min-width:auto and would
-                  // grow to its widest child (long feature names, tree rules).
-                  <div key={c} className="min-w-0 border-2 border-border p-3">
-                    <div className="mb-2 flex flex-wrap justify-between gap-x-2">
-                      <span className="font-medium">{CATEGORY_LABELS[c]}</span>
-                      <span className="tabular text-xs text-muted">
-                        R²(cv) {fixed(p.r2_cv)} · MAPE {fixed(num(p.mape_cv) * 100, 1)}% · n={String(p.n)}
-                      </span>
-                    </div>
-                    <EffectBars effects={(p.coefficients as Coefficient[]) ?? []} />
-                    <div className="mt-3 overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <tbody className="tabular">
-                          {((p.coefficients as Coefficient[]) ?? []).map((k) => (
-                            <tr key={k.feature} className="border-t-2 border-border">
-                              <td className="py-0.5 pr-2 break-all">{k.feature}</td>
-                              <td className="py-0.5 text-right whitespace-nowrap">β={k.beta.toFixed(3)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {p.diagnostics ? <DiagnosticsLine d={p.diagnostics as Diagnostics} /> : null}
-                  </div>
-                );
-              })}
-            </div>
-            <p className="text-xs text-muted">
-              ตรวจสมมติฐาน OLS บน residual ในตัวอย่าง: VIF &gt; 10 = ตัวแปรซ้อนกัน (เทอม interaction ซ้อนกับตัวแม่โดยธรรมชาติ) ·
-              Jarque–Bera / Breusch–Pagan p &lt; 0.05 = residual ไม่ปกติ / ความแปรปรวนไม่คงที่ จึงตีความ Deal Score เป็นอันดับเทียบกัน
-              ไม่ใช่ความน่าจะเป็นแม่นยำ
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="display text-base">Regression Tree: ขอบเขตราคาตามระดับฮาร์ดแวร์ (max_depth = 4)</h3>
-            <div className="grid gap-4 lg:grid-cols-2">
-              {categories.map((c) => {
-                const p = find(insights, c, "tier_tree");
-                if (!p) return null;
-                return (
-                  <div key={c} className="min-w-0 border-2 border-border p-3">
-                    <div className="mb-1 font-medium">
-                      {CATEGORY_LABELS[c]}{" "}
-                      <span className="tabular text-xs font-normal text-muted">
-                        R²(cv) {fixed(p.r2_cv)} · {String(p.leaves)} leaves
-                      </span>
-                    </div>
-                    <pre className="max-h-64 overflow-auto text-xs leading-tight text-muted">{String(p.rules)}</pre>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {kmeans && (
-            <div className="space-y-1">
-              <h3 className="display text-base">K-Means และ Hierarchical Clustering</h3>
-              <p className="tabular text-xs text-muted">
-                {rankedSales
-                  ? "X = [log(Views+1), SalesRankPct, NormalizedPrice] (StandardScaler; SalesRankPct = เปอร์เซ็นไทล์ยอดขายภายในร้าน เพราะ JIB วัดจากยอดขายที่ร้านประกาศ แต่ IHAVECPU วัดจากสต็อกที่ลดลง เฉลี่ยข้ามร้านที่มีข้อมูล)"
-                  : "X = [log(Views+1), log(SalesVelocity+1), NormalizedPrice] (StandardScaler)"}{" "}
-                · k={String(kmeans.k)} เลือกจาก
-                silhouette = {fixed(kmeans.silhouette)} · n={String(kmeans.n)} {perModel ? "รุ่น (รวมรายการที่ยังจับคู่รุ่นไม่ได้ รายการละหนึ่งรุ่น)" : "รายการ"}
-                {hierarchy &&
-                  ` · Ward (k=${String(hierarchy.k)}): silhouette ${fixed(hierarchy.silhouette)}, ARI กับ K-Means ${fixed(hierarchy.ari_vs_kmeans)}, cophenetic r ${fixed(hierarchy.cophenetic_corr)}`}
-              </p>
-            </div>
-          )}
-
-          {timing && (
-            <div className="space-y-1">
-              <h3 className="display text-base">Decision Tree: ซื้อเลย / รอก่อน / ราคาเหมาะสม (max_depth = 4)</h3>
-              <p className="tabular text-xs text-muted">
-                Balanced accuracy {fixed(num(timing.balanced_accuracy_test) * 100, 1)}% · สุ่มทาย{" "}
-                {fixed(num(timing.baseline_balanced_accuracy) * 100, 1)}% · train {String(timing.n_train)} / test{" "}
-                {String(timing.n_test)}
-              </p>
-              <pre className="max-h-72 overflow-auto text-xs leading-tight text-muted">{String(timing.rules)}</pre>
-            </div>
-          )}
-        </div>
-      </details>
+      <Link href="/ml" className="card invert-hover flex flex-col gap-2 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <span>
+          <span className="display block text-lg sm:text-xl">รายละเอียดทางสถิติย้ายไปที่ “เบื้องหลัง ML”</span>
+          <span className="block text-sm text-muted">
+            กราฟและวิธีอ่านของโมเดลทุกตัว: Regression, Decision Tree, K-Means, Hierarchical Clustering และการจับคู่สินค้า
+          </span>
+        </span>
+        <span className="font-bold whitespace-nowrap underline underline-offset-2">ดูเบื้องหลัง ML →</span>
+      </Link>
     </div>
   );
 }

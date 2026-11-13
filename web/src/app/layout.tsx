@@ -43,6 +43,7 @@ const FOOTER_LINKS = [
   { href: "/?sort=deal", label: "ดีลดีที่สุด" },
   { href: "/insights", label: "ภาพรวมตลาด" },
   { href: "/insights#advice", label: "ป้ายซื้อเลย / รอก่อน คิดจากอะไร" },
+  { href: "/ml", label: "เบื้องหลัง ML" },
 ];
 
 export default async function RootLayout({

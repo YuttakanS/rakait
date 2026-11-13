@@ -135,9 +135,9 @@ function NavLinksFromUrl() {
 /**
  * The inline link row. Active rules: a category link on "/" with that
  * `?category=` (sort, cluster and q do not matter); "หน้าแรก" on "/" with no
- * category; "ภาพรวมตลาด" under /insights. With `active` null (the Suspense
- * fallback) no "/" or category link is marked; "ภาพรวมตลาด" depends on the
- * pathname only, so it is marked either way.
+ * category; "ภาพรวมตลาด" under /insights; "เบื้องหลัง ML" on /ml. With
+ * `active` null (the Suspense fallback) no "/" or category link is marked;
+ * the last two depend on the pathname only, so they are marked either way.
  */
 function NavLinks({ active }: { active: ActiveCategory | null }) {
   const pathname = usePathname();
@@ -152,6 +152,7 @@ function NavLinks({ active }: { active: ActiveCategory | null }) {
     // The pathname is known at prerender, so /insights is marked even in the
     // fallback; only the query-dependent links wait for hydration.
     { href: "/insights", label: "ภาพรวมตลาด", active: pathname.startsWith("/insights") },
+    { href: "/ml", label: "เบื้องหลัง ML", active: pathname === "/ml" || pathname.startsWith("/ml/") },
   ];
 
   return (

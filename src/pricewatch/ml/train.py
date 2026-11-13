@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v12"
+MODEL_VERSION = "2026.11-v13"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -629,6 +629,165 @@ def rule_recommendation(row: pd.Series) -> tuple[str | None, str]:
     return m.FAIR, mid_score_reason(pct, band)
 
 
+#: Points per chart stored in a payload (SPEC round 15): enough to show the
+#: shape of a fit, small enough to keep each market_insights row ~100 KB.
+CHART_POINTS = 250
+#: Demand-scatter points (models of every category share one chart).
+KMEANS_CHART_POINTS = 600
+#: Residual histogram range and bin width (fraction of the fair price); rows
+#: beyond the range are counted in the end bins and reported separately.
+RESIDUAL_RANGE = 0.6
+RESIDUAL_BIN = 0.05
+
+
+def sample_positions(n: int, limit: int, seed: int = 42) -> np.ndarray:
+    """Sorted positions of at most ``limit`` rows out of ``n``, reproducibly.
+
+    A seeded uniform sample without replacement: the chart keeps the cloud's
+    shape and the same run always shows the same points. O(n).
+
+    Args:
+        n: Rows available.
+        limit: Maximum rows to keep.
+        seed: Random seed of the sample.
+
+    Returns:
+        Ascending positions in ``[0, n)``; all of them when ``n <= limit``.
+    """
+    if n <= limit:
+        return np.arange(n)
+    return np.sort(np.random.default_rng(seed).choice(n, size=limit, replace=False))
+
+
+def fit_points(
+    price: pd.Series, fair: pd.Series, names: pd.Series, limit: int = CHART_POINTS
+) -> list[list[Any]]:
+    """``[price, fair price, name]`` per scored row, sampled to ``limit`` rows.
+
+    Rows without a fair price are left out (nothing to plot). Prices are
+    whole baht to keep the payload small.
+
+    Args:
+        price: Listing price (THB).
+        fair: Out-of-fold fair price (THB, NaN when unscored), aligned.
+        names: Label per row for the tooltip (model or title), aligned.
+        limit: Maximum rows.
+
+    Returns:
+        The sampled rows, in input order.
+    """
+    scored = fair.notna() & price.notna()
+    p = price[scored].to_numpy(float)
+    f = fair[scored].to_numpy(float)
+    n = names[scored].astype(str).to_numpy()
+    keep = sample_positions(len(p), limit)
+    return [[round(float(p[i])), round(float(f[i])), str(n[i])[:80]] for i in keep]
+
+
+def residual_histogram(
+    pct_vs_fair: pd.Series, width: float = RESIDUAL_BIN, span: float = RESIDUAL_RANGE
+) -> dict[str, Any]:
+    """Histogram of ``price / fair - 1`` over scored rows.
+
+    Bins are ``width`` wide from ``-span`` to ``+span``; values outside are
+    clipped into the end bins and also counted in ``below`` / ``above``, so
+    the chart can say how many rows lie past its edges. One vectorised
+    ``np.histogram``: O(n).
+
+    Args:
+        pct_vs_fair: Fractional gap per row (NaN rows are skipped).
+        width: Bin width as a fraction.
+        span: Half-range as a fraction.
+
+    Returns:
+        ``edges`` (bins + 1 values), ``counts``, ``below``, ``above``, ``n``.
+    """
+    values = pct_vs_fair.dropna().to_numpy(float)
+    bins = int(round(2 * span / width))
+    edges = np.linspace(-span, span, bins + 1)
+    counts, _ = np.histogram(np.clip(values, -span, span), bins=edges)
+    return {
+        "edges": [round(float(e), 4) for e in edges],
+        "counts": [int(c) for c in counts],
+        "below": int((values < -span).sum()),
+        "above": int((values > span).sum()),
+        "n": int(len(values)),
+    }
+
+
+def listing_names(frame: pd.DataFrame) -> pd.Series:
+    """Canonical model name per listing, the title when unlinked.
+
+    Args:
+        frame: Listings with optional ``model`` and ``title`` columns.
+
+    Returns:
+        One string per listing, aligned with ``frame``.
+    """
+    title = frame["title"] if "title" in frame else pd.Series("", index=frame.index)
+    if "model" not in frame:
+        return title.astype(str)
+    return frame["model"].where(frame["model"].notna(), title).astype(str)
+
+
+def kmeans_points(
+    models: pd.DataFrame, labels: pd.Series, limit: int = KMEANS_CHART_POINTS
+) -> list[list[Any]]:
+    """``[log1p(views), sales_rank_pct, label]`` per clustered model, sampled.
+
+    Args:
+        models: ``model_demand`` rows with ``views`` and ``sales_rank_pct``.
+        labels: Listing label per model (NaN for unclustered models).
+        limit: Maximum rows.
+
+    Returns:
+        The sampled rows; coordinates rounded to 3 decimals.
+    """
+    labelled = labels.dropna()
+    x = np.log1p(models.loc[labelled.index, "views"].to_numpy(float))
+    y = models.loc[labelled.index, "sales_rank_pct"].to_numpy(float)
+    names = labelled.astype(str).to_numpy()
+    keep = sample_positions(len(names), limit)
+    return [[round(float(x[i]), 3), round(float(y[i]), 3), str(names[i])] for i in keep]
+
+
+def timing_payload(timing: m.TimingModel) -> dict[str, Any]:
+    """The ``(all, timing_tree)`` market-insight payload of a fitted timing tree.
+
+    Besides the scores it carries the settings behind the labels and the
+    usefulness bar (2026.11-v13), so /ml quotes the values actually used
+    rather than numbers written into its copy.
+
+    Args:
+        timing: The fitted Buy / Wait tree.
+
+    Returns:
+        A JSON-ready dict.
+    """
+    return {
+        "rules": timing.rules,
+        "accuracy_test": timing.accuracy_test,
+        "baseline_accuracy_test": timing.baseline_accuracy_test,
+        "balanced_accuracy_test": timing.balanced_accuracy_test,
+        "baseline_balanced_accuracy": timing.baseline_balanced_accuracy,
+        "used_for_recommendations": timing.usable,
+        "confusion": timing.confusion,
+        "classes": timing.classes,
+        "n_train": timing.n_train,
+        "n_test": timing.n_test,
+        "class_counts": timing.class_counts,
+        "min_balanced_accuracy": m.MIN_BALANCED_ACCURACY,
+        "horizon_days": m.TIMING_HORIZON_DAYS,
+        "min_lookahead_days": m.TIMING_MIN_LOOKAHEAD_DAYS,
+        "drop_pct": m.TIMING_DROP_PCT,
+        "stock_share": m.TIMING_STOCK_SHARE,
+        "test_fraction": m.TIMING_TEST_FRACTION,
+        # Node-link structure for /ml: raw training counts per class.
+        "tree": {"nodes": timing.nodes, "value": "class_counts"},
+        "max_depth": m.MAX_TREE_DEPTH,
+    }
+
+
 @dataclass
 class TrainReport:
     """Everything one training run produced, for persistence and printing."""
@@ -717,6 +876,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "intercept": mlr.intercept,
                 "r2_cv": mlr.r2_cv,
                 "mape_cv": mlr.mape_cv,
+                "cv_folds": mlr.cv_folds,
                 "n": mlr.n,
                 "required": REQUIRED_FOR_FAIR_VALUE[category],
                 "unscored": int(mlr.fair_price.isna().sum()),
@@ -724,8 +884,14 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "uncertain": int(uncertain.sum()),
                 "uncertain_gap": UNCERTAIN_GAP,
                 "error_pct_median": float(mlr.error_pct().median()),
+                # Coverage of the "± Y%" interval (2026.11-v13).
+                "interval_level": m.INTERVAL_LEVEL,
                 "fitted_on": "in-stock listings",
                 "diagnostics": mlr.diagnostics.summary() if mlr.diagnostics else None,
+                # Chart data for /ml (2026.11-v13): [price, fair, name] for at
+                # most CHART_POINTS scored listings, and the % gap histogram.
+                "fit_points": fit_points(price, mlr.fair_price, listing_names(frame)),
+                "residual_bins": residual_histogram(pct),
             }
             if figures:
                 _plot_mlr(figures, category, price, mlr)
@@ -742,6 +908,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "r2_cv": tier.r2_cv,
                 "leaves": tier.leaves,
                 "features": tier.features,
+                # Node-link structure for /ml (2026.11-v13); leaf values in THB.
+                "tree": {"nodes": tier.nodes, "value": "price_thb"},
+                "max_depth": m.MAX_TREE_DEPTH,
             }
             if figures:
                 _plot_tree(figures, f"{category.value}_tier_tree", tier.model, tier.features)
@@ -781,6 +950,9 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             "segments": seg.segments,
             "split_views": seg.split_views,
             "n": int(seg.labels.notna().sum()),
+            # Scatter for /ml (2026.11-v13): [log1p(views), sales_rank_pct,
+            # label] for at most KMEANS_CHART_POINTS clustered models.
+            "points": kmeans_points(models, seg.labels),
         }
         if seg.hierarchy is not None:
             h = seg.hierarchy
@@ -791,6 +963,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "ari_vs_kmeans": h.ari_vs_kmeans,
                 "cophenetic_corr": h.cophenetic_corr,
                 "n": int(len(h.linkage) + 1),
+                # Top DENDROGRAM_BRANCHES merges and the k cut, for /ml (2026.11-v13).
+                "dendrogram": m.truncated_dendrogram(h.linkage, h.k),
             }
         if figures:
             _plot_kmeans(figures, models, seg)
@@ -805,19 +979,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     try:
         examples = m.label_price_paths(history)
         timing = m.fit_timing_tree(examples)
-        report.market[("all", "timing_tree")] = {
-            "rules": timing.rules,
-            "accuracy_test": timing.accuracy_test,
-            "baseline_accuracy_test": timing.baseline_accuracy_test,
-            "balanced_accuracy_test": timing.balanced_accuracy_test,
-            "baseline_balanced_accuracy": timing.baseline_balanced_accuracy,
-            "used_for_recommendations": timing.usable,
-            "confusion": timing.confusion,
-            "classes": timing.classes,
-            "n_train": timing.n_train,
-            "n_test": timing.n_test,
-            "class_counts": timing.class_counts,
-        }
+        report.market[("all", "timing_tree")] = timing_payload(timing)
         if figures:
             _plot_tree(figures, "timing_tree", timing.model, timing.features, timing.classes)
     except ValueError as exc:
@@ -825,7 +987,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
 
     if timing is not None and not timing.usable:
         report.notes.append(
-            f"timing tree: balanced accuracy {timing.balanced_accuracy_test:.2f} is below 0.60 "
+            f"timing tree: balanced accuracy {timing.balanced_accuracy_test:.2f} is below "
+            f"{m.MIN_BALANCED_ACCURACY:.2f} "
             f"(chance {timing.baseline_balanced_accuracy:.2f}); using transparent rules"
         )
         timing = None
@@ -1107,7 +1270,7 @@ def _plot_dendrogram(out: Path, h: m.HierarchyComparison) -> None:
     # Only the last 30 merges: thousands of leaves are unreadable, and the
     # top of the tree is where the k-cluster cut is decided.
     dendrogram(h.linkage, truncate_mode="lastp", p=30, ax=ax, no_labels=True)
-    cut = (h.linkage[-h.k, 2] + h.linkage[-h.k + 1, 2]) / 2 if h.k > 1 else None
+    cut = m.cut_height(h.linkage, h.k)
     if cut is not None:
         ax.axhline(cut, color="grey", linestyle="--", linewidth=1, label=f"cut at k={h.k}")
         ax.legend(fontsize=8)

@@ -1131,3 +1131,202 @@ def test_error_band_widens_with_leverage() -> None:
     assert band.iloc[0] == pytest.approx(np.sinh(m.Z_80 * 0.2))  # ~ ±26%
     assert band.iloc[1] > band.iloc[0]
     assert np.isnan(band.iloc[2])
+
+
+# ---------------------------------------------------- chart payloads (SPEC round 15)
+
+
+def _reachable(nodes: list[dict], node_id: int = 0) -> set[int]:
+    node = nodes[node_id]
+    if node["left"] is None:
+        return {node_id}
+    return {node_id} | _reachable(nodes, node["left"]) | _reachable(nodes, node["right"])
+
+
+def test_tree_nodes_mirror_the_sklearn_regressor_and_back_transform_to_thb() -> None:
+    from sklearn.tree import DecisionTreeRegressor
+
+    rng = np.random.default_rng(15)
+    n = 300
+    vram = rng.choice([4.0, 8.0, 12.0, 16.0, 24.0], size=n)
+    price = np.where(vram <= 10, 8_000.0, np.where(vram <= 20, 20_000.0, 50_000.0))
+    price *= rng.uniform(0.9, 1.1, size=n)
+    x = pd.DataFrame({"vram_gb": vram})
+    model = DecisionTreeRegressor(max_depth=2, min_samples_leaf=5, random_state=0)
+    model.fit(x, np.log(price))
+    tree = model.tree_
+
+    nodes = m.tree_nodes(model, ["vram_gb"], log_target=True)
+
+    assert len(nodes) == tree.node_count
+    assert [nd["id"] for nd in nodes] == list(range(tree.node_count))
+    assert _reachable(nodes) == set(range(tree.node_count))  # one connected tree
+    leaves = model.apply(x)
+    for i, nd in enumerate(nodes):
+        if tree.children_left[i] == tree.children_right[i]:
+            assert nd["feature"] is None and nd["threshold"] is None
+            assert nd["left"] is None and nd["right"] is None
+            # Leaf value: exp(mean log price) of its rows, in whole baht.
+            rows = price[leaves == i]
+            assert nd["n"] == len(rows)
+            assert nd["value"] == round(float(np.exp(np.log(rows).mean())))
+        else:
+            assert nd["feature"] == "vram_gb"
+            assert nd["threshold"] == pytest.approx(tree.threshold[i])
+            assert (nd["left"], nd["right"]) == (tree.children_left[i], tree.children_right[i])
+            # Left child = rows with feature <= threshold.
+            assert nd["n"] == nodes[nd["left"]]["n"] + nodes[nd["right"]]["n"]
+    root = nodes[0]
+    assert 12.0 < root["threshold"] < 24.0 or 8.0 < root["threshold"] < 12.0
+    # Readable THB, not log units (log(8,000) ~ 9).
+    assert min(nd["value"] for nd in nodes if nd["left"] is None) > 5_000
+
+
+def test_tier_tree_carries_its_nodes_in_thb() -> None:
+    n = 200
+    perf = pd.Series(RNG.uniform(3, 9, size=n))
+    price = pd.Series(np.where(perf < 6, 8000.0, 30000.0) * RNG.uniform(0.95, 1.05, n))
+
+    tier = m.fit_tier_tree(pd.DataFrame({"perf_class": perf}), price)
+
+    assert len(tier.nodes) == tier.model.tree_.node_count
+    assert sum(nd["left"] is None for nd in tier.nodes) == tier.leaves
+    assert tier.nodes[0]["threshold"] == pytest.approx(6.0, abs=0.2)
+    left, right = tier.nodes[tier.nodes[0]["left"]], tier.nodes[tier.nodes[0]["right"]]
+    assert left["value"] == pytest.approx(8000, rel=0.05)
+    assert right["value"] == pytest.approx(30000, rel=0.05)
+
+
+def test_tree_nodes_of_the_timing_tree_count_raw_training_rows_per_class() -> None:
+    rng = np.random.default_rng(6)
+    n = 400
+    pct = rng.uniform(-0.2, 0.2, size=n)
+    examples = pd.DataFrame(
+        {
+            **{f: rng.normal(size=n) for f in m.TIMING_FEATURES},
+            "scraped_at": pd.date_range("2025-01-01", periods=n, freq="D"),
+        }
+    )
+    examples["pct_vs_model_median"] = pct
+    # Imbalanced on purpose: class weights must not leak into the counts.
+    examples["label"] = np.where(pct > 0.15, m.WAIT, np.where(pct < -0.15, m.BUY_NOW, m.FAIR))
+
+    model = m.fit_timing_tree(examples)
+    nodes = model.nodes
+    tree = model.model.tree_
+
+    assert len(nodes) == tree.node_count
+    root_counts = nodes[0]["value"]["counts"]
+    assert sum(root_counts.values()) == model.n_train
+    train_labels = examples.sort_values("scraped_at").iloc[: model.n_train]["label"]
+    assert root_counts == {c: int((train_labels == c).sum()) for c in model.classes}
+    for nd in nodes:
+        assert sum(nd["value"]["counts"].values()) == nd["n"]
+        assert nd["value"]["winner"] in model.classes
+        if nd["left"] is not None:
+            kids = nodes[nd["left"]]["value"]["counts"], nodes[nd["right"]]["value"]["counts"]
+            assert {c: kids[0][c] + kids[1][c] for c in model.classes} == nd["value"]["counts"]
+            assert nd["feature"] in m.TIMING_FEATURES
+    # The winner is what the tree predicts for rows reaching that leaf.
+    x = examples[m.TIMING_FEATURES].fillna(pd.Series(model.medians)).iloc[:50]
+    for leaf, predicted in zip(model.model.apply(x), model.model.predict(x), strict=True):
+        assert nodes[int(leaf)]["value"]["winner"] == predicted
+
+
+def test_truncated_dendrogram_cut_crosses_k_branches() -> None:
+    from scipy.cluster.hierarchy import fcluster, linkage
+
+    rng = np.random.default_rng(3)
+    x = np.vstack([rng.normal(c, 0.2, size=(40, 2)) for c in (0, 3, 6, 9)])
+    tree = linkage(x, method="ward")
+
+    d = m.truncated_dendrogram(tree, k=4, branches=12)
+
+    assert len(d["leaf_sizes"]) == 12
+    assert sum(d["leaf_sizes"]) == len(x)
+    assert len(d["icoord"]) == len(d["dcoord"]) == 11
+    cut = d["cut_height"]
+    # Vertical legs crossing the cut line = clusters below it.
+    crossings = sum(
+        (min(h[0], h[1]) < cut < max(h[0], h[1])) + (min(h[2], h[3]) < cut < max(h[2], h[3]))
+        for h in d["dcoord"]
+    )
+    assert crossings == 4
+    assert len(set(fcluster(tree, t=cut, criterion="distance"))) == 4
+    assert m.cut_height(tree, 1) is None
+
+
+def test_residual_histogram_counts_every_row_and_flags_the_tails() -> None:
+    from pricewatch.ml.train import residual_histogram
+
+    pct = pd.Series([-0.9, -0.12, -0.01, 0.0, 0.02, 0.3, 0.75, np.nan])
+
+    h = residual_histogram(pct)
+
+    assert len(h["edges"]) == len(h["counts"]) + 1 == 25
+    assert sum(h["counts"]) == h["n"] == 7
+    assert (h["below"], h["above"]) == (1, 1)
+    assert h["counts"][0] == 1 and h["counts"][-1] == 1
+
+
+def test_run_models_stores_chart_data_within_the_payload_budget() -> None:
+    import json
+
+    from pricewatch.ml.train import CHART_POINTS, KMEANS_CHART_POINTS
+
+    demand = _multi_store_catalogue(seed=9)
+    gpus = _gpu_catalogue(7).assign(merchant="jib")
+    gpus["listing_id"] += len(demand)
+    gpus["canonical_id"] = gpus["canonical_id"] + 1000
+    current = pd.concat([demand, gpus], ignore_index=True)
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    mlr = report.market[("gpu", "fair_value_mlr")]
+    assert 0 < len(mlr["fit_points"]) <= CHART_POINTS
+    assert all(len(p) == 3 and p[0] > 0 and p[1] > 0 for p in mlr["fit_points"])
+    assert mlr["residual_bins"]["n"] == sum(mlr["residual_bins"]["counts"])
+    assert 2 <= mlr["cv_folds"] <= 5
+    assert mlr["uncertain_gap"] == pytest.approx(0.40)
+    tier = report.market[("gpu", "tier_tree")]
+    assert tier["tree"]["nodes"][0]["id"] == 0
+    assert tier["max_depth"] == m.MAX_TREE_DEPTH
+    kmeans = report.market[("all", "demand_kmeans")]
+    assert 0 < len(kmeans["points"]) <= KMEANS_CHART_POINTS
+    assert {p[2] for p in kmeans["points"]} <= set(m.SEGMENT_LABELS)
+    assert all("log_views" in c for c in kmeans["centroids"])
+    ward = report.market[("all", "demand_hierarchical")]
+    assert ward["dendrogram"]["cut_height"] is not None
+    for payload in report.market.values():
+        assert len(json.dumps(payload).encode()) < 200_000
+
+
+def test_timing_payload_carries_the_settings_the_web_quotes() -> None:
+    import json
+
+    from pricewatch.ml.train import timing_payload
+
+    rng = np.random.default_rng(6)
+    n = 400
+    pct = rng.uniform(-0.2, 0.2, size=n)
+    examples = pd.DataFrame(
+        {
+            **{f: rng.normal(size=n) for f in m.TIMING_FEATURES},
+            "scraped_at": pd.date_range("2025-01-01", periods=n, freq="D"),
+        }
+    )
+    examples["pct_vs_model_median"] = pct
+    examples["label"] = np.where(pct > 0.07, m.WAIT, np.where(pct < -0.07, m.BUY_NOW, m.FAIR))
+
+    payload = timing_payload(m.fit_timing_tree(examples))
+
+    assert payload["min_balanced_accuracy"] == m.MIN_BALANCED_ACCURACY == 0.6
+    assert payload["horizon_days"] == m.TIMING_HORIZON_DAYS == 35.0
+    assert payload["min_lookahead_days"] == m.TIMING_MIN_LOOKAHEAD_DAYS == 14.0
+    assert payload["drop_pct"] == m.TIMING_DROP_PCT == 0.03
+    assert payload["stock_share"] == m.TIMING_STOCK_SHARE == 0.5
+    assert payload["test_fraction"] == m.TIMING_TEST_FRACTION == 0.25
+    assert payload["max_depth"] == m.MAX_TREE_DEPTH
+    assert payload["tree"]["nodes"][0]["id"] == 0
+    assert payload["used_for_recommendations"] is True
+    json.dumps(payload)  # JSON-ready as persisted

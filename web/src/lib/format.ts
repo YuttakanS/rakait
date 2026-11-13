@@ -160,6 +160,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   shader_cores: "จำนวนคอร์กราฟิก",
   boost_clock_mhz: "Boost clock",
   bus_width_bit: "ความกว้างบัส",
+  cores: "จำนวนคอร์",
   log2_cores: "จำนวนคอร์",
   log2_threads: "จำนวนเธรด",
   base_clock_ghz: "ความเร็วสัญญาณนาฬิกา",
