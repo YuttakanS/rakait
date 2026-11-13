@@ -10,7 +10,13 @@
 
 ## Ready
 
-- [ ] **Round 19 (approved plan): flag sibling models whose fair prices are inverted** (detect + mark uncertain, no MLR restructure; user decision 2026-11-13). See the "ต้องให้ผู้ใช้ตัดสินใจ" item below for the examples.
+- [ ] **Round 19 follow-ups (live, model 2026.11-v17)** (S)
+  1. Sibling reason on mobile cards is 6–9 lines at 375/320px when the model name is long (2-column grid, 108–136px text). Consider dropping the "โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล" tail on cards only (the chip says it); keep the full sentence on the product page.
+  2. /insights siblingSentence: "…เกิน 5% 3 คู่" puts two numbers side by side, write "…เกิน 5% รวม 3 คู่"; "ไม่ดีกว่า…เลยสักด้าน" reads as a double negative, use the /ml wording "ด้อยกว่าหรือเท่ากับอีกรุ่นทุกด้าน" on both pages.
+  3. `fitExample` falls back to all points (possibly flagged) when none are trusted, contradicting the "never a flagged listing" comment; return null (hide the example) instead, or fix the comment.
+  4. FitScatter tooltip does not say a point is "ประเมินไม่แน่นอน".
+- [ ] **Round 20 (user decision 2026-11-13): fix the CPU MLR root cause of sibling inversions** (M). On v16 data 19 CPU pairs are inverted, e.g. i9-14900F ฿22,821 > 14900K ฿17,438, i7-14700F > 14700K, 7700X3D > 7800X3D, Ryzen 5 5500 > 5600, 9600 > 9600X. Suspects: no `has_igpu` / F-model feature in the CPU MLR; demand features (`sales_rank_pct`, `log_views`) push popular models up.
+  - เกณฑ์ผ่าน: 1) CPU inversion pairs and flagged % drop clearly (target ≤ 15% of Deal-Scored CPU listings) 2) CPU R²(cv) and MAPE(cv) do not get worse (v16: .85 / .227) 3) reported per feature change, chosen by GroupKFold CV, not by inversion count alone.
 - [ ] **Round 18 follow-ups (live, model 2026.11-v16)**
   1. Hydration error #418 on production list pages (5 in ~110 loads on v15). Server HTML is correct; mismatch at `div.flex` around `AutoSubmitSelect` under `<section products-title>`. Do NOT wrap page content in Suspense. Start from the header Suspense (HeaderSearch / SiteNav with useSearchParams).
   2. The demand payload cache (15 minutes) mixes new numbers with old wording after a train. Revalidate on train or deploy.
@@ -60,7 +66,7 @@
 - [ ] "(i)" และ hint ของกลุ่มต้องใช้บนมือถือได้ (แตะแล้วเห็น), ภาษา hint ง่ายขึ้น, การ์ด /insights แสดงมัธยฐานยอดวิวแทนค่าเฉลี่ย (กลุ่ม "คนดูน้อย" ค่าเฉลี่ย 18,339 สูงกว่าเส้นแบ่ง 18,149) (S)
 - [x] (เสร็จรอบ 12) `demand_features` ใน MLR (ราคายุติธรรม / Deal Score) ยังรวมชิ้น/วันข้ามร้าน ใช้อันดับภายในร้านแบบรอบ 9 หรือตัดออกแล้วเทียบ CV MAPE (M)
 
-- [ ] **ต้องให้ผู้ใช้ตัดสินใจ:** ราคายุติธรรมกลับด้านในรุ่นพี่น้อง (RTX 3050 6GB ฿10,072 > 8GB ฿7,935; RX 9060 XT 8GB > 16GB; 5070 Ti > 5080; 9070 XT ฿48,647 vs 9070 GRE ฿16,611; 9800X3D ฿11,981 vs 9950X3D ฿42,109) ทางเลือก: monotonic constraint (VRAM/tier), แยกโมเดลตามสถาปัตยกรรม, หรือเตือนเมื่อพี่น้องกลับด้าน (L)
+- [x] (ตัดสินแล้ว: ตรวจหาแล้วติดป้ายฝั่งด้อย รอบ 19; ต้นเหตุ CPU = รอบ 20) ราคายุติธรรมกลับด้านในรุ่นพี่น้อง (RTX 3050 6GB ฿10,072 > 8GB ฿7,935; RX 9060 XT 8GB > 16GB; 5070 Ti > 5080; 9070 XT ฿48,647 vs 9070 GRE ฿16,611; 9800X3D ฿11,981 vs 9950X3D ฿42,109) ทางเลือก: monotonic constraint (VRAM/tier), แยกโมเดลตามสถาปัตยกรรม, หรือเตือนเมื่อพี่น้องกลับด้าน (L)
 - [ ] GPU: ลองตัด feature ยอดขายออกจาก MLR (no-sales variant R²cv .940 vs .925) (S)
 - [ ] /insights "อะไรทำให้ราคาแพงขึ้น": "เป็น DDR5 ▼ ราคาต่ำกว่า" ต้องบอกว่าเทียบที่ความเร็วเท่ากัน; ตารางสัมประสิทธิ์แสดง featureLabel คู่ชื่อดิบ (S)
 
@@ -80,4 +86,5 @@
 
 ## Done
 (บรรทัดเดียวต่องาน)
+- รอบ 19 (2026-11-13, fa93d09, model v17): รุ่นสเปกด้อยที่ราคายุติธรรมสูงกว่ารุ่นพี่น้องเกิน 5% ติด "ประเมินไม่แน่นอน" พร้อมเหตุผลอ้างรุ่นคู่ (ผู้ใช้เลือกติดฝั่งเดียว) GPU 3 / CPU 19 / RAM 1 / SSD 1 คู่; deal of the week เลิกเป็น RTX 3050 6GB
 - รอบ 18 (2026-11-13, 5f279a1, model v16): /ml พร้อมนำเสนอ (centroid, Decision Tree, legend, ใช่ซ้าย, dendrogram, สูตรครบ, ปุ่มเลื่อนต้นไม้), กลุ่มที่เหลือชื่อ "ยอดขายไม่เด่น" ติดป้ายเมื่อขายดีกว่า < 50%, ชิปกลุ่มว่าง, จำนวนรุ่นตรงกันทุกหน้า, /insights ใช้มัธยฐาน; ปิด Vercel git auto-deploy (1ac51e0)
