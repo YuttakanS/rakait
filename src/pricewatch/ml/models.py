@@ -669,7 +669,8 @@ def name_segments(centers: list[tuple[float, float]]) -> list[str]:
       rather than from one centroid each;
     * overpriced hype: the other centroids whose views exceed sales by the
       margin (attention that does not convert);
-    * niche: everything else (little attention, few sales).
+    * niche: everything else. The remainder, not a claim: its shopper-facing
+      name is neutral ("ไม่เด่นทั้งคนดูและยอดขาย", SPEC round 17).
 
     Args:
         centers: ``(views_z, sales_z)`` per cluster.
@@ -711,6 +712,100 @@ def split_best_sellers(
     median = float(np.median(log_views[sellers]))
     split = np.where(log_views > median, FAVORITE, HIDDEN_GEM)
     return np.where(sellers, split, cluster_names).astype(object), median
+
+
+#: A model "sells well" for a label when it outsells at least this share of
+#: its stores' listings (SPEC round 17). The all-model median of that share
+#: was 0 on the live catalogue (most models show no sales in the window), so
+#: "above the median" let a model that outsold 1% of its store carry a
+#: "ขายดี" badge; half the store is a bar a shopper can check.
+LABEL_SALES_BAR = 0.5
+
+#: Per-label statistics repeated over the labelled models only
+#: (``segments[].labelled_<stat>`` in the payload).
+LABELLED_STATS = ("views_median", "sales_beats_pct", "sales_beats_pct_median")
+
+#: Which stored numbers of a model fail its label (``demand_label_miss``).
+LABEL_MISSES = ("views", "sales", "both")
+
+
+def shown_whole(values: np.ndarray) -> np.ndarray:
+    """Round like the web prints: JavaScript ``Math.round`` (halves go up).
+
+    ``np.rint`` rounds halves to even (2.5 -> 2), the web prints 3.
+    ``v - floor(v)`` is exact for |v| < 2**52, so the half test needs no
+    extra rounding (see ``train.shown_pct``). NaN stays NaN. O(n), vectorised.
+    """
+    whole = np.floor(values)
+    return whole + (values - whole >= 0.5)
+
+
+def label_fit(
+    labels: pd.Series,
+    views: pd.Series,
+    sales_beats_pct: pd.Series,
+    *,
+    split_views: float | None,
+    views_median: float,
+    sales_bar: float = LABEL_SALES_BAR,
+) -> tuple[pd.Series, pd.Series]:
+    """Whether each model's own numbers support the name of its demand group.
+
+    K-Means groups on views, sales and price at once, so a model can land in
+    "many views, few sales" while outselling most of its store (price put it
+    there). A badge that the numbers printed beside it contradict is worse
+    than no badge, so the web shows a group's name only where this is True
+    (SPEC round 17). This is the one place the rule lives; the web reads the
+    flag. The rule, on the numbers as the web prints them (whole views,
+    whole percent, :func:`shown_whole`), so a card never shows a number that
+    seems to break it:
+
+    * ``hidden_gem``: sales share >= ``sales_bar`` and views <= ``split_views``;
+    * ``community_favorite``: sales share >= ``sales_bar`` and views > ``split_views``;
+    * ``overpriced_hype``: views > ``views_median`` and sales share < ``sales_bar``;
+    * ``niche``: always fits (its name, "ไม่เด่นทั้งคนดูและยอดขาย", claims no number).
+
+    Boolean masks over contiguous float arrays: O(n), no per-row Python.
+
+    Args:
+        labels: Listing label per row (None for unclustered rows).
+        views: Views per row.
+        sales_beats_pct: Share of the store's listings outsold, per row.
+        split_views: Views at the best-seller split (None without best sellers).
+        views_median: Median views over every clustered row.
+        sales_bar: Share from which a model "sells well".
+
+    Returns:
+        ``(fits, miss)`` indexed like ``labels``: ``fits`` is True / False,
+        None for unclustered rows; ``miss`` names the failing numbers of a
+        False row (one of :data:`LABEL_MISSES`), None otherwise.
+    """
+    label = labels.to_numpy(dtype=object)
+    shown_views = shown_whole(views.to_numpy(float))
+    shown_sales = shown_whole(sales_beats_pct.to_numpy(float) * 100)
+    bar = shown_whole(np.array([sales_bar * 100]))[0]
+    median = shown_whole(np.array([views_median]))[0]
+    split = np.inf if split_views is None else shown_whole(np.array([split_views]))[0]
+    sells_well = shown_sales >= bar  # NaN compares False: unknown sales never "sell well"
+    gem, favorite, hype = label == HIDDEN_GEM, label == FAVORITE, label == HYPE
+    # A number we cannot see fails the claim made about it.
+    views_ok = np.where(
+        gem, shown_views <= split, np.where(favorite, shown_views > split, shown_views > median)
+    )
+    sales_ok = np.where(hype, shown_sales < bar, sells_well)
+    named = gem | favorite | hype
+    views_miss, sales_miss = named & ~views_ok, named & ~sales_ok
+    clustered = labels.notna().to_numpy()
+    fits = np.where(clustered, ~(views_miss | sales_miss), None)
+    miss = np.where(
+        views_miss & sales_miss,
+        "both",
+        np.where(views_miss, "views", np.where(sales_miss, "sales", None)),
+    )
+    return (
+        pd.Series(fits, index=labels.index, dtype=object),
+        pd.Series(np.where(clustered, miss, None), index=labels.index, dtype=object),
+    )
 
 
 #: Ward linkage keeps an O(n^2) condensed distance matrix (8 bytes per pair):
@@ -857,6 +952,10 @@ class DemandSegments:
             is a best seller.
         silhouette_by_k: Silhouette per candidate k.
         hierarchy: Ward comparison, when ``n`` is small enough.
+        label_fits: Per input row, whether its numbers support its label's
+            name (:func:`label_fit`): True / False, None for unclustered rows
+            or when no ``sales_beats_pct`` was given (nothing to check).
+        label_miss: Which numbers fail it (:data:`LABEL_MISSES`), else None.
         drivers: Per input row, the feature that most keeps it in its cluster
             (:func:`deciding_dimension`); ``None`` for unclustered rows.
         reference: Medians over every clustered row (``views_median``,
@@ -875,6 +974,8 @@ class DemandSegments:
     hierarchy: HierarchyComparison | None = None
     drivers: pd.Series | None = None
     reference: dict[str, float | int] = field(default_factory=dict)
+    label_fits: pd.Series | None = None
+    label_miss: pd.Series | None = None
 
 
 _SEGMENT_STATS = (
@@ -1075,22 +1176,51 @@ def segment_demand(
     hierarchy = (
         compare_hierarchical(x, km.labels_, best_k) if len(x) <= MAX_HIERARCHICAL_N else None
     )
+    # Rounded: expm1(log1p(v)) of a model sitting on the split gives
+    # 1731.9999999999995 for v = 1732, and the stored threshold should
+    # be the model's own view count (the split itself is taken on logs).
+    split_views = None if split_log_views is None else round(math.expm1(split_log_views), 6)
+    segments = summarise_segments(
+        labels, views, sales_per_day, normalized_price, sales_rank_pct, sales_beats_pct
+    )
+    label_fits = label_miss = None
+    if sales_beats_pct is not None:
+        label_fits, label_miss = label_fit(
+            labels,
+            views.astype(float),
+            sales_beats_pct.astype(float),
+            split_views=split_views,
+            views_median=float(reference["views_median"]),
+        )
+        # Models whose numbers support the name: what the web lists under it.
+        # Their own summary goes beside the whole cluster's ("labelled_*"), so
+        # a tile that counts labelled models also averages labelled models.
+        fitting = labels.where(label_fits.eq(True))
+        labelled = {
+            str(s["label"]): s
+            for s in summarise_segments(
+                fitting, views, sales_per_day, normalized_price, sales_rank_pct, sales_beats_pct
+            )
+        }
+        for segment in segments:
+            own = labelled.get(str(segment["label"]))
+            segment["labelled"] = 0 if own is None else int(own["size"])
+            for stat in LABELLED_STATS:
+                if own is not None and stat in own:
+                    segment[f"labelled_{stat}"] = own[stat]
     return DemandSegments(
         k=best_k,
         silhouette=scores[best_k],
         centroids=centroids,
         labels=labels,
-        segments=summarise_segments(
-            labels, views, sales_per_day, normalized_price, sales_rank_pct, sales_beats_pct
-        ),
-        # Rounded: expm1(log1p(v)) of a model sitting on the split gives
-        # 1731.9999999999995 for v = 1732, and the stored threshold should
-        # be the model's own view count (the split itself is taken on logs).
-        split_views=None if split_log_views is None else round(math.expm1(split_log_views), 6),
+        segments=segments,
+        split_views=split_views,
         silhouette_by_k=scores,
         hierarchy=hierarchy,
         drivers=drivers,
         reference=reference,
+        label_fits=label_fits,
+        label_miss=label_miss,
     )
 
 

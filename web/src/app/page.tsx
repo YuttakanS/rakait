@@ -10,6 +10,10 @@ import {
   demandReference,
   groupComparison,
   groupNumbers,
+  labelRuleText,
+  overallSalesText,
+  unlabelledText,
+  type DemandReference,
 } from "@/lib/demand";
 import { CATEGORY_LABELS, CLUSTER_LABELS, MERCHANTS, formatBand, formatTHB, merchantList, wholePct } from "@/lib/format";
 import { SEEN_WINDOW_DAYS, getDemandPayload, listProducts } from "@/lib/queries";
@@ -167,6 +171,50 @@ function Promos() {
   );
 }
 
+/**
+ * The "(i)" panel's rules: what each group's badge promises, in the words
+ * and with the thresholds of the training run (`labelRuleText`; the rule
+ * itself is evaluated in the pipeline only), that the neutral group is the
+ * remainder, and how many grouped models carry no badge. A payload from
+ * before model 2026.11-v15 has no thresholds: the panel then describes the
+ * groups without numbers it does not have.
+ */
+function GroupRules({ reference }: { reference: DemandReference }) {
+  const named = CLUSTERS.filter((c) => c !== "niche");
+  const rules = named.map((c) => ({ c, rule: labelRuleText(c, reference) }));
+  const overall = overallSalesText(reference);
+  const unlabelled = unlabelledText(reference);
+  return (
+    <ul className="mt-2 list-inside list-disc space-y-1 text-xs leading-relaxed text-muted">
+      {rules.some((r) => r.rule !== null) ? (
+        rules.map(
+          ({ c, rule }) =>
+            rule && (
+              <li key={c}>
+                “{CLUSTER_LABELS[c].label}” = {rule}
+              </li>
+            ),
+        )
+      ) : (
+        <>
+          <li>“ขายดี” = อยู่ในกลุ่มที่อันดับยอดขายสูงกว่าค่าเฉลี่ยของทุกรุ่นชัดเจน</li>
+          {reference.splitViews !== null && (
+            <li>
+              ในรุ่นขายดี: “คนดูเยอะ” = คนดูมากกว่า{" "}
+              <span className="tabular whitespace-nowrap">{countText(reference.splitViews)} ครั้ง</span> (ค่ากลางของรุ่นขายดี)
+              ไม่เกินนั้นคือ “คนดูน้อย”
+            </li>
+          )}
+          <li>“{CLUSTER_LABELS.overpriced_hype.label}” = กลุ่มที่ยอดเข้าชมสูงกว่าระดับยอดขายชัดเจน</li>
+        </>
+      )}
+      <li>“{CLUSTER_LABELS.niche.label}” = กลุ่มที่เหลือจากกลุ่มข้างบน ชื่อกลุ่มจึงไม่ได้อ้างตัวเลขใด</li>
+      {overall && <li>ยอดขายของทุกรุ่นโดยรวม: {overall}</li>}
+      {unlabelled && <li>{unlabelled}</li>}
+    </ul>
+  );
+}
+
 export default async function Home({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
   const category = pick(params.category, CATEGORIES);
@@ -263,37 +311,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
             </summary>
             <div className="mb-1 max-w-3xl border-2 border-border bg-surface-muted p-3 text-sm">
               <p className="text-xs leading-relaxed text-muted">
-                ระบบจัดกลุ่มรุ่นสินค้าด้วย K-Means จาก {DIMENSION_COUNT} อย่างพร้อมกัน: {DIMENSIONS_TEXT} ชื่อกลุ่มบอกลักษณะโดยรวมของกลุ่ม
-                รุ่นหนึ่งจึงอาจมีตัวเลขบางตัวไม่ตรงชื่อ การ์ดสินค้าแสดงยอดเข้าชมและอันดับยอดขายของรุ่นไว้ใต้ป้าย
+                ระบบจัดกลุ่มรุ่นสินค้าด้วย K-Means จาก {DIMENSION_COUNT} อย่างพร้อมกัน: {DIMENSIONS_TEXT}
+                {/* True only once the training run stores the label rule (2026.11-v15+). */}
+                {reference.salesBar !== null && <> แล้วติดป้ายกลุ่มเฉพาะรุ่นที่ตัวเลขของรุ่นเองตรงกับชื่อกลุ่ม</>}{" "}
+                การ์ดสินค้าแสดงยอดเข้าชมและอันดับยอดขายของรุ่นไว้ใต้ป้าย
               </p>
-              <ul className="mt-2 list-inside list-disc space-y-1 text-xs leading-relaxed text-muted">
-                <li>
-                  “ขายดี” = อยู่ในกลุ่มที่อันดับยอดขายสูงกว่าค่าเฉลี่ยของทุกรุ่นชัดเจน
-                  {reference.salesBeatsMedian !== null && (
-                    <>
-                      {" "}
-                      · ค่ากลางของทุกรุ่นคือขายดีกว่า ~{wholePct(reference.salesBeatsMedian)}% ของสินค้าในร้านเดียวกัน
-                    </>
-                  )}
-                </li>
-                {reference.splitViews !== null && (
-                  <li>
-                    ในรุ่นขายดี: “คนดูเยอะ” = คนดูมากกว่า{" "}
-                    <span className="tabular whitespace-nowrap">{countText(reference.splitViews)} ครั้ง</span>{" "}
-                    (ค่ากลางของรุ่นขายดี) ไม่เกินนั้นคือ “คนดูน้อย”
-                  </li>
-                )}
-                <li>
-                  “คนดูเยอะ แต่ขายน้อย” = กลุ่มที่ยอดเข้าชมสูงกว่าระดับยอดขายชัดเจน ส่วน “คนดูน้อย ขายน้อย” คือกลุ่มที่เหลือ
-                  {reference.viewsMedian !== null && (
-                    <>
-                      {" "}
-                      · ค่ากลางคนดูของทุกรุ่นคือ{" "}
-                      <span className="tabular whitespace-nowrap">{countText(reference.viewsMedian)} ครั้ง</span>
-                    </>
-                  )}
-                </li>
-              </ul>
+              <GroupRules reference={reference} />
               <dl className="mt-3 space-y-2">
                 {CLUSTERS.map((c) => {
                   const numbers = groupNumbers(c, reference);

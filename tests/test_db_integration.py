@@ -367,6 +367,24 @@ async def test_train_persists_insights(conn, tmp_path) -> None:
         )
         == 0
     )
+    # Migration 0014: the label flag exists only for clustered models, a miss
+    # only where the flag is false, and one flag per model.
+    assert (
+        await conn.fetchval(
+            "SELECT count(*) FROM listing_insights "
+            "WHERE (demand_label_fits IS NOT NULL) <> (demand_cluster IS NOT NULL) "
+            "OR (demand_label_miss IS NOT NULL AND demand_label_fits IS DISTINCT FROM false)"
+        )
+        == 0
+    )
+    assert (
+        await conn.fetchval(
+            "SELECT count(*) FROM (SELECT l.canonical_product_id FROM listing_insights i "
+            "JOIN merchant_listings l ON l.id = i.listing_id GROUP BY 1 "
+            "HAVING count(DISTINCT i.demand_label_fits) > 1) AS mixed"
+        )
+        == 0
+    )
     assert (tmp_path / "gpu_simple_regression.png").exists()
 
 

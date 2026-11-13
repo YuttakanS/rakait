@@ -20,6 +20,15 @@ export interface DemandEvidence {
   normalizedPrice: number | null;
   /** The feature that most keeps the model in its cluster rather than the nearest other group. */
   driver: DemandDriver | null;
+  /**
+   * Whether the model's numbers support its group's name, as decided by the
+   * pipeline (`models.label_fit`, migration 0014). False: no badge, not
+   * listed under the group. Null: no group, or a row from before model
+   * 2026.11-v15 (the badge then shows as before).
+   */
+  labelFits: boolean | null;
+  /** Which numbers fail the name when `labelFits` is false. */
+  labelMiss: "views" | "sales" | "both" | null;
 }
 
 export interface ProductSummary {
@@ -41,8 +50,10 @@ export interface ProductSummary {
   /** That offer's recommendation_reason ("Decision Tree: …" from the timing tree). */
   cheapestReason: string | null;
   /**
-   * The model's demand group: one per model (2026.11-v8+), the value the
-   * `?cluster=` filter selects on. Not tied to the headline offer.
+   * The model's demand group as shown: one per model (2026.11-v8+), the
+   * value the `?cluster=` filter selects on, and null when the model's
+   * numbers do not support the group's name (`demand.labelFits === false`).
+   * Not tied to the headline offer.
    */
   modelCluster: DemandCluster | null;
   /** The evidence for `modelCluster` (shown under the badge). */
@@ -100,8 +111,13 @@ export interface ProductDetail {
   manufacturer: string;
   model: string;
   specs: Record<string, string | number | boolean | null>;
-  /** The model's demand group (shown once, in the product hero). */
+  /**
+   * The model's demand group as shown (once, in the product hero): null when
+   * its numbers do not support the name (`demand.labelFits === false`).
+   */
   demandCluster: DemandCluster | null;
+  /** The group K-Means assigned, whether or not it is shown as a badge. */
+  assignedCluster: DemandCluster | null;
   /** The evidence for `demandCluster`. */
   demand: DemandEvidence;
   offers: Offer[];

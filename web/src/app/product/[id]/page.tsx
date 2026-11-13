@@ -4,11 +4,11 @@ import { ClusterBadge, DealScore, NoteText, SoldOutTag, VerdictBadges, Words } f
 import { DealMeter } from "@/components/deal-meter";
 import { PriceChart } from "@/components/price-chart";
 import { ProductImage } from "@/components/product-image";
-import { demandReference, demandWhy, evidenceParts, evidenceSides, type DemandReference } from "@/lib/demand";
+import { demandReference, demandWhy, evidenceParts, unlabelledWhy, type DemandReference } from "@/lib/demand";
 import { CATEGORY_LABELS, CLUSTER_LABELS, formatSpecValue, formatTHB, uncertainReason } from "@/lib/format";
 import { salesRate } from "@/lib/market";
 import { getDemandPayload, getPriceHistory, getProduct } from "@/lib/queries";
-import type { DemandCluster, DemandEvidence, Offer } from "@/lib/types";
+import type { DemandCluster, DemandEvidence, Offer, ProductDetail } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
 
 export const revalidate = 900;
@@ -72,66 +72,132 @@ function Stat({ label, value, tone = "" }: { label: string; value: string; tone?
 
 const VISIBLE_OFFERS = 6;
 
+/** How the two numbers are measured, with the link to the method (both demand blocks). */
+function DemandMeasureNote() {
+  return (
+    <p className="text-xs text-subtle">
+      ยอดเข้าชมรวมจากทุกร้านที่เปิดเผยยอด อันดับยอดขายเทียบกับสินค้าในร้านเดียวกันแล้วเฉลี่ยข้ามร้าน ·{" "}
+      <Link href="/ml#kmeans" className="link">
+        ดูวิธีจัดกลุ่ม
+      </Link>
+    </p>
+  );
+}
+
+/** The model's two numbers, "·"-separated, each wrapping only between words. */
+function EvidenceNumbers({ evidence, reference }: { evidence: DemandEvidence; reference: DemandReference }) {
+  return (
+    <>
+      {evidenceParts(evidence, reference, true).map((part, i) => (
+        <span key={i}>
+          {i > 0 && " · "}
+          <Words text={part} />
+        </span>
+      ))}
+    </>
+  );
+}
+
 /**
  * The evidence for the model's demand group, beside its badge in the hero
- * (SPEC round 16): both numbers (a missing one named as missing) and a
- * sentence measuring them against the typical model. When a number
- * contradicts the group's name the sentence leads with that ("ตัวเลขของรุ่นนี้:
- * ยอดเข้าชมไม่ตรงกับชื่อกลุ่ม …"), one plain line says why the model is in the
- * group anyway, and how groups are formed sits behind a disclosure. The
- * group is named in words here, so the block also reads on its own when a
- * conflict rule withholds the badge.
+ * (SPEC rounds 16 and 17): both numbers (a missing one named as missing)
+ * and, when the pipeline confirmed that they support the group's name, the
+ * rule the badge is held to with its stored thresholds. The group is named
+ * in words here, so the block also reads on its own when a badge-conflict
+ * rule withholds the badge.
  */
 function DemandEvidenceBlock({
   cluster,
   evidence,
   reference,
-  inStock,
 }: {
   cluster: DemandCluster;
   evidence: DemandEvidence;
   reference: DemandReference;
-  /** Whether any store has the model in stock (wording of the price gap). */
-  inStock: boolean;
 }) {
-  const { lead, why, reason, method } = demandWhy(cluster, evidence, reference, inStock);
-  const salesBelow = evidenceSides(cluster, evidence, reference).sales === "below";
+  const { why } = demandWhy(cluster, evidence, reference);
   return (
     <div className="max-w-xl space-y-1 border-l-[3px] border-border pl-3 text-sm">
       <p>
         <span className="font-semibold">
           กลุ่ม <span className="whitespace-nowrap">“{CLUSTER_LABELS[cluster].label}”</span>:
         </span>{" "}
-        {evidenceParts(evidence, true, salesBelow).map((part, i) => (
-          <span key={i}>
-            {i > 0 && " · "}
-            <Words text={part} />
-          </span>
-        ))}
+        <EvidenceNumbers evidence={evidence} reference={reference} />
       </p>
-      {why && (
-        <p className="text-muted">
-          {lead}: {why}
-        </p>
-      )}
-      {reason && <p className="text-muted">{reason}</p>}
-      {method && (
-        <details className="group">
-          <summary className="inline-flex min-h-11 items-center gap-2 text-xs font-medium text-muted underline decoration-dotted underline-offset-4 hover:text-foreground">
-            ทำไมตัวเลขไม่ตรงชื่อกลุ่มได้
-            <span aria-hidden className="disclosure" />
-          </summary>
-          <p className="border-2 border-border bg-surface-muted p-3 text-xs leading-relaxed text-muted">{method}</p>
-        </details>
-      )}
-      <p className="text-xs text-subtle">
-        ยอดเข้าชมรวมจากทุกร้านที่เปิดเผยยอด อันดับยอดขายเทียบกับสินค้าในร้านเดียวกันแล้วเฉลี่ยข้ามร้าน ·{" "}
-        <Link href="/ml#kmeans" className="link">
-          ดูวิธีจัดกลุ่ม
-        </Link>
-      </p>
+      {why && <p className="text-muted">ที่ได้กลุ่มนี้: {why}</p>}
+      <DemandMeasureNote />
     </div>
   );
+}
+
+/**
+ * For a model K-Means grouped but whose numbers do not support the group's
+ * name (`labelFits === false`, decided by the pipeline; SPEC round 17). It
+ * has no badge anywhere and is not listed under the group; here the page
+ * shows its numbers, says which group K-Means assigned and which number
+ * does not fit, why K-Means put it there (the stored deciding feature, a
+ * price gap as a percent), and keeps the method behind a disclosure.
+ */
+function UnlabelledDemandBlock({
+  assigned,
+  evidence,
+  reference,
+  inStock,
+}: {
+  assigned: DemandCluster;
+  evidence: DemandEvidence;
+  reference: DemandReference;
+  /** Whether any store has the model in stock (wording of the price gap). */
+  inStock: boolean;
+}) {
+  const why = unlabelledWhy(assigned, evidence, reference, inStock);
+  return (
+    <div className="max-w-xl space-y-1 border-l-[3px] border-border pl-3 text-sm">
+      <p>
+        <span className="font-semibold">ความต้องการของรุ่นนี้:</span>{" "}
+        <EvidenceNumbers evidence={evidence} reference={reference} />
+      </p>
+      <p className="text-muted">
+        {why.assigned}
+        {why.rule && <> ({why.rule})</>}
+      </p>
+      <p className="text-muted">{why.reason}</p>
+      <details className="group">
+        <summary className="inline-flex min-h-11 items-center gap-2 text-xs font-medium text-muted underline decoration-dotted underline-offset-4 hover:text-foreground">
+          ทำไมตัวเลขไม่ตรงชื่อกลุ่มได้
+          <span aria-hidden className="disclosure" />
+        </summary>
+        <p className="border-2 border-border bg-surface-muted p-3 text-xs leading-relaxed text-muted">{why.method}</p>
+      </details>
+      <DemandMeasureNote />
+    </div>
+  );
+}
+
+/** The demand block of the hero: the labelled group's, the unlabelled model's, or none. */
+function DemandBlock({
+  product,
+  reference,
+  inStock,
+}: {
+  product: Pick<ProductDetail, "demandCluster" | "assignedCluster" | "demand">;
+  reference: DemandReference;
+  inStock: boolean;
+}) {
+  if (product.demandCluster) {
+    return <DemandEvidenceBlock cluster={product.demandCluster} evidence={product.demand} reference={reference} />;
+  }
+  if (product.assignedCluster && product.demand.labelFits === false) {
+    return (
+      <UnlabelledDemandBlock
+        assigned={product.assignedCluster}
+        evidence={product.demand}
+        reference={reference}
+        inStock={inStock}
+      />
+    );
+  }
+  return null;
 }
 
 /**
@@ -305,14 +371,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               </div>
               <VerdictBadges verdict={verdictOf(cheapest, product.demandCluster)} className="max-w-xl" />
               {cheapestReason && <p className="text-sm text-muted">{cheapestReason}</p>}
-              {product.demandCluster && (
-                <DemandEvidenceBlock
-                  cluster={product.demandCluster}
-                  evidence={product.demand}
-                  reference={reference}
-                  inStock
-                />
-              )}
+              <DemandBlock product={product} reference={reference} inStock />
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <Stat label="ราคาสูงสุด (มีของ)" value={formatTHB(maxInStock)} />
@@ -335,14 +394,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 ราคาล่าสุด <span className="font-semibold">{formatTHB(lastKnown.price)}</span> ที่ {lastKnown.merchantName} ·
                 ไม่มีราคาต่ำสุดหรือส่วนลดให้เทียบ จนกว่าจะมีของเข้า
               </p>
-              {product.demandCluster && (
-                <DemandEvidenceBlock
-                  cluster={product.demandCluster}
-                  evidence={product.demand}
-                  reference={reference}
-                  inStock={false}
-                />
-              )}
+              <DemandBlock product={product} reference={reference} inStock={false} />
             </div>
           ) : (
             <p className="text-sm text-muted">ตอนนี้ไม่มีร้านไหนขายรุ่นนี้</p>

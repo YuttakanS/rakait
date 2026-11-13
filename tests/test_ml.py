@@ -1478,3 +1478,180 @@ def test_split_views_is_stored_as_the_view_count_of_the_model_on_the_split() -> 
     assert seg.split_views in set(data["views"])
     on_split = data["views"] == seg.split_views
     assert (seg.labels[on_split] == m.HIDDEN_GEM).all()  # "ไม่เกินเส้นแบ่ง" side
+
+
+# ------------------------------------- label supported by its numbers (SPEC round 17)
+
+
+def test_shown_whole_rounds_like_javascript_math_round() -> None:
+    values = np.array([0.5, 1.5, 2.5, 49.4, 49.5, 49.6, 19119.5, 26911.339085, np.nan])
+
+    shown = m.shown_whole(values)
+
+    # Math.round: halves go up (np.rint would give 0, 2, 2, ..., 19120).
+    assert shown[:-1].tolist() == [1, 2, 3, 49, 50, 50, 19120, 26911]
+    assert np.isnan(shown[-1])
+
+
+def test_label_fit_checks_each_group_name_against_the_printed_numbers() -> None:
+    split, median = 26911.339085, 19119.5
+    rows = [
+        # label, views, sales share, fits, miss
+        (m.HIDDEN_GEM, 14_220.0, 0.82, True, None),
+        (m.HIDDEN_GEM, 26_911.0, 0.50, True, None),  # on the split and on the bar: both hold
+        (m.HIDDEN_GEM, 21_359.0, 0.437, False, "sales"),
+        (m.HIDDEN_GEM, 30_000.0, 0.90, False, "views"),
+        (m.FAVORITE, 59_051.0, 0.89, True, None),
+        (m.FAVORITE, 40_905.0, 0.456, False, "sales"),
+        (m.FAVORITE, 26_911.0, 0.90, False, "views"),  # not above the split as printed
+        (m.FAVORITE, 20_000.0, 0.10, False, "both"),
+        (m.HYPE, 104_248.0, 0.17, True, None),
+        (m.HYPE, 19_121.0, 0.494, True, None),  # prints 49%: under the bar
+        (m.HYPE, 24_055.0, 0.496, False, "sales"),  # prints 50%: a card must not say "below 50%"
+        (m.HYPE, 732_006.0, 0.679, False, "sales"),
+        (m.HYPE, 19_120.0, 0.10, False, "views"),  # the median prints 19,120: not above it
+        (m.HYPE, 500.0, 0.90, False, "both"),
+        (m.HYPE, 50_000.0, np.nan, False, "sales"),  # an unknown number supports nothing
+        (m.NICHE, 900_000.0, 0.99, True, None),  # the neutral name claims no number
+        (m.NICHE, 10.0, 0.0, True, None),
+        (None, 5_000.0, 0.3, None, None),  # unclustered: no label to check
+    ]
+    frame = pd.DataFrame(rows, columns=["label", "views", "beats", "fits", "miss"])
+
+    fits, miss = m.label_fit(
+        frame["label"], frame["views"], frame["beats"], split_views=split, views_median=median
+    )
+
+    # Against the rows themselves: a frame would turn the expected None into NaN.
+    assert fits.tolist() == [row[3] for row in rows]
+    assert miss.tolist() == [row[4] for row in rows]
+    assert m.LABEL_SALES_BAR == 0.5
+    assert set(miss.dropna()) <= set(m.LABEL_MISSES)
+
+
+def test_label_fit_bar_is_a_parameter_not_a_literal() -> None:
+    labels = pd.Series([m.HYPE, m.HIDDEN_GEM])
+    views = pd.Series([50_000.0, 100.0])
+    beats = pd.Series([0.6, 0.6])
+
+    strict, _ = m.label_fit(labels, views, beats, split_views=1_000, views_median=5_000)
+    loose, _ = m.label_fit(
+        labels, views, beats, split_views=1_000, views_median=5_000, sales_bar=0.7
+    )
+
+    assert strict.tolist() == [False, True]
+    assert loose.tolist() == [True, False]
+
+
+def test_run_models_flags_labels_and_reports_the_rule_it_used() -> None:
+    import json
+
+    from pricewatch.ml.dataset import DEMAND_WINDOW_DAYS
+
+    current = _multi_store_catalogue(seed=9)
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    ins = report.insights
+    kmeans = report.market[("all", "demand_kmeans")]
+    key, models = model_demand(current)
+    # One flag per model, on every one of its listings; a miss only when unfit.
+    grouped = ins.groupby(key)
+    assert (grouped["demand_label_fits"].nunique(dropna=False) == 1).all()
+    assert ins["demand_label_fits"].isin([True, False]).all()  # every model is clustered here
+    unfit = ins["demand_label_fits"].eq(False)
+    assert ins.loc[~unfit, "demand_label_miss"].isna().all()
+    assert ins.loc[unfit, "demand_label_miss"].isin(m.LABEL_MISSES).all()
+    # The stored flag is models.label_fit of the stored numbers and the stored thresholds.
+    per_model = ins.groupby(key).first()
+    rule = kmeans["label_rule"]
+    fits, _ = m.label_fit(
+        per_model["demand_cluster"],
+        per_model["model_views"],
+        per_model["model_sales_beats_pct"],
+        split_views=rule["views_split"],
+        views_median=rule["views_median"],
+        sales_bar=rule["sales_bar"],
+    )
+    assert fits.tolist() == per_model["demand_label_fits"].tolist()
+    assert rule == {
+        "sales_bar": m.LABEL_SALES_BAR,
+        "views_split": kmeans["split_views"],
+        "views_median": kmeans["reference"]["views_median"],
+        "window_days": DEMAND_WINDOW_DAYS,
+        "zero_share_means_no_sales": False,
+    }
+    # Counts the web quotes: unlabelled models, and labelled ones per group.
+    hidden = per_model[per_model["demand_label_fits"].eq(False)]
+    assert kmeans["unlabelled"]["n"] == len(hidden)
+    assert kmeans["unlabelled"]["by_label"] == hidden["demand_cluster"].value_counts().to_dict()
+    assert m.NICHE not in kmeans["unlabelled"]["by_label"]
+    for s in kmeans["segments"]:
+        members = per_model[per_model["demand_cluster"] == s["label"]]
+        assert s["labelled"] == int(members["demand_label_fits"].eq(True).sum())
+        assert s["labelled"] <= s["size"]
+    assert kmeans["unlabelled"]["n"] + sum(s["labelled"] for s in kmeans["segments"]) == kmeans["n"]
+    json.dumps(kmeans)
+
+
+def test_unclustered_models_get_no_label_flag() -> None:
+    current = _gpu_catalogue(7).assign(merchant="banana")
+    current["view_count"] = np.nan
+    current["sales_per_day"] = np.nan
+
+    ins = run_models(current, pd.DataFrame(), figures=None).insights
+
+    assert ins["demand_label_fits"].isna().all()
+    assert ins["demand_label_miss"].isna().all()
+
+
+def test_labelled_segment_stats_cover_only_models_whose_label_fits() -> None:
+    current = _multi_store_catalogue(seed=9)
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    kmeans = report.market[("all", "demand_kmeans")]
+    key, _ = model_demand(current)
+    per_model = report.insights.groupby(key).first()
+    for s in kmeans["segments"]:
+        fitting = per_model[
+            (per_model["demand_cluster"] == s["label"]) & per_model["demand_label_fits"].eq(True)
+        ]
+        if s["labelled"] == 0:
+            assert "labelled_views_median" not in s
+            continue
+        assert s["labelled"] == len(fitting)
+        assert s["labelled_views_median"] == pytest.approx(fitting["model_views"].median())
+        assert s["labelled_sales_beats_pct_median"] == pytest.approx(
+            fitting["model_sales_beats_pct"].median()
+        )
+        assert s["labelled_sales_beats_pct"] == pytest.approx(
+            fitting["model_sales_beats_pct"].mean()
+        )
+    # The neutral group always fits: its labelled stats equal the cluster's.
+    niche = next(s for s in kmeans["segments"] if s["label"] == m.NICHE)
+    assert niche["labelled"] == niche["size"]
+    assert niche["labelled_views_median"] == pytest.approx(niche["views_median"])
+
+
+def test_zero_sales_share_is_worded_as_no_sales_only_when_every_store_has_unsold_listings() -> None:
+    from pricewatch.ml.train import zero_share_means_no_sales
+
+    frame = pd.DataFrame(
+        {
+            "merchant": ["jib", "jib", "ihavecpu", "ihavecpu", "banana"],
+            "sales_per_day": [0.0, 2.0, -1.0, 5.0, np.nan],  # a negative rate counts as 0
+        }
+    )
+
+    assert zero_share_means_no_sales(frame) is True  # banana publishes no rate: not a store here
+    # One store where everything sold: its slowest seller beats nothing, yet sold.
+    assert (
+        zero_share_means_no_sales(frame.assign(sales_per_day=[0.0, 2.0, 0.5, 5.0, np.nan])) is False
+    )
+    assert zero_share_means_no_sales(frame.assign(sales_per_day=np.nan)) is False
+    current = _multi_store_catalogue(seed=9)  # every rate there is positive
+    rule = run_models(current, pd.DataFrame(), figures=None).market[("all", "demand_kmeans")][
+        "label_rule"
+    ]
+    assert rule["zero_share_means_no_sales"] is False

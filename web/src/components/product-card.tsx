@@ -41,6 +41,8 @@ function reasonLine(p: ProductSummary): ReactNode {
  * (`DemandEvidenceLine`), also when the model is sold out: the group is the
  * model's. When a conflict rule withholds the badge, the card prints one
  * line with the group's name and numbers in place of the badge and the note.
+ * A model whose numbers do not support its K-Means group's name (SPEC round
+ * 17) has `modelCluster` null: no badge, only the numbers line.
  */
 export function ProductCard({
   p,
@@ -56,6 +58,10 @@ export function ProductCard({
   const fair = shownFair(p);
   // The cluster is the model's group, the one `?cluster=` filters on.
   const verdict = resolveVerdict({ inStock, recommendation: p.cheapestRecommendation, cluster: p.modelCluster });
+  // Numbers under the badge, and also for a model K-Means grouped but whose
+  // numbers do not support the group's name (labelFits false, decided by the
+  // pipeline): that card has no badge and no group text, only the numbers.
+  const showEvidence = p.modelCluster !== null || p.demand.labelFits === false;
   return (
     <Link
       href={`/product/${p.id}`}
@@ -130,7 +136,7 @@ export function ProductCard({
             {/* A withheld group badge (verdict.note) collapses to one line
                 naming the group with its numbers, instead of the long note. */}
             <VerdictBadges verdict={verdict} reason={reasonLine(p)} showNote={false} />
-            {p.modelCluster && (
+            {showEvidence && (
               <DemandEvidenceLine
                 cluster={p.modelCluster}
                 evidence={p.demand}
@@ -142,11 +148,13 @@ export function ProductCard({
         )}
         {/* Sold out everywhere: no price verdict, but the demand group is the
             model's, not a stale price's, so it still shows. */}
-        {!inStock && p.modelCluster && (
+        {!inStock && showEvidence && (
           <div className="space-y-1.5">
-            <div className="flex flex-wrap gap-1.5">
-              <ClusterBadge value={p.modelCluster} />
-            </div>
+            {p.modelCluster && (
+              <div className="flex flex-wrap gap-1.5">
+                <ClusterBadge value={p.modelCluster} />
+              </div>
+            )}
             <DemandEvidenceLine cluster={p.modelCluster} evidence={p.demand} reference={reference} />
           </div>
         )}

@@ -96,9 +96,11 @@ export const RECOMMENDATION_LABELS: Record<Recommendation, string> = {
  * statistics section). Same meaning as the labelling rule in
  * `pricewatch.ml.models`: best sellers (clearly above their stores' average
  * rank) split by views at the best sellers' median; the rest are hype (views
- * clearly above what sales suggest) or niche.
+ * clearly above what sales suggest) or the neutral remainder ("niche"). A
+ * model carries a group's badge only where its own numbers support the name
+ * (`demand_label_fits`, decided in `models.label_fit`; SPEC round 17).
  */
-export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string }> = {
+export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string; wrap?: string }> = {
   hidden_gem: {
     label: "ขายดี แต่คนดูน้อย",
     hint: "ขายได้ดีกว่าสินค้าส่วนใหญ่ในร้านเดียวกัน แต่มีคนเข้าดูน้อยกว่ารุ่นขายดีทั่วไป",
@@ -111,7 +113,15 @@ export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string
     label: "คนดูเยอะ แต่ขายน้อย",
     hint: "มีคนเข้าดูเยอะ แต่ขายได้น้อยกว่าที่ควรเมื่อเทียบกับคนดู",
   },
-  niche: { label: "คนดูน้อย ขายน้อย", hint: "ทั้งคนดูและยอดขายต่ำกว่าสินค้าส่วนใหญ่" },
+  // The remainder group (SPEC round 17). Its old name, "คนดูน้อย ขายน้อย",
+  // claimed two things most of its models' numbers did not show; this one
+  // claims no number. `wrap` marks where the one long word may break on a
+  // narrow card ("|", see `Words` in badges.tsx).
+  niche: {
+    label: "ไม่เด่นทั้งคนดูและยอดขาย",
+    wrap: "ไม่เด่น|ทั้งคนดู|และยอดขาย",
+    hint: "กลุ่มที่เหลือ: ยอดขายไม่ได้เด่นชัด และยอดเข้าชมไม่ได้สูงกว่ายอดขายชัดเจน",
+  },
 };
 
 /**

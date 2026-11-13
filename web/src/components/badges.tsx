@@ -1,12 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import {
-  NO_REFERENCE,
-  cardConflict,
-  evidenceParts,
-  evidenceSides,
-  withheldLine,
-  type DemandReference,
-} from "@/lib/demand";
+import { NO_REFERENCE, evidenceParts, withheldLine, type DemandReference } from "@/lib/demand";
 import { CLUSTER_LABELS, RECOMMENDATION_LABELS, uncertainNote, wholePct } from "@/lib/format";
 import type { DemandCluster, DemandEvidence, Recommendation } from "@/lib/types";
 import type { Verdict } from "@/lib/verdict";
@@ -39,22 +32,18 @@ export function RecommendationBadge({ value }: { value: Recommendation | null })
 
 /**
  * Demand-group chip. The label may wrap on a narrow card, but only at the
- * space between its words ("ขายดี แต่คนดูน้อย"): each word is a nowrap span,
- * since the browser's Thai dictionary would otherwise break inside one. The
- * text sits in one inner span so the flex chip keeps the spaces. O(words).
+ * space between its words ("ขายดี แต่คนดูน้อย") and at the label's own break
+ * marks ("ไม่เด่น|ทั้งคนดู|และยอดขาย", `CLUSTER_LABELS[…].wrap`): each run is
+ * a nowrap span (`Words`), since the browser's Thai dictionary would
+ * otherwise break inside one. The text sits in one inner span so the flex
+ * chip keeps the spaces. O(words).
  */
 export function ClusterBadge({ value }: { value: DemandCluster }) {
-  const { label, hint } = CLUSTER_LABELS[value];
-  const words = label.split(" ");
+  const { label, hint, wrap } = CLUSTER_LABELS[value];
   return (
     <span className="chip max-w-full font-medium whitespace-normal text-muted" title={hint}>
       <span>
-        {words.map((word, i) => (
-          <span key={i}>
-            <span className="whitespace-nowrap">{word}</span>
-            {i < words.length - 1 && " "}
-          </span>
-        ))}
+        <Words text={wrap ?? label} />
       </span>
     </span>
   );
@@ -85,18 +74,19 @@ export function Words({ text }: { text: string }) {
 }
 
 /**
- * The numbers behind a demand-group badge (SPEC round 16): "คนดู 35,120 ครั้ง ·
- * ขายดีกว่า 12% ของสินค้าในร้าน" ("ขายดีกว่าแค่ 12% …" when that is under the
- * all-model median), straight from the training run (`DemandEvidence`). A
- * missing number is named as missing, never printed as 0. When a number
- * contradicts the group's name, one more short line says so in a shopper's
- * words (`cardConflict`). Visible text, not a tooltip.
+ * The model's own numbers under (or instead of) a demand-group badge (SPEC
+ * rounds 16 and 17): "คนดู 35,120 ครั้ง · ขายดีกว่า 12% ของสินค้าในร้าน ช่วง 120
+ * วันล่าสุด" ("ขายดีกว่าแค่ 12% …" under the payload's sales bar), straight from
+ * the training run (`DemandEvidence`). A missing number is named as missing,
+ * never printed as 0. Visible text, not a tooltip. No line here ever says
+ * the numbers contradict a group: a model whose numbers do not support its
+ * group's name has no badge at all (`cluster` null) and shows only this
+ * line; the product page explains.
  *
- * `withheld`: a conflict rule hides the group badge on this card. The whole
- * thing is then one line, "กลุ่ม: คนดูเยอะ แต่ขายน้อย (คนดู 3,120 ครั้ง ·
- * ขายดีกว่าแค่ 12%)" (`withheldLine`), which still admits a contradiction
- * with a short suffix ("… · อยู่กลุ่มนี้เพราะราคา"), so the card is no taller
- * than its neighbours; the product page has the detail.
+ * `withheld`: a badge-conflict rule (`lib/verdict.ts`) hides the group badge
+ * on this card. The whole thing is then one line, "กลุ่ม: คนดูเยอะ แต่ขายน้อย
+ * (คนดู 31,200 ครั้ง · ขายดีกว่าแค่ 12% ช่วง 120 วันล่าสุด)" (`withheldLine`),
+ * so the card is no taller than its neighbours.
  */
 export function DemandEvidenceLine({
   cluster,
@@ -104,36 +94,25 @@ export function DemandEvidenceLine({
   reference = NO_REFERENCE,
   withheld = false,
 }: {
-  cluster: DemandCluster;
+  /** The group shown for the model; null when it carries no badge. */
+  cluster: DemandCluster | null;
   evidence: DemandEvidence;
   reference?: DemandReference;
   withheld?: boolean;
 }) {
-  if (withheld) {
-    return (
-      <p className="text-xs leading-snug text-muted">
-        <Words text={withheldLine(cluster, evidence, reference)} />
-      </p>
-    );
-  }
-  const conflict = cardConflict(cluster, evidence, reference);
-  const salesBelow = evidenceSides(cluster, evidence, reference).sales === "below";
   return (
-    <div className="space-y-1 text-xs leading-snug text-muted">
-      <p>
-        {evidenceParts(evidence, false, salesBelow).map((part, i) => (
+    <p className="text-xs leading-snug text-muted">
+      {withheld && cluster !== null ? (
+        <Words text={withheldLine(cluster, evidence, reference)} />
+      ) : (
+        evidenceParts(evidence, reference).map((part, i) => (
           <Fragment key={i}>
             {i > 0 && " · "}
             <Words text={part} />
           </Fragment>
-        ))}
-      </p>
-      {conflict && (
-        <p>
-          <Words text={conflict} />
-        </p>
+        ))
       )}
-    </div>
+    </p>
   );
 }
 

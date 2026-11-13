@@ -16,12 +16,18 @@ import numpy as np
 import pandas as pd
 
 from pricewatch.ml import models as m
-from pricewatch.ml.dataset import category_frame, load_current_listings, load_history, numeric
+from pricewatch.ml.dataset import (
+    DEMAND_WINDOW_DAYS,
+    category_frame,
+    load_current_listings,
+    load_history,
+    numeric,
+)
 from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v14"
+MODEL_VERSION = "2026.11-v15"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -730,6 +736,28 @@ def listing_names(frame: pd.DataFrame) -> pd.Series:
     return frame["model"].where(frame["model"].notna(), title).astype(str)
 
 
+def zero_share_means_no_sales(frame: pd.DataFrame) -> bool:
+    """Whether a sales share of 0 can be worded as "no sales seen".
+
+    ``sales_beats_pct`` is 0 for a model that outsold nothing in its stores,
+    i.e. whose rate is each store's lowest. That is "no sales" only if the
+    lowest rate of every store (among listings with a rate) is 0; in a store
+    where everything sold, the slowest seller would otherwise be described
+    as unsold. One grouped minimum: O(n).
+
+    Args:
+        frame: Current listings with ``sales_per_day`` and optionally
+            ``merchant`` (one store when absent), as ``model_demand`` reads them.
+
+    Returns:
+        True when at least one store has rates and every such store's minimum
+        (negative rates clipped to 0) is 0.
+    """
+    store = frame["merchant"] if "merchant" in frame else pd.Series("", index=frame.index)
+    lowest = numeric(frame, "sales_per_day").clip(lower=0).groupby(store).min().dropna()
+    return bool(len(lowest) > 0 and (lowest == 0).all())
+
+
 def kmeans_points(
     models: pd.DataFrame, labels: pd.Series, limit: int = KMEANS_CHART_POINTS
 ) -> list[list[Any]]:
@@ -812,6 +840,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     insights["fair_uncertain"] = False
     insights["demand_cluster"] = None
     insights["demand_driver"] = None
+    insights["demand_label_fits"] = None
+    insights["demand_label_miss"] = None
     report = TrainReport(insights=insights)
 
     for category in Category:
@@ -940,6 +970,14 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         insights["demand_cluster"] = model_key.map(seg.labels)
         if seg.drivers is not None:
             insights["demand_driver"] = model_key.map(seg.drivers)
+        # SPEC round 17 (migration 0014): whether the model's own numbers
+        # support its group's name. The rule lives in models.label_fit only;
+        # the web shows the badge, filters and counts by this flag.
+        unlabelled = seg.labels.iloc[0:0]
+        if seg.label_fits is not None and seg.label_miss is not None:
+            insights["demand_label_fits"] = model_key.map(seg.label_fits)
+            insights["demand_label_miss"] = model_key.map(seg.label_miss)
+            unlabelled = seg.labels[seg.label_fits.eq(False)]  # None (unknown) is not False
         report.market[("all", "demand_kmeans")] = {
             # Rows clustered: product models (2026.11-v8+); earlier payloads
             # have no "unit" and counted listings.
@@ -965,6 +1003,26 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             "reference": seg.reference,
             "best_seller_margin_sd": m.BEST_SELLER_MARGIN_SD,
             "conversion_margin_sd": m.CONVERSION_MARGIN_SD,
+            # 2026.11-v15 (SPEC round 17): the thresholds of models.label_fit,
+            # quoted by the web (never re-evaluated there), the window the
+            # sales rates are measured over, and how many clustered models
+            # keep no badge because their numbers contradict the name.
+            "label_rule": {
+                "sales_bar": m.LABEL_SALES_BAR,
+                "views_split": seg.split_views,
+                "views_median": seg.reference.get("views_median"),
+                # A cap, not the window of every rate: each listing's rate
+                # is its sold delta over the span it was observed for, within
+                # at most this many days of history (dataset.load_current_listings).
+                "window_days": DEMAND_WINDOW_DAYS,
+                # Whether "outsold nothing" (sales share 0) means "no sales
+                # seen": true only when every store's lowest rate is 0.
+                "zero_share_means_no_sales": zero_share_means_no_sales(current),
+            },
+            "unlabelled": {
+                "n": int(len(unlabelled)),
+                "by_label": {str(k): int(v) for k, v in unlabelled.value_counts().items()},
+            },
             # Scatter for /ml (2026.11-v13): [log1p(views), sales_rank_pct,
             # label] for at most KMEANS_CHART_POINTS clustered models.
             "points": kmeans_points(models, seg.labels),
@@ -1046,20 +1104,23 @@ async def persist(conn: asyncpg.Connection, report: TrainReport) -> int:
                 listing_id, computed_at, model_version, fair_price, residual, pct_vs_fair,
                 deal_score, demand_cluster, recommendation, recommendation_reason,
                 sales_per_day, views_per_day, fair_error_pct, fair_uncertain,
-                model_views, model_sales_beats_pct, model_normalized_price, demand_driver)
+                model_views, model_sales_beats_pct, model_normalized_price, demand_driver,
+                demand_label_fits, demand_label_miss)
             SELECT u.listing_id, $1, $2, u.fair_price, u.residual, u.pct_vs_fair,
                    u.deal_score, u.demand_cluster, u.recommendation, u.reason,
                    u.sales_per_day, u.views_per_day, u.fair_error_pct, u.fair_uncertain,
                    u.model_views, u.model_sales_beats_pct, u.model_normalized_price,
-                   u.demand_driver
+                   u.demand_driver, u.demand_label_fits, u.demand_label_miss
             FROM unnest($3::bigint[], $4::numeric[], $5::numeric[], $6::float8[],
                         $7::smallint[], $8::text[], $9::text[], $10::text[],
                         $11::float8[], $12::float8[], $13::float8[], $14::boolean[],
-                        $15::float8[], $16::float8[], $17::float8[], $18::text[])
+                        $15::float8[], $16::float8[], $17::float8[], $18::text[],
+                        $19::boolean[], $20::text[])
                  AS u (listing_id, fair_price, residual, pct_vs_fair, deal_score,
                        demand_cluster, recommendation, reason, sales_per_day, views_per_day,
                        fair_error_pct, fair_uncertain, model_views, model_sales_beats_pct,
-                       model_normalized_price, demand_driver)
+                       model_normalized_price, demand_driver, demand_label_fits,
+                       demand_label_miss)
             """,
             now,
             MODEL_VERSION,
@@ -1079,6 +1140,8 @@ async def persist(conn: asyncpg.Connection, report: TrainReport) -> int:
             col("model_sales_beats_pct"),
             col("model_normalized_price"),
             col("demand_driver"),
+            [None if v is None or pd.isna(v) else bool(v) for v in ins["demand_label_fits"]],
+            col("demand_label_miss"),
         )
         # linkage_quality belongs to `pricewatch link`, which runs before train.
         await conn.execute("DELETE FROM market_insights WHERE kind <> 'linkage_quality'")

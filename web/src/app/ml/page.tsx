@@ -32,6 +32,7 @@ import {
   type CurvePoint,
   type TreeNode,
 } from "@/lib/ml";
+import { demandReference, labelRuleText, unlabelledText } from "@/lib/demand";
 import { getCoverage, getMarketInsights, getSpecPoints } from "@/lib/queries";
 import type { Category, DemandCluster, MarketInsight, Recommendation } from "@/lib/types";
 
@@ -282,6 +283,17 @@ export default async function MlPage() {
 
   // ---- D. K-Means
   const rankedSales = kmeans?.sales_feature === "store_rank_pct";
+  // Which grouped models keep a badge on the site (2026.11-v15+): the rule is
+  // evaluated in the pipeline (models.label_fit); here only its stored
+  // thresholds and counts are quoted.
+  const demandRef = demandReference(kmeans ?? null);
+  const labelRules = (["hidden_gem", "community_favorite", "overpriced_hype"] as const).flatMap((c) => {
+    const rule = labelRuleText(c, demandRef);
+    return rule === null ? [] : [{ c, rule }];
+  });
+  const unlabelledByLabel = Object.entries(
+    ((kmeans?.unlabelled as { by_label?: Record<string, unknown> } | undefined)?.by_label ?? {}) as Record<string, unknown>,
+  ).filter((entry): entry is [DemandCluster, number] => entry[0] in CLUSTER_LABELS && typeof entry[1] === "number");
   const points = demandPoints(kmeans);
   const centroids = ((kmeans?.centroids as Centroid[] | undefined) ?? []).map((c, i) => ({
     ...c,
@@ -943,7 +955,7 @@ export default async function MlPage() {
               แกนนอนคือยอดเข้าชมรวมทุกร้านของรุ่นนั้นบนสเกล log (ตัวเลขใต้แกนคือจำนวนครั้งจริง) แกนตั้งคืออันดับยอดขายในร้าน
               (100% = ขายดีที่สุดในร้าน) จุดหนึ่งจุดคือหนึ่งรุ่น รูปทรงของจุดคือชื่อกลุ่มที่เห็นบนเว็บซึ่งมี{" "}
               {DEMAND_ORDER.length} ชื่อ ไม่ใช่หมายเลขกลุ่มของ K-Means: กลุ่ม K-Means ที่มีความหมายเดียวกัน (เช่นสองกลุ่มที่
-              “คนดูน้อย ขายน้อย” แต่ราคาต่างกัน) ใช้ชื่อเดียวกัน ส่วนเลขในสี่เหลี่ยมข้าวหลามตัดคือ centroid ของกลุ่ม K-Means
+              “{CLUSTER_LABELS.niche.label}” แต่ราคาต่างกัน) ใช้ชื่อเดียวกัน ส่วนเลขในสี่เหลี่ยมข้าวหลามตัดคือ centroid ของกลุ่ม K-Means
               ที่ 1 ถึง {String(kmeans?.k ?? "k")}
               สี่เหลี่ยมข้าวหลามตัดสีทึบที่มีเลขคือ centroid ของแต่ละกลุ่ม เส้นประแนวตั้งแบ่งรุ่นขายดีออกเป็น
               “{CLUSTER_LABELS.community_favorite.label}” (ขวา, □) กับ “{CLUSTER_LABELS.hidden_gem.label}” (ซ้าย, ■)
@@ -984,6 +996,42 @@ export default async function MlPage() {
                       </li>
                     ))}
                 </ul>
+              )}
+              {labelRules.length > 0 && (
+                <div className="space-y-1">
+                  <p>
+                    <span className="font-semibold">ป้ายกลุ่มบนเว็บ:</span> K-Means จัดกลุ่มจากยอดเข้าชม อันดับยอดขาย
+                    และราคาพร้อมกัน รุ่นหนึ่งจึงถูกจัดเข้ากลุ่มได้แม้ยอดเข้าชมหรือยอดขายของตัวเองไม่ตรงกับชื่อกลุ่ม
+                    เว็บจึงติดป้ายเฉพาะรุ่นที่ตัวเลขตรงกับเกณฑ์ของชื่อนั้น:
+                  </p>
+                  <ul className="list-inside list-disc space-y-1">
+                    {labelRules.map(({ c, rule }) => (
+                      <li key={c}>
+                        “{CLUSTER_LABELS[c].label}” = {rule}
+                      </li>
+                    ))}
+                    <li>
+                      “{CLUSTER_LABELS.niche.label}” คือกลุ่มที่เหลือหลังแยกกลุ่มข้างบนออกไป ชื่อจึงไม่ได้อ้างตัวเลขใด
+                      และทุกรุ่นในกลุ่มติดป้ายได้
+                    </li>
+                  </ul>
+                  <p>
+                    {unlabelledText(demandRef) ??
+                      (demandRef.unlabelled === 0 && demandRef.clustered !== null
+                        ? `ทั้ง ${count(demandRef.clustered)} รุ่นที่จัดกลุ่มมีตัวเลขตรงกับชื่อกลุ่ม จึงติดป้ายทุกรุ่น`
+                        : null)}
+                    {unlabelledByLabel.length > 0 && (
+                      <>
+                        {" "}
+                        (
+                        {unlabelledByLabel
+                          .map(([label, n]) => `“${CLUSTER_LABELS[label].label}” ${n.toLocaleString("th-TH")} รุ่น`)
+                          .join(", ")}
+                        )
+                      </>
+                    )}
+                  </p>
+                </div>
               )}
               <p>
                 ข้อจำกัด: ใช้ได้เฉพาะรุ่นที่ร้านเปิดเผยยอดเข้าชมหรือยอดขาย และ K-Means ถือว่ากลุ่มเป็นก้อนกลมขนาดใกล้กัน

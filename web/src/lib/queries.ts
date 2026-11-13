@@ -27,14 +27,29 @@ const IMAGE = sql`to_jsonb(l) ->> 'image_url'`;
 const ACTIVE = sql`l.last_scraped_at > now() - interval '2 days' AND l.current_price IS NOT NULL`;
 
 /**
- * A product model's demand group, over its active listings (needs `i` =
- * listing_insights). Model 2026.11-v8+ gives every listing of a model the same
+ * The demand group K-Means assigned to a product model, over its active
+ * listings (needs `i` = listing_insights). What the site *shows* is
+ * `SHOWN_CLUSTER`. Model 2026.11-v8+ gives every listing of a model the same
  * label, so this is that label. Older runs labelled each listing; the most
  * common label stands for the model (ties: the first alphabetically), so the
  * card badge, the `?cluster=` filter, the product page and the /insights
  * counts still name one group per model. NULLs are ignored.
  */
 const MODEL_CLUSTER = sql`mode() WITHIN GROUP (ORDER BY i.demand_cluster)`;
+
+/**
+ * The demand group a model is *shown* under (SPEC round 17): its K-Means
+ * group, unless the pipeline flagged that the model's own numbers do not
+ * support the group's name (`demand_label_fits = false`, migration 0014,
+ * decided in `models.label_fit`). The card badge, the `?cluster=` filter,
+ * the chip and /insights counts and the product page all use this one
+ * expression, so a model without a badge is never listed under the group.
+ * The flag is only read here, never re-derived. Before the migration (no
+ * such key) or for rows of an older model (NULL) the comparison is NULL and
+ * the group shows as before. Needs `EVIDENCE_DOC` joined after `i`.
+ */
+const SHOWN_CLUSTER = sql`mode() WITHIN GROUP (
+  ORDER BY CASE WHEN (ev.doc ->> 'demand_label_fits') = 'false' THEN NULL ELSE i.demand_cluster END)`;
 
 /**
  * The evidence behind that group (SPEC round 16): the model's views, sales
@@ -51,16 +66,19 @@ const MODEL_EVIDENCE = sql`
   mode() WITHIN GROUP (ORDER BY (ev.doc ->> 'model_views')::float8) AS model_views,
   mode() WITHIN GROUP (ORDER BY (ev.doc ->> 'model_sales_beats_pct')::float8) AS model_sales_beats_pct,
   mode() WITHIN GROUP (ORDER BY (ev.doc ->> 'model_normalized_price')::float8) AS model_normalized_price,
-  mode() WITHIN GROUP (ORDER BY ev.doc ->> 'demand_driver') AS demand_driver`;
+  mode() WITHIN GROUP (ORDER BY ev.doc ->> 'demand_driver') AS demand_driver,
+  bool_and((ev.doc ->> 'demand_label_fits')::boolean) AS demand_label_fits,
+  mode() WITHIN GROUP (ORDER BY ev.doc ->> 'demand_label_miss') AS demand_label_miss`;
 
 /**
- * `to_jsonb(i)` built once per listing row for `MODEL_EVIDENCE`. OFFSET 0
- * keeps the planner from inlining the subquery, which would rebuild the
- * document for each of the four keys.
+ * `to_jsonb(i)` built once per listing row for `MODEL_EVIDENCE` and
+ * `SHOWN_CLUSTER`. OFFSET 0 keeps the planner from inlining the subquery,
+ * which would rebuild the document for each key.
  */
 const EVIDENCE_DOC = sql`LEFT JOIN LATERAL (SELECT to_jsonb(i) AS doc OFFSET 0) ev ON true`;
 
 const DRIVERS: readonly DemandDriver[] = ["views", "sales", "price"];
+const MISSES: readonly NonNullable<DemandEvidence["labelMiss"]>[] = ["views", "sales", "both"];
 
 /** `MODEL_EVIDENCE` columns of one row as a `DemandEvidence` (NULL stays null). */
 function evidenceOf(r: Record<string, unknown>): DemandEvidence {
@@ -70,6 +88,8 @@ function evidenceOf(r: Record<string, unknown>): DemandEvidence {
     salesBeatsPct: num(r.model_sales_beats_pct),
     normalizedPrice: num(r.model_normalized_price),
     driver: DRIVERS.find((d) => d === r.demand_driver) ?? null,
+    labelFits: typeof r.demand_label_fits === "boolean" ? r.demand_label_fits : null,
+    labelMiss: MISSES.find((m) => m === r.demand_label_miss) ?? null,
   };
 }
 
@@ -136,7 +156,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductList> 
            (array_agg(i.recommendation ORDER BY l.in_stock DESC, l.current_price))[1] AS cheapest_rec,
            (array_agg(i.recommendation_reason ORDER BY l.in_stock DESC, l.current_price))[1]
                AS cheapest_reason,
-           ${MODEL_CLUSTER} AS model_cluster,
+           ${SHOWN_CLUSTER} AS model_cluster,
            ${MODEL_EVIDENCE},
            (array_agg(i.pct_vs_fair ORDER BY l.in_stock DESC, l.current_price))[1] AS best_pct,
            (array_agg(i.fair_price ORDER BY l.in_stock DESC, l.current_price))[1]::float8 AS fair_price,
@@ -160,7 +180,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductList> 
       ${filter.category ? sql`AND c.category = ${filter.category}` : sql``}
       ${filter.query ? sql`AND (c.model ILIKE ${"%" + filter.query + "%"} OR l.title ILIKE ${"%" + filter.query + "%"})` : sql``}
     GROUP BY c.id
-    ${filter.cluster ? sql`HAVING ${MODEL_CLUSTER} = ${filter.cluster}` : sql``}
+    ${filter.cluster ? sql`HAVING ${SHOWN_CLUSTER} = ${filter.cluster}` : sql``}
     ORDER BY ${order}
     LIMIT ${filter.limit ?? 60}
   `;
@@ -192,7 +212,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductList> 
 
 /**
  * Models per demand group, counted exactly as the product list counts them
- * (canonical products with an active listing, `MODEL_CLUSTER`), so an
+ * (canonical products with an active listing, `SHOWN_CLUSTER`), so an
  * /insights tile and "พบ X รุ่น" on `/?cluster=…` show the same number.
  * One grouped scan of the active listings.
  */
@@ -200,10 +220,11 @@ export async function countModelsByCluster(): Promise<Partial<Record<DemandClust
   const rows = await sql`
     SELECT cluster, count(*)::int AS models
     FROM (
-      SELECT ${MODEL_CLUSTER} AS cluster
+      SELECT ${SHOWN_CLUSTER} AS cluster
       FROM canonical_products c
       JOIN merchant_listings l ON l.canonical_product_id = c.id
       LEFT JOIN listing_insights i ON i.listing_id = l.id
+      ${EVIDENCE_DOC}
       WHERE ${ACTIVE}
       GROUP BY c.id
     ) AS per_model
@@ -216,11 +237,11 @@ export async function countModelsByCluster(): Promise<Partial<Record<DemandClust
 export async function getProduct(id: number): Promise<ProductDetail | null> {
   const [product] = await sql`
     SELECT c.id, c.category, c.manufacturer, c.model, c.specs,
-           d.demand_cluster, d.model_views, d.model_sales_beats_pct,
-           d.model_normalized_price, d.demand_driver
+           d.demand_cluster, d.assigned_cluster, d.model_views, d.model_sales_beats_pct,
+           d.model_normalized_price, d.demand_driver, d.demand_label_fits, d.demand_label_miss
     FROM canonical_products c
     LEFT JOIN LATERAL (
-      SELECT ${MODEL_CLUSTER} AS demand_cluster, ${MODEL_EVIDENCE}
+      SELECT ${SHOWN_CLUSTER} AS demand_cluster, ${MODEL_CLUSTER} AS assigned_cluster, ${MODEL_EVIDENCE}
       FROM merchant_listings l
       LEFT JOIN listing_insights i ON i.listing_id = l.id
       ${EVIDENCE_DOC}
@@ -250,6 +271,7 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
     model: product.model as string,
     specs: product.specs as ProductDetail["specs"],
     demandCluster: (product.demand_cluster as DemandCluster | null) ?? null,
+    assignedCluster: (product.assigned_cluster as DemandCluster | null) ?? null,
     demand: evidenceOf(product),
     offers: offers.map(
       (r): Offer => ({
@@ -327,7 +349,8 @@ export async function getSpecPoints(): Promise<SpecPoint[]> {
 
 /**
  * The parts of the K-Means payload the product list and product pages quote
- * (group medians, the best-seller views split and the overall medians):
+ * (group medians, the best-seller views split, the overall medians, the
+ * thresholds of the label rule and the count of unlabelled models):
  * `lib/demand.ts` turns them into a `DemandReference`. The
  * scatter points and centroids stay in the database. Cached for the page
  * revalidation window, so the dynamic product list does not add a database
@@ -339,13 +362,16 @@ export const getDemandPayload = unstable_cache(
       SELECT jsonb_build_object(
                'segments', payload -> 'segments',
                'split_views', payload -> 'split_views',
-               'reference', payload -> 'reference') AS payload
+               'reference', payload -> 'reference',
+               'label_rule', payload -> 'label_rule',
+               'unlabelled', payload -> 'unlabelled',
+               'n', payload -> 'n') AS payload
       FROM market_insights
       WHERE category = 'all' AND kind = 'demand_kmeans'
     `;
     return (row?.payload as Record<string, unknown> | undefined) ?? null;
   },
-  ["demand-kmeans-reference"],
+  ["demand-kmeans-reference-v15"],
   { revalidate: 900 },
 );
 

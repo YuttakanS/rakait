@@ -3,6 +3,7 @@ import { RecommendationBadge } from "@/components/badges";
 import type { Effect } from "@/components/effect-bars";
 import { SpecScatter } from "@/components/spec-scatter";
 import { StatNote } from "@/components/stat-note";
+import { demandReference, shareTile } from "@/lib/demand";
 import { CATEGORY_LABELS, CLUSTER_LABELS, featureLabel, formatDateTime, formatTHB } from "@/lib/format";
 import {
   BOOLEAN_FEATURES,
@@ -53,6 +54,12 @@ type Segment = {
    * payloads, which show `sales_per_day`.
    */
   sales_beats_pct?: number;
+  /**
+   * The same two figures over the models whose label fits their numbers
+   * (2026.11-v15+): the models the tile counts and the list shows.
+   */
+  labelled_views_median?: number;
+  labelled_sales_beats_pct?: number;
 };
 /** A K-Means centroid as stored by models before 2026.11-v7 (one label each). */
 type Centroid = Segment & { cluster: number };
@@ -189,6 +196,10 @@ export default async function InsightsPage() {
   // 2026.11-v9+ clusters on the within-store sales percentile, not the summed
   // rate: stores measure sales differently (SPEC round 9). v8 has no key.
   const rankedSales = kmeans?.sales_feature === "store_rank_pct";
+  // Thresholds and wording inputs of the K-Means payload (2026.11-v15+: the
+  // tracking cap stated beside every sales share, so it is not read as
+  // lifetime sales).
+  const demandRef = demandReference(kmeans ?? null);
   // Views at which best sellers are split into community_favorite / hidden_gem (2026.11-v7+).
   const splitViews = num(kmeans?.split_views);
   // Group names quoted inside the split sentence; nowrap so a name never breaks across lines.
@@ -384,10 +395,20 @@ export default async function InsightsPage() {
               // v9+: share of the same store's items the group's models outsell
               // (strictly), as a whole percent; not sales_rank_pct, whose
               // average rank puts tied zero sellers mid-table.
-              const beatsPct = num(c.sales_beats_pct);
+              // The tile counts models that carry the badge, so it averages
+              // those too when the payload has them (labelled_*, 2026.11-v15+);
+              // else the whole K-Means cluster, as before.
+              const beatsPct = Number.isFinite(num(c.labelled_sales_beats_pct))
+                ? num(c.labelled_sales_beats_pct)
+                : num(c.sales_beats_pct);
+              const salesTile = Number.isFinite(beatsPct) ? shareTile(beatsPct, demandRef) : null;
               // Median when the payload has it (SPEC round 11), else the mean
               // of an older payload's merged centroids.
-              const typicalViews = Number.isFinite(num(c.views_median)) ? num(c.views_median) : c.views;
+              const typicalViews = Number.isFinite(num(c.labelled_views_median))
+                ? num(c.labelled_views_median)
+                : Number.isFinite(num(c.views_median))
+                  ? num(c.views_median)
+                  : c.views;
               return (
                 <Link
                   key={c.label}
@@ -409,13 +430,11 @@ export default async function InsightsPage() {
                         {Math.round(typicalViews).toLocaleString("th-TH")} ครั้ง
                       </dd>
                     </div>
-                    {Number.isFinite(beatsPct) ? (
+                    {salesTile ? (
                       <div className="border-2 border-border p-2.5">
                         <dt className="text-muted">อันดับยอดขาย</dt>
-                        <dd className="tabular text-sm font-semibold whitespace-nowrap">
-                          ขายดีกว่า ~{Math.round(beatsPct * 100)}%
-                        </dd>
-                        <dd className="text-muted">ของสินค้าในร้านเดียวกัน</dd>
+                        <dd className="tabular text-sm font-semibold whitespace-nowrap">{salesTile.value}</dd>
+                        <dd className="text-muted">{salesTile.note}</dd>
                       </div>
                     ) : (
                       <div className="border-2 border-border p-2.5">
