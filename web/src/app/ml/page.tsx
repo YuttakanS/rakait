@@ -851,6 +851,19 @@ export default async function MlPage() {
             </Formula>
             <p className="text-xs text-muted">
               ใช้อันดับยอดขายภายในร้านแทนจำนวนชิ้น เพราะแต่ละร้านวัดยอดขายต่างกัน (JIB ใช้ยอดขายที่ร้านประกาศ ส่วน IHAVECPU ใช้สต็อกที่ลดลง)
+              {(opt(kmeans?.best_seller_margin_sd) !== null || opt(kmeans?.conversion_margin_sd) !== null) && (
+                <>
+                  {" "}
+                  · เกณฑ์ตั้งชื่อกลุ่ม (วัดที่ centroid หลังปรับสเกล หน่วยเป็น SD คือส่วนเบี่ยงเบนมาตรฐาน):
+                  {opt(kmeans?.best_seller_margin_sd) !== null && (
+                    <> “ขายดี” = อันดับยอดขายสูงกว่าค่าเฉลี่ยของทุกรุ่นเกิน {String(kmeans?.best_seller_margin_sd)} SD</>
+                  )}
+                  {opt(kmeans?.best_seller_margin_sd) !== null && opt(kmeans?.conversion_margin_sd) !== null && ","}
+                  {opt(kmeans?.conversion_margin_sd) !== null && (
+                    <> “คนดูเยอะ แต่ขายน้อย” = ยอดเข้าชมสูงกว่าอันดับยอดขายเกิน {String(kmeans?.conversion_margin_sd)} SD</>
+                  )}
+                </>
+              )}{" "}
               · silhouette วัดว่าแต่ละจุดใกล้กลุ่มตัวเองมากกว่ากลุ่มข้างเคียงแค่ไหน จาก −1 ถึง 1 (ยิ่งสูงยิ่งแยกกลุ่มชัด)
             </p>
           </>

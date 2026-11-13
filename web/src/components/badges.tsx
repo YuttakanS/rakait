@@ -1,6 +1,14 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
+import {
+  NO_REFERENCE,
+  cardConflict,
+  evidenceParts,
+  evidenceSides,
+  withheldLine,
+  type DemandReference,
+} from "@/lib/demand";
 import { CLUSTER_LABELS, RECOMMENDATION_LABELS, uncertainNote, wholePct } from "@/lib/format";
-import type { DemandCluster, Recommendation } from "@/lib/types";
+import type { DemandCluster, DemandEvidence, Recommendation } from "@/lib/types";
 import type { Verdict } from "@/lib/verdict";
 
 /*
@@ -49,6 +57,83 @@ export function ClusterBadge({ value }: { value: DemandCluster }) {
         ))}
       </span>
     </span>
+  );
+}
+
+/**
+ * Text that wraps only at its spaces and at "|" marks, never inside a run of
+ * Thai: each run is a nowrap span (the browser's Thai dictionary would
+ * otherwise break mid-word on a 140 px card), and "|" becomes a `<wbr>`.
+ * O(length).
+ */
+export function Words({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/( |\|)/).map((part, i) =>
+        part === " " ? (
+          " "
+        ) : part === "|" ? (
+          <wbr key={i} />
+        ) : part ? (
+          <span key={i} className="whitespace-nowrap">
+            {part}
+          </span>
+        ) : null,
+      )}
+    </>
+  );
+}
+
+/**
+ * The numbers behind a demand-group badge (SPEC round 16): "คนดู 35,120 ครั้ง ·
+ * ขายดีกว่า 12% ของสินค้าในร้าน" ("ขายดีกว่าแค่ 12% …" when that is under the
+ * all-model median), straight from the training run (`DemandEvidence`). A
+ * missing number is named as missing, never printed as 0. When a number
+ * contradicts the group's name, one more short line says so in a shopper's
+ * words (`cardConflict`). Visible text, not a tooltip.
+ *
+ * `withheld`: a conflict rule hides the group badge on this card. The whole
+ * thing is then one line, "กลุ่ม: คนดูเยอะ แต่ขายน้อย (คนดู 3,120 ครั้ง ·
+ * ขายดีกว่าแค่ 12%)" (`withheldLine`), which still admits a contradiction
+ * with a short suffix ("… · อยู่กลุ่มนี้เพราะราคา"), so the card is no taller
+ * than its neighbours; the product page has the detail.
+ */
+export function DemandEvidenceLine({
+  cluster,
+  evidence,
+  reference = NO_REFERENCE,
+  withheld = false,
+}: {
+  cluster: DemandCluster;
+  evidence: DemandEvidence;
+  reference?: DemandReference;
+  withheld?: boolean;
+}) {
+  if (withheld) {
+    return (
+      <p className="text-xs leading-snug text-muted">
+        <Words text={withheldLine(cluster, evidence, reference)} />
+      </p>
+    );
+  }
+  const conflict = cardConflict(cluster, evidence, reference);
+  const salesBelow = evidenceSides(cluster, evidence, reference).sales === "below";
+  return (
+    <div className="space-y-1 text-xs leading-snug text-muted">
+      <p>
+        {evidenceParts(evidence, false, salesBelow).map((part, i) => (
+          <Fragment key={i}>
+            {i > 0 && " · "}
+            <Words text={part} />
+          </Fragment>
+        ))}
+      </p>
+      {conflict && (
+        <p>
+          <Words text={conflict} />
+        </p>
+      )}
+    </div>
   );
 }
 

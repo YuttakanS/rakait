@@ -347,6 +347,26 @@ async def test_train_persists_insights(conn, tmp_path) -> None:
     assert {"simple_regression", "fair_value_mlr", "tier_tree"} <= kinds
     assert "linkage_quality" in kinds  # written by link, kept by train
     assert report.market[("gpu", "simple_regression")]["slope_thb_per_unit"] > 0
+    # Migration 0013: the evidence behind a demand group, one value per model
+    # on each of its listings. Every store publishes views here, so each
+    # model has a views total; one scrape gives no sales rate yet, so the
+    # sales percentile may be NULL (never 0 for "unknown").
+    evidence = await conn.fetch(
+        "SELECT l.canonical_product_id AS model, count(DISTINCT i.model_views) AS views, "
+        "count(DISTINCT i.model_sales_beats_pct) AS beats, "
+        "bool_and(i.model_views > 0 AND i.model_normalized_price > 0) AS filled "
+        "FROM listing_insights i JOIN merchant_listings l ON l.id = i.listing_id "
+        "GROUP BY l.canonical_product_id"
+    )
+    assert len(evidence) == len(products)
+    assert all(r["views"] == 1 and r["beats"] <= 1 and r["filled"] for r in evidence)
+    assert (
+        await conn.fetchval(
+            "SELECT count(*) FROM listing_insights "
+            "WHERE demand_driver IS NOT NULL AND demand_cluster IS NULL"
+        )
+        == 0
+    )
     assert (tmp_path / "gpu_simple_regression.png").exists()
 
 

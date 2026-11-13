@@ -611,6 +611,51 @@ _CONVERSION_MARGIN = 0.5
 # "> 0", was named best sellers (19 of its models had zero sales); the same
 # margin as for conversion keeps such clusters hype or niche.
 _BEST_SELLER_MARGIN = _CONVERSION_MARGIN
+#: The two margins under public names: persisted in the K-Means payload so the
+#: web states the rule it explains instead of a number written into its copy.
+CONVERSION_MARGIN_SD = _CONVERSION_MARGIN
+BEST_SELLER_MARGIN_SD = _BEST_SELLER_MARGIN
+#: The clustered features in column order, as stored in ``demand_driver``.
+DEMAND_DIMENSIONS = ("views", "sales", "price")
+
+
+def deciding_dimension(
+    x: np.ndarray, centers: np.ndarray, assigned: np.ndarray, names: list[str]
+) -> np.ndarray:
+    """Per row, the feature that most keeps it in its cluster (SPEC round 16).
+
+    K-Means assigns a row to the nearest centroid over all three standardised
+    features at once, so a model can sit in "few views, few sales" with views
+    above the typical model: another feature outweighed them. For each row
+    this takes the nearest centroid whose *name* differs from its own
+    cluster's (the group it would otherwise read as) and splits the squared
+    distance gap by feature::
+
+        d(x, rival)^2 - d(x, own)^2 = sum_j [(x_j - rival_j)^2 - (x_j - own_j)^2]
+
+    The feature with the largest term is the one that most favours the own
+    cluster over that rival. One ``n x k x p`` broadcast: O(n k p), no
+    per-row Python.
+
+    Args:
+        x: Standardised feature matrix, ``n x p`` in :data:`DEMAND_DIMENSIONS` order.
+        centers: Cluster centroids, ``k x p``.
+        assigned: Cluster index per row.
+        names: Cluster name per centroid (:func:`name_segments`).
+
+    Returns:
+        One of :data:`DEMAND_DIMENSIONS` per row, or ``None`` where every
+        cluster shares the row's name (no rival to compare with).
+    """
+    squared = (x[:, None, :] - centers[None, :, :]) ** 2  # n x k x p
+    name = np.asarray(names, dtype=object)
+    rivals = name[None, :] != name[assigned][:, None]  # n x k
+    distance = np.where(rivals, squared.sum(axis=2), np.inf)
+    rival = distance.argmin(axis=1)
+    rows = np.arange(len(x))
+    gain = squared[rows, rival, :] - squared[rows, assigned, :]  # n x p
+    dimension = np.asarray(DEMAND_DIMENSIONS, dtype=object)[gain.argmax(axis=1)]
+    return np.where(rivals.any(axis=1), dimension, None)
 
 
 def name_segments(centers: list[tuple[float, float]]) -> list[str]:
@@ -812,6 +857,12 @@ class DemandSegments:
             is a best seller.
         silhouette_by_k: Silhouette per candidate k.
         hierarchy: Ward comparison, when ``n`` is small enough.
+        drivers: Per input row, the feature that most keeps it in its cluster
+            (:func:`deciding_dimension`); ``None`` for unclustered rows.
+        reference: Medians over every clustered row (``views_median``,
+            ``normalized_price_median`` and, when given, ``sales_rank_pct_median``
+            and ``sales_beats_pct_median``) plus ``n``: what "more views than
+            the typical model" is measured against on the web.
     """
 
     k: int
@@ -822,6 +873,8 @@ class DemandSegments:
     split_views: float | None = None
     silhouette_by_k: dict[int, float] = field(default_factory=dict)
     hierarchy: HierarchyComparison | None = None
+    drivers: pd.Series | None = None
+    reference: dict[str, float | int] = field(default_factory=dict)
 
 
 _SEGMENT_STATS = (
@@ -877,13 +930,18 @@ def summarise_segments(
         "sales_per_day": ("sales_per_day", "mean"),
         "sales_per_day_median": ("sales_per_day", "median"),
         "normalized_price": ("normalized_price", "mean"),
+        "normalized_price_median": ("normalized_price", "median"),
     }
+    stats = (*stats, "normalized_price_median")
     optional = {"sales_rank_pct": sales_rank_pct, "sales_beats_pct": sales_beats_pct}
     for column, values in optional.items():
         if values is not None:
             frame[column] = values.astype(float)
-            stats = (*stats, column)
+            # Mean and (2026.11-v14) median: the web compares a group's
+            # typical model with the typical model overall.
+            stats = (*stats, column, f"{column}_median")
             aggregations[column] = (column, "mean")
+            aggregations[f"{column}_median"] = (column, "median")
     grouped = frame.dropna(subset=["label"]).groupby("label").agg(**aggregations)
     return [
         {
@@ -1000,6 +1058,20 @@ def segment_demand(
         )
     labels = pd.Series(None, index=views.index, dtype="object")
     labels[raw.index] = listing_labels
+    drivers = pd.Series(None, index=views.index, dtype="object")
+    drivers[raw.index] = deciding_dimension(x, km.cluster_centers_, km.labels_, names)
+    # Medians over the clustered rows, raw units (one pass each, O(n)).
+    reference: dict[str, float | int] = {
+        "n": int(len(raw)),
+        "views_median": float(views.astype(float).loc[raw.index].median()),
+        "normalized_price_median": float(raw["normalized_price"].median()),
+    }
+    if sales_rank_pct is not None:
+        reference["sales_rank_pct_median"] = float(raw["sales"].median())
+    if sales_beats_pct is not None:
+        reference["sales_beats_pct_median"] = float(
+            sales_beats_pct.astype(float).loc[raw.index].median()
+        )
     hierarchy = (
         compare_hierarchical(x, km.labels_, best_k) if len(x) <= MAX_HIERARCHICAL_N else None
     )
@@ -1011,9 +1083,14 @@ def segment_demand(
         segments=summarise_segments(
             labels, views, sales_per_day, normalized_price, sales_rank_pct, sales_beats_pct
         ),
-        split_views=None if split_log_views is None else float(math.expm1(split_log_views)),
+        # Rounded: expm1(log1p(v)) of a model sitting on the split gives
+        # 1731.9999999999995 for v = 1732, and the stored threshold should
+        # be the model's own view count (the split itself is taken on logs).
+        split_views=None if split_log_views is None else round(math.expm1(split_log_views), 6),
         silhouette_by_k=scores,
         hierarchy=hierarchy,
+        drivers=drivers,
+        reference=reference,
     )
 
 

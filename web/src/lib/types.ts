@@ -2,6 +2,25 @@ export type Category = "gpu" | "cpu" | "ram" | "ssd";
 export type Recommendation = "buy_now" | "wait" | "fair_price";
 export type DemandCluster = "community_favorite" | "overpriced_hype" | "hidden_gem" | "niche";
 export type SortKey = "deal" | "price" | "stores";
+/** A clustered feature, as stored in `listing_insights.demand_driver`. */
+export type DemandDriver = "views" | "sales" | "price";
+
+/**
+ * The numbers behind a model's demand group, exactly as the clustering read
+ * them (`train.model_demand`, stored per listing by migration 0013). Null
+ * means not known: no store publishes the counter, or the row predates model
+ * 2026.11-v14. Never 0 for "unknown".
+ */
+export interface DemandEvidence {
+  /** Views summed over the stores that publish them. */
+  views: number | null;
+  /** Share [0, 1) of the same store's listings that sold strictly less, averaged over stores. */
+  salesBeatsPct: number | null;
+  /** Lowest in-stock price over the median price of the model's listings. */
+  normalizedPrice: number | null;
+  /** The feature that most keeps the model in its cluster rather than the nearest other group. */
+  driver: DemandDriver | null;
+}
 
 export interface ProductSummary {
   id: number;
@@ -26,6 +45,8 @@ export interface ProductSummary {
    * `?cluster=` filter selects on. Not tied to the headline offer.
    */
   modelCluster: DemandCluster | null;
+  /** The evidence for `modelCluster` (shown under the badge). */
+  demand: DemandEvidence;
   /** Price-vs-fair delta of the headline offer (e.g. -0.12 = 12% below). */
   bestPctVsFair: number | null;
   /** Fair price of the headline offer (one value per model). */
@@ -81,6 +102,8 @@ export interface ProductDetail {
   specs: Record<string, string | number | boolean | null>;
   /** The model's demand group (shown once, in the product hero). */
   demandCluster: DemandCluster | null;
+  /** The evidence for `demandCluster`. */
+  demand: DemandEvidence;
   offers: Offer[];
 }
 

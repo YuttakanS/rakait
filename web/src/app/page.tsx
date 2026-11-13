@@ -3,8 +3,16 @@ import { AutoSubmitSelect } from "@/components/auto-submit-select";
 import { DealTag } from "@/components/badges";
 import { ProductCard, shownFair } from "@/components/product-card";
 import { ProductImage } from "@/components/product-image";
+import {
+  DIMENSIONS_TEXT,
+  DIMENSION_COUNT,
+  countText,
+  demandReference,
+  groupComparison,
+  groupNumbers,
+} from "@/lib/demand";
 import { CATEGORY_LABELS, CLUSTER_LABELS, MERCHANTS, formatBand, formatTHB, merchantList, wholePct } from "@/lib/format";
-import { SEEN_WINDOW_DAYS, listProducts } from "@/lib/queries";
+import { SEEN_WINDOW_DAYS, getDemandPayload, listProducts } from "@/lib/queries";
 import type { Category, DemandCluster, ProductSummary, SortKey } from "@/lib/types";
 
 export const revalidate = 900;
@@ -165,7 +173,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const cluster = pick(params.cluster, CLUSTERS);
   const sort = pick(params.sort, ["deal", "price", "stores"] as const) ?? "deal";
   const query = params.q?.trim().slice(0, 80) || undefined;
-  const { products, total } = await listProducts({ category, cluster, query, sort });
+  // Two queries in one render; the K-Means reference is cached for the
+  // revalidation window (`getDemandPayload`), so it is rarely a round trip.
+  const [{ products, total }, demandPayload] = await Promise.all([
+    listProducts({ category, cluster, query, sort }),
+    getDemandPayload(),
+  ]);
+  const reference = demandReference(demandPayload);
+  const comparison = cluster ? groupComparison(cluster, reference) : null;
   const landing = !category && !cluster && !query && !params.sort;
   const hero = landing ? heroDeal(products) : null;
   const heading = query
@@ -210,6 +225,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
               แปลว่าถูกกว่าราคายุติธรรม
             </p>
             {cluster && <p className="mt-1 max-w-2xl text-sm text-muted">{CLUSTER_LABELS[cluster].hint}</p>}
+            {/* The group's typical model beside the typical model overall, so
+                the name can be checked against numbers (SPEC round 16). */}
+            {comparison && <p className="tabular mt-1 max-w-2xl text-xs leading-relaxed text-muted">{comparison}</p>}
           </div>
           <form action="/" className="flex w-full flex-wrap gap-2 sm:w-auto">
             {cluster && <input type="hidden" name="cluster" value={cluster} />}
@@ -244,20 +262,58 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
               กลุ่มความต้องการ <span className="tabular">(i)</span>
             </summary>
             <div className="mb-1 max-w-3xl border-2 border-border bg-surface-muted p-3 text-sm">
-              <p className="text-xs text-muted">
-                จัดกลุ่มรุ่นสินค้าจากจำนวนคนเข้าดู ยอดขายเทียบกับสินค้าอื่นในร้านเดียวกัน และราคาเทียบกับรุ่นเดียวกัน
+              <p className="text-xs leading-relaxed text-muted">
+                ระบบจัดกลุ่มรุ่นสินค้าด้วย K-Means จาก {DIMENSION_COUNT} อย่างพร้อมกัน: {DIMENSIONS_TEXT} ชื่อกลุ่มบอกลักษณะโดยรวมของกลุ่ม
+                รุ่นหนึ่งจึงอาจมีตัวเลขบางตัวไม่ตรงชื่อ การ์ดสินค้าแสดงยอดเข้าชมและอันดับยอดขายของรุ่นไว้ใต้ป้าย
               </p>
-              <dl className="mt-2 space-y-2">
-                {CLUSTERS.map((c) => (
-                  <div key={c}>
-                    <dt className="font-semibold">{CLUSTER_LABELS[c].label}</dt>
-                    <dd className="text-xs text-muted">{CLUSTER_LABELS[c].hint}</dd>
-                  </div>
-                ))}
+              <ul className="mt-2 list-inside list-disc space-y-1 text-xs leading-relaxed text-muted">
+                <li>
+                  “ขายดี” = อยู่ในกลุ่มที่อันดับยอดขายสูงกว่าค่าเฉลี่ยของทุกรุ่นชัดเจน
+                  {reference.salesBeatsMedian !== null && (
+                    <>
+                      {" "}
+                      · ค่ากลางของทุกรุ่นคือขายดีกว่า ~{wholePct(reference.salesBeatsMedian)}% ของสินค้าในร้านเดียวกัน
+                    </>
+                  )}
+                </li>
+                {reference.splitViews !== null && (
+                  <li>
+                    ในรุ่นขายดี: “คนดูเยอะ” = คนดูมากกว่า{" "}
+                    <span className="tabular whitespace-nowrap">{countText(reference.splitViews)} ครั้ง</span>{" "}
+                    (ค่ากลางของรุ่นขายดี) ไม่เกินนั้นคือ “คนดูน้อย”
+                  </li>
+                )}
+                <li>
+                  “คนดูเยอะ แต่ขายน้อย” = กลุ่มที่ยอดเข้าชมสูงกว่าระดับยอดขายชัดเจน ส่วน “คนดูน้อย ขายน้อย” คือกลุ่มที่เหลือ
+                  {reference.viewsMedian !== null && (
+                    <>
+                      {" "}
+                      · ค่ากลางคนดูของทุกรุ่นคือ{" "}
+                      <span className="tabular whitespace-nowrap">{countText(reference.viewsMedian)} ครั้ง</span>
+                    </>
+                  )}
+                </li>
+              </ul>
+              <dl className="mt-3 space-y-2">
+                {CLUSTERS.map((c) => {
+                  const numbers = groupNumbers(c, reference);
+                  return (
+                    <div key={c}>
+                      <dt className="font-semibold">{CLUSTER_LABELS[c].label}</dt>
+                      <dd className="text-xs text-muted">{CLUSTER_LABELS[c].hint}</dd>
+                      {numbers && <dd className="tabular text-xs text-muted">{numbers}</dd>}
+                    </div>
+                  );
+                })}
               </dl>
-              <Link href="/insights#demand" className="link mt-2 inline-block py-1 text-xs">
-                ดูวิธีจัดกลุ่มและตัวเลขของแต่ละกลุ่ม <span aria-hidden>→</span>
-              </Link>
+              <div className="mt-2 flex flex-wrap gap-x-4">
+                <Link href="/ml#kmeans" className="link inline-block py-1 text-xs">
+                  ดูกราฟ เกณฑ์ตัวเลข และวิธีจัดกลุ่มด้วย K-Means <span aria-hidden>→</span>
+                </Link>
+                <Link href="/insights#demand" className="link inline-block py-1 text-xs">
+                  ดูสรุปของแต่ละกลุ่ม <span aria-hidden>→</span>
+                </Link>
+              </div>
             </div>
           </details>
           {CLUSTERS.map((c) => {
@@ -288,7 +344,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
           <ul className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4">
             {products.map((p, index) => (
               <li key={p.id}>
-                <ProductCard p={p} priority={index < 4} />
+                <ProductCard p={p} priority={index < 4} reference={reference} />
               </li>
             ))}
           </ul>

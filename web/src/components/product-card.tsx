@@ -1,8 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ClusterBadge, DealTag, FairGapTag, UncertainTag, VerdictBadges } from "@/components/badges";
+import { ClusterBadge, DealTag, DemandEvidenceLine, FairGapTag, UncertainTag, VerdictBadges } from "@/components/badges";
 import { ProductImage } from "@/components/product-image";
 import { cardReason } from "@/lib/card-reason";
+import { NO_REFERENCE, type DemandReference } from "@/lib/demand";
 import { CATEGORY_LABELS, formatBand, formatTHB, uncertainNote } from "@/lib/format";
 import type { ProductSummary } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
@@ -35,8 +36,22 @@ function reasonLine(p: ProductSummary): ReactNode {
  * the CTA at the bottom is its visual call to action, styled as a button.
  * No viewport prefetch: a grid of cards would render a dozen uncached product
  * pages (one database connection each) at once.
+ *
+ * A model with a demand group prints the numbers behind it under the badges
+ * (`DemandEvidenceLine`), also when the model is sold out: the group is the
+ * model's. When a conflict rule withholds the badge, the card prints one
+ * line with the group's name and numbers in place of the badge and the note.
  */
-export function ProductCard({ p, priority = false }: { p: ProductSummary; priority?: boolean }) {
+export function ProductCard({
+  p,
+  priority = false,
+  reference = NO_REFERENCE,
+}: {
+  p: ProductSummary;
+  priority?: boolean;
+  /** Yardsticks from the K-Means payload, for the "numbers contradict the name" line. */
+  reference?: DemandReference;
+}) {
   const inStock = p.inStockOffers > 0;
   const fair = shownFair(p);
   // The cluster is the model's group, the one `?cluster=` filters on.
@@ -112,14 +127,27 @@ export function ProductCard({ p, priority = false }: { p: ProductSummary; priori
             ) : (
               <FairGapTag pct={p.bestPctVsFair} />
             )}
-            <VerdictBadges verdict={verdict} reason={reasonLine(p)} />
+            {/* A withheld group badge (verdict.note) collapses to one line
+                naming the group with its numbers, instead of the long note. */}
+            <VerdictBadges verdict={verdict} reason={reasonLine(p)} showNote={false} />
+            {p.modelCluster && (
+              <DemandEvidenceLine
+                cluster={p.modelCluster}
+                evidence={p.demand}
+                reference={reference}
+                withheld={verdict.note !== null}
+              />
+            )}
           </div>
         )}
         {/* Sold out everywhere: no price verdict, but the demand group is the
             model's, not a stale price's, so it still shows. */}
         {!inStock && p.modelCluster && (
-          <div className="flex flex-wrap gap-1.5">
-            <ClusterBadge value={p.modelCluster} />
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap gap-1.5">
+              <ClusterBadge value={p.modelCluster} />
+            </div>
+            <DemandEvidenceLine cluster={p.modelCluster} evidence={p.demand} reference={reference} />
           </div>
         )}
 

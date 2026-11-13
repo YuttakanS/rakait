@@ -1,9 +1,12 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
 import type {
   Category,
   CoverageRow,
   DemandCluster,
+  DemandDriver,
+  DemandEvidence,
   MarketInsight,
   Offer,
   PricePoint,
@@ -32,6 +35,43 @@ const ACTIVE = sql`l.last_scraped_at > now() - interval '2 days' AND l.current_p
  * counts still name one group per model. NULLs are ignored.
  */
 const MODEL_CLUSTER = sql`mode() WITHIN GROUP (ORDER BY i.demand_cluster)`;
+
+/**
+ * The evidence behind that group (SPEC round 16): the model's views, sales
+ * percentile, normalised price and deciding feature, as `pricewatch train`
+ * stored them on every listing of the model (migration 0013). Aggregated
+ * exactly like `MODEL_CLUSTER` (`mode()`, NULLs ignored), so the numbers
+ * and the badge stand for the same majority of the model's listings even if
+ * some rows disagree. Read from `ev.doc` = `to_jsonb(i)`, like `IMAGE`, so
+ * the query also runs before the migration is applied: the keys are then
+ * absent and every value is NULL (the page says the numbers are not there
+ * yet). Needs `EVIDENCE_DOC` joined after `i`. Nothing is recomputed here.
+ */
+const MODEL_EVIDENCE = sql`
+  mode() WITHIN GROUP (ORDER BY (ev.doc ->> 'model_views')::float8) AS model_views,
+  mode() WITHIN GROUP (ORDER BY (ev.doc ->> 'model_sales_beats_pct')::float8) AS model_sales_beats_pct,
+  mode() WITHIN GROUP (ORDER BY (ev.doc ->> 'model_normalized_price')::float8) AS model_normalized_price,
+  mode() WITHIN GROUP (ORDER BY ev.doc ->> 'demand_driver') AS demand_driver`;
+
+/**
+ * `to_jsonb(i)` built once per listing row for `MODEL_EVIDENCE`. OFFSET 0
+ * keeps the planner from inlining the subquery, which would rebuild the
+ * document for each of the four keys.
+ */
+const EVIDENCE_DOC = sql`LEFT JOIN LATERAL (SELECT to_jsonb(i) AS doc OFFSET 0) ev ON true`;
+
+const DRIVERS: readonly DemandDriver[] = ["views", "sales", "price"];
+
+/** `MODEL_EVIDENCE` columns of one row as a `DemandEvidence` (NULL stays null). */
+function evidenceOf(r: Record<string, unknown>): DemandEvidence {
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    views: num(r.model_views),
+    salesBeatsPct: num(r.model_sales_beats_pct),
+    normalizedPrice: num(r.model_normalized_price),
+    driver: DRIVERS.find((d) => d === r.demand_driver) ?? null,
+  };
+}
 
 /**
  * Days of price_history behind `max_seen_price`: the pipeline's
@@ -97,6 +137,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductList> 
            (array_agg(i.recommendation_reason ORDER BY l.in_stock DESC, l.current_price))[1]
                AS cheapest_reason,
            ${MODEL_CLUSTER} AS model_cluster,
+           ${MODEL_EVIDENCE},
            (array_agg(i.pct_vs_fair ORDER BY l.in_stock DESC, l.current_price))[1] AS best_pct,
            (array_agg(i.fair_price ORDER BY l.in_stock DESC, l.current_price))[1]::float8 AS fair_price,
            (array_agg(i.fair_error_pct ORDER BY l.in_stock DESC, l.current_price))[1] AS fair_error_pct,
@@ -114,6 +155,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductList> 
     FROM canonical_products c
     JOIN merchant_listings l ON l.canonical_product_id = c.id
     LEFT JOIN listing_insights i ON i.listing_id = l.id
+    ${EVIDENCE_DOC}
     WHERE ${ACTIVE}
       ${filter.category ? sql`AND c.category = ${filter.category}` : sql``}
       ${filter.query ? sql`AND (c.model ILIKE ${"%" + filter.query + "%"} OR l.title ILIKE ${"%" + filter.query + "%"})` : sql``}
@@ -137,6 +179,7 @@ export async function listProducts(filter: ProductFilter): Promise<ProductList> 
     cheapestRecommendation: (r.cheapest_rec as Recommendation | null) ?? null,
     cheapestReason: (r.cheapest_reason as string | null) ?? null,
     modelCluster: (r.model_cluster as DemandCluster | null) ?? null,
+    demand: evidenceOf(r),
     bestPctVsFair: (r.best_pct as number | null) ?? null,
     fairPrice: (r.fair_price as number | null) ?? null,
     fairErrorPct: (r.fair_error_pct as number | null) ?? null,
@@ -173,11 +216,17 @@ export async function countModelsByCluster(): Promise<Partial<Record<DemandClust
 export async function getProduct(id: number): Promise<ProductDetail | null> {
   const [product] = await sql`
     SELECT c.id, c.category, c.manufacturer, c.model, c.specs,
-           (SELECT ${MODEL_CLUSTER}
-            FROM merchant_listings l
-            LEFT JOIN listing_insights i ON i.listing_id = l.id
-            WHERE l.canonical_product_id = c.id AND ${ACTIVE}) AS demand_cluster
-    FROM canonical_products c WHERE c.id = ${id}
+           d.demand_cluster, d.model_views, d.model_sales_beats_pct,
+           d.model_normalized_price, d.demand_driver
+    FROM canonical_products c
+    LEFT JOIN LATERAL (
+      SELECT ${MODEL_CLUSTER} AS demand_cluster, ${MODEL_EVIDENCE}
+      FROM merchant_listings l
+      LEFT JOIN listing_insights i ON i.listing_id = l.id
+      ${EVIDENCE_DOC}
+      WHERE l.canonical_product_id = c.id AND ${ACTIVE}
+    ) d ON true
+    WHERE c.id = ${id}
   `;
   if (!product) return null;
   const offers = await sql`
@@ -201,6 +250,7 @@ export async function getProduct(id: number): Promise<ProductDetail | null> {
     model: product.model as string,
     specs: product.specs as ProductDetail["specs"],
     demandCluster: (product.demand_cluster as DemandCluster | null) ?? null,
+    demand: evidenceOf(product),
     offers: offers.map(
       (r): Offer => ({
         listingId: Number(r.id),
@@ -274,6 +324,30 @@ export async function getSpecPoints(): Promise<SpecPoint[]> {
       x: r.x as number,
     }));
 }
+
+/**
+ * The parts of the K-Means payload the product list and product pages quote
+ * (group medians, the best-seller views split and the overall medians):
+ * `lib/demand.ts` turns them into a `DemandReference`. The
+ * scatter points and centroids stay in the database. Cached for the page
+ * revalidation window, so the dynamic product list does not add a database
+ * round trip per request; null before the first training run.
+ */
+export const getDemandPayload = unstable_cache(
+  async (): Promise<Record<string, unknown> | null> => {
+    const [row] = await sql`
+      SELECT jsonb_build_object(
+               'segments', payload -> 'segments',
+               'split_views', payload -> 'split_views',
+               'reference', payload -> 'reference') AS payload
+      FROM market_insights
+      WHERE category = 'all' AND kind = 'demand_kmeans'
+    `;
+    return (row?.payload as Record<string, unknown> | undefined) ?? null;
+  },
+  ["demand-kmeans-reference"],
+  { revalidate: 900 },
+);
 
 export async function getMarketInsights(): Promise<MarketInsight[]> {
   const rows = await sql`SELECT category, kind, computed_at, payload FROM market_insights`;

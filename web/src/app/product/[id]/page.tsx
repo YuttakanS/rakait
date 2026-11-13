@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ClusterBadge, DealScore, NoteText, SoldOutTag, VerdictBadges } from "@/components/badges";
+import { ClusterBadge, DealScore, NoteText, SoldOutTag, VerdictBadges, Words } from "@/components/badges";
 import { DealMeter } from "@/components/deal-meter";
 import { PriceChart } from "@/components/price-chart";
 import { ProductImage } from "@/components/product-image";
-import { CATEGORY_LABELS, formatSpecValue, formatTHB, uncertainReason } from "@/lib/format";
+import { demandReference, demandWhy, evidenceParts, evidenceSides, type DemandReference } from "@/lib/demand";
+import { CATEGORY_LABELS, CLUSTER_LABELS, formatSpecValue, formatTHB, uncertainReason } from "@/lib/format";
 import { salesRate } from "@/lib/market";
-import { getPriceHistory, getProduct } from "@/lib/queries";
-import type { DemandCluster, Offer } from "@/lib/types";
+import { getDemandPayload, getPriceHistory, getProduct } from "@/lib/queries";
+import type { DemandCluster, DemandEvidence, Offer } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
 
 export const revalidate = 900;
@@ -70,6 +71,68 @@ function Stat({ label, value, tone = "" }: { label: string; value: string; tone?
 }
 
 const VISIBLE_OFFERS = 6;
+
+/**
+ * The evidence for the model's demand group, beside its badge in the hero
+ * (SPEC round 16): both numbers (a missing one named as missing) and a
+ * sentence measuring them against the typical model. When a number
+ * contradicts the group's name the sentence leads with that ("ตัวเลขของรุ่นนี้:
+ * ยอดเข้าชมไม่ตรงกับชื่อกลุ่ม …"), one plain line says why the model is in the
+ * group anyway, and how groups are formed sits behind a disclosure. The
+ * group is named in words here, so the block also reads on its own when a
+ * conflict rule withholds the badge.
+ */
+function DemandEvidenceBlock({
+  cluster,
+  evidence,
+  reference,
+  inStock,
+}: {
+  cluster: DemandCluster;
+  evidence: DemandEvidence;
+  reference: DemandReference;
+  /** Whether any store has the model in stock (wording of the price gap). */
+  inStock: boolean;
+}) {
+  const { lead, why, reason, method } = demandWhy(cluster, evidence, reference, inStock);
+  const salesBelow = evidenceSides(cluster, evidence, reference).sales === "below";
+  return (
+    <div className="max-w-xl space-y-1 border-l-[3px] border-border pl-3 text-sm">
+      <p>
+        <span className="font-semibold">
+          กลุ่ม <span className="whitespace-nowrap">“{CLUSTER_LABELS[cluster].label}”</span>:
+        </span>{" "}
+        {evidenceParts(evidence, true, salesBelow).map((part, i) => (
+          <span key={i}>
+            {i > 0 && " · "}
+            <Words text={part} />
+          </span>
+        ))}
+      </p>
+      {why && (
+        <p className="text-muted">
+          {lead}: {why}
+        </p>
+      )}
+      {reason && <p className="text-muted">{reason}</p>}
+      {method && (
+        <details className="group">
+          <summary className="inline-flex min-h-11 items-center gap-2 text-xs font-medium text-muted underline decoration-dotted underline-offset-4 hover:text-foreground">
+            ทำไมตัวเลขไม่ตรงชื่อกลุ่มได้
+            <span aria-hidden className="disclosure" />
+          </summary>
+          <p className="border-2 border-border bg-surface-muted p-3 text-xs leading-relaxed text-muted">{method}</p>
+        </details>
+      )}
+      <p className="text-xs text-subtle">
+        ยอดเข้าชมรวมจากทุกร้านที่เปิดเผยยอด อันดับยอดขายเทียบกับสินค้าในร้านเดียวกันแล้วเฉลี่ยข้ามร้าน ·{" "}
+        <Link href="/ml#kmeans" className="link">
+          ดูวิธีจัดกลุ่ม
+        </Link>
+      </p>
+    </div>
+  );
+}
 
 /**
  * An offer's badges. The demand group belongs to the model, so only the
@@ -175,8 +238,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const { id: raw } = await params;
   const id = Number.parseInt(raw, 10);
   if (!Number.isSafeInteger(id)) notFound();
-  const [product, history] = await Promise.all([getProduct(id), getPriceHistory(id)]);
+  const [product, history, demandPayload] = await Promise.all([getProduct(id), getPriceHistory(id), getDemandPayload()]);
   if (!product) notFound();
+  const reference = demandReference(demandPayload);
 
   // Offers arrive in-stock first, then by price. Sold-out offers carry stale
   // last prices, so the headline price, the price range and the savings are
@@ -241,6 +305,14 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               </div>
               <VerdictBadges verdict={verdictOf(cheapest, product.demandCluster)} className="max-w-xl" />
               {cheapestReason && <p className="text-sm text-muted">{cheapestReason}</p>}
+              {product.demandCluster && (
+                <DemandEvidenceBlock
+                  cluster={product.demandCluster}
+                  evidence={product.demand}
+                  reference={reference}
+                  inStock
+                />
+              )}
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <Stat label="ราคาสูงสุด (มีของ)" value={formatTHB(maxInStock)} />
@@ -263,6 +335,14 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 ราคาล่าสุด <span className="font-semibold">{formatTHB(lastKnown.price)}</span> ที่ {lastKnown.merchantName} ·
                 ไม่มีราคาต่ำสุดหรือส่วนลดให้เทียบ จนกว่าจะมีของเข้า
               </p>
+              {product.demandCluster && (
+                <DemandEvidenceBlock
+                  cluster={product.demandCluster}
+                  evidence={product.demand}
+                  reference={reference}
+                  inStock={false}
+                />
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted">ตอนนี้ไม่มีร้านไหนขายรุ่นนี้</p>

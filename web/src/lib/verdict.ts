@@ -10,7 +10,11 @@ export interface Verdict {
   inStock: boolean;
   recommendation: Recommendation | null;
   cluster: DemandCluster | null;
-  /** Why a badge was withheld; shown under the badges, never hover-only. */
+  /**
+   * Why a badge was withheld. The product page prints it under the badges
+   * (never hover-only); a product card prints the one-line `withheldLine`
+   * (lib/demand.ts) instead and only uses this as the "withheld" flag.
+   */
   note: string | null;
 }
 
@@ -28,9 +32,11 @@ export interface Verdict {
  * as a value find) keeps รอก่อน. Pairs not listed here are
  * compatible (a popular part can still be overpriced at one store).
  *
- * The sentence names the group the model is in, so a card in a `?cluster=`
- * result whose badge is withheld still says why it is listed there.
- * `NoteText` keeps the quoted name on one line on a narrow card.
+ * The sentence names the group the model is in and is shown on the product
+ * page (hero and offer rows; `NoteText` keeps the quoted name on one line).
+ * A product card does not print it (SPEC round 16): a card in a `?cluster=`
+ * result whose badge is withheld names its group in one line with the
+ * model's numbers, "กลุ่ม: … (คนดู N ครั้ง · ขายดีกว่า N%)" (`withheldLine`).
  */
 const CONFLICTS: Partial<Record<Recommendation, Partial<Record<DemandCluster, string>>>> = {
   buy_now: {

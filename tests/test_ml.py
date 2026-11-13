@@ -1330,3 +1330,151 @@ def test_timing_payload_carries_the_settings_the_web_quotes() -> None:
     assert payload["tree"]["nodes"][0]["id"] == 0
     assert payload["used_for_recommendations"] is True
     json.dumps(payload)  # JSON-ready as persisted
+
+
+# ------------------------------------------ demand-group evidence (SPEC round 16)
+
+
+def test_deciding_dimension_names_the_feature_that_separates_a_row_from_its_rival() -> None:
+    # Two clusters alike in views and sales, apart in price only; a third far
+    # away in views. Columns follow m.DEMAND_DIMENSIONS.
+    centers = np.array([[0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [5.0, 0.0, 0.0]])
+    names = [m.NICHE, m.HYPE, m.BEST_SELLERS]
+    x = np.array(
+        [
+            [0.3, 0.1, -0.9],  # nearest: 0; rival 1 differs in price
+            [-0.2, 0.0, 1.2],  # nearest: 1; rival 0 differs in price
+            [4.6, 0.2, 0.1],  # nearest: 2; rivals differ in views
+        ]
+    )
+    assigned = np.array([0, 1, 2])
+
+    drivers = m.deciding_dimension(x, centers, assigned, names)
+
+    assert drivers.tolist() == ["price", "price", "views"]
+    assert m.DEMAND_DIMENSIONS == ("views", "sales", "price")
+
+
+def test_deciding_dimension_skips_rivals_with_the_same_name() -> None:
+    # Clusters 0 and 1 are both "niche" (they differ in price); the only
+    # differently named cluster differs in sales, so sales is what keeps the
+    # row out of it, however close the same-named cluster is.
+    centers = np.array([[0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [0.0, 3.0, -1.0]])
+    names = [m.NICHE, m.NICHE, m.BEST_SELLERS]
+    x = np.array([[0.0, 0.2, -0.8]])
+
+    assert m.deciding_dimension(x, centers, np.array([0]), names).tolist() == ["sales"]
+    # One name for every cluster: nothing to be separated from.
+    same = m.deciding_dimension(x, centers, np.array([0]), [m.NICHE] * 3)
+    assert same.tolist() == [None]
+
+
+def test_segment_demand_reports_drivers_and_reference_medians() -> None:
+    rng = np.random.default_rng(16)
+    n = 120
+    views = pd.Series(rng.lognormal(7, 1.2, n))
+    rank = pd.Series(rng.uniform(0.01, 1.0, n))
+    beats = (rank - 0.05).clip(lower=0)
+    price = pd.Series(rng.normal(1.0, 0.1, n))
+    views[:5] = np.nan  # unclustered: no views published
+
+    seg = m.segment_demand(
+        views, rank * 3, price, sales_rank_pct=rank, sales_beats_pct=beats, k_range=range(4, 5)
+    )
+
+    clustered = seg.labels.notna()
+    assert clustered.sum() == n - 5
+    assert seg.drivers is not None
+    assert seg.drivers[~clustered].isna().all()
+    assert set(seg.drivers[clustered]) <= set(m.DEMAND_DIMENSIONS)
+    assert seg.drivers[clustered].notna().all()  # four clusters never share one name here
+    assert seg.reference["n"] == n - 5
+    assert seg.reference["views_median"] == pytest.approx(views[clustered].median())
+    assert seg.reference["sales_beats_pct_median"] == pytest.approx(beats[clustered].median())
+    assert seg.reference["sales_rank_pct_median"] == pytest.approx(rank[clustered].median())
+    assert seg.reference["normalized_price_median"] == pytest.approx(price[clustered].median())
+    for s in seg.segments:
+        members = seg.labels == s["label"]
+        assert s["sales_beats_pct_median"] == pytest.approx(beats[members].median())
+        assert s["views_median"] == pytest.approx(views[members].median())
+
+
+def test_run_models_stores_each_models_evidence_on_all_of_its_listings() -> None:
+    import json
+
+    current = _multi_store_catalogue(seed=9)
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    ins = report.insights
+    key, models = model_demand(current)
+    # The stored numbers are model_demand's own, not a re-derivation.
+    pd.testing.assert_series_equal(ins["model_views"], key.map(models["views"]), check_names=False)
+    pd.testing.assert_series_equal(
+        ins["model_sales_beats_pct"], key.map(models["sales_beats_pct"]), check_names=False
+    )
+    pd.testing.assert_series_equal(
+        ins["model_normalized_price"], key.map(models["normalized_price"]), check_names=False
+    )
+    linked = current["canonical_id"].notna()
+    per_model = ins[linked].groupby(current.loc[linked, "canonical_id"])
+    for column in ("model_views", "model_sales_beats_pct", "demand_driver"):
+        assert (per_model[column].nunique(dropna=False) == 1).all()
+    # A model with a group always has both numbers and a deciding feature:
+    # the store that publishes no counters still shows the model's evidence.
+    grouped = ins["demand_cluster"].notna()
+    assert grouped.all()
+    assert ins.loc[grouped, ["model_views", "model_sales_beats_pct"]].notna().all().all()
+    assert ins.loc[grouped, "model_sales_beats_pct"].between(0, 1).all()
+    assert set(ins.loc[grouped, "demand_driver"]) <= set(m.DEMAND_DIMENSIONS)
+    kmeans = report.market[("all", "demand_kmeans")]
+    assert kmeans["reference"]["views_median"] == pytest.approx(models["views"].median())
+    assert 0 <= kmeans["reference"]["sales_beats_pct_median"] < 1
+    assert kmeans["best_seller_margin_sd"] == kmeans["conversion_margin_sd"] == 0.5
+    assert all("sales_beats_pct_median" in s for s in kmeans["segments"])
+    json.dumps(kmeans)
+
+
+def test_models_without_demand_data_keep_null_evidence_not_zero() -> None:
+    current = _gpu_catalogue(7).assign(merchant="banana")
+    current["view_count"] = np.nan
+    current["sales_per_day"] = np.nan
+
+    ins = run_models(current, pd.DataFrame(), figures=None).insights
+
+    assert ins["model_views"].isna().all()
+    assert ins["model_sales_beats_pct"].isna().all()
+    assert ins["demand_driver"].isna().all()
+    assert ins["model_normalized_price"].notna().all()  # prices are always known
+
+
+def test_split_views_is_stored_as_the_view_count_of_the_model_on_the_split() -> None:
+    rng = np.random.default_rng(21)
+
+    def block(views: float, sales: float, size: int) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "views": np.round(rng.normal(views, views * 0.05, size)),
+                "sales": rng.normal(sales, sales * 0.05, size),
+                "price": rng.normal(1.0, 0.02, size),
+            }
+        )
+
+    # 31 + 30 best sellers: an odd count, so the median of log1p(views) is one
+    # model's own value and the split is that model's (whole) view count.
+    data = pd.concat(
+        [
+            block(50_000, 5.0, 31),
+            block(50_000, 0.02, 30),
+            block(500, 5.0, 30),
+            block(500, 0.02, 30),
+        ],
+        ignore_index=True,
+    )
+    seg = m.segment_demand(data["views"], data["sales"], data["price"], k_range=range(4, 5))
+
+    assert seg.split_views is not None
+    # Not 1731.9999999999995-style expm1(log1p(v)) noise: the model's count itself.
+    assert seg.split_views in set(data["views"])
+    on_split = data["views"] == seg.split_views
+    assert (seg.labels[on_split] == m.HIDDEN_GEM).all()  # "ไม่เกินเส้นแบ่ง" side

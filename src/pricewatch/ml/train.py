@@ -21,7 +21,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v13"
+MODEL_VERSION = "2026.11-v14"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -811,6 +811,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         insights[column] = np.nan
     insights["fair_uncertain"] = False
     insights["demand_cluster"] = None
+    insights["demand_driver"] = None
     report = TrainReport(insights=insights)
 
     for category in Category:
@@ -922,6 +923,12 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     # comparable). One model, one group: every listing of a model gets its
     # model's label, so the web's filter and card badge agree (SPEC round 8).
     model_key, models = model_demand(current)
+    # The evidence behind a model's group (SPEC round 16, migration 0013): the
+    # very values the clustering reads, copied to every listing of the model
+    # so the web never re-derives them. NaN where no store publishes them.
+    insights["model_views"] = model_key.map(models["views"])
+    insights["model_sales_beats_pct"] = model_key.map(models["sales_beats_pct"])
+    insights["model_normalized_price"] = model_key.map(models["normalized_price"])
     try:
         seg = m.segment_demand(
             models["views"],
@@ -931,6 +938,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             sales_beats_pct=models["sales_beats_pct"],
         )
         insights["demand_cluster"] = model_key.map(seg.labels)
+        if seg.drivers is not None:
+            insights["demand_driver"] = model_key.map(seg.drivers)
         report.market[("all", "demand_kmeans")] = {
             # Rows clustered: product models (2026.11-v8+); earlier payloads
             # have no "unit" and counted listings.
@@ -950,6 +959,12 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             "segments": seg.segments,
             "split_views": seg.split_views,
             "n": int(seg.labels.notna().sum()),
+            # 2026.11-v14 (SPEC round 16): medians over every clustered model,
+            # the yardstick for "more views than the typical model", and the
+            # margins (in SD) of the naming rule the web explains.
+            "reference": seg.reference,
+            "best_seller_margin_sd": m.BEST_SELLER_MARGIN_SD,
+            "conversion_margin_sd": m.CONVERSION_MARGIN_SD,
             # Scatter for /ml (2026.11-v13): [log1p(views), sales_rank_pct,
             # label] for at most KMEANS_CHART_POINTS clustered models.
             "points": kmeans_points(models, seg.labels),
@@ -1030,16 +1045,21 @@ async def persist(conn: asyncpg.Connection, report: TrainReport) -> int:
             INSERT INTO listing_insights (
                 listing_id, computed_at, model_version, fair_price, residual, pct_vs_fair,
                 deal_score, demand_cluster, recommendation, recommendation_reason,
-                sales_per_day, views_per_day, fair_error_pct, fair_uncertain)
+                sales_per_day, views_per_day, fair_error_pct, fair_uncertain,
+                model_views, model_sales_beats_pct, model_normalized_price, demand_driver)
             SELECT u.listing_id, $1, $2, u.fair_price, u.residual, u.pct_vs_fair,
                    u.deal_score, u.demand_cluster, u.recommendation, u.reason,
-                   u.sales_per_day, u.views_per_day, u.fair_error_pct, u.fair_uncertain
+                   u.sales_per_day, u.views_per_day, u.fair_error_pct, u.fair_uncertain,
+                   u.model_views, u.model_sales_beats_pct, u.model_normalized_price,
+                   u.demand_driver
             FROM unnest($3::bigint[], $4::numeric[], $5::numeric[], $6::float8[],
                         $7::smallint[], $8::text[], $9::text[], $10::text[],
-                        $11::float8[], $12::float8[], $13::float8[], $14::boolean[])
+                        $11::float8[], $12::float8[], $13::float8[], $14::boolean[],
+                        $15::float8[], $16::float8[], $17::float8[], $18::text[])
                  AS u (listing_id, fair_price, residual, pct_vs_fair, deal_score,
                        demand_cluster, recommendation, reason, sales_per_day, views_per_day,
-                       fair_error_pct, fair_uncertain)
+                       fair_error_pct, fair_uncertain, model_views, model_sales_beats_pct,
+                       model_normalized_price, demand_driver)
             """,
             now,
             MODEL_VERSION,
@@ -1055,6 +1075,10 @@ async def persist(conn: asyncpg.Connection, report: TrainReport) -> int:
             col("views_per_day"),
             col("fair_error_pct"),
             [bool(v) for v in ins["fair_uncertain"]],
+            col("model_views"),
+            col("model_sales_beats_pct"),
+            col("model_normalized_price"),
+            col("demand_driver"),
         )
         # linkage_quality belongs to `pricewatch link`, which runs before train.
         await conn.execute("DELETE FROM market_insights WHERE kind <> 'linkage_quality'")

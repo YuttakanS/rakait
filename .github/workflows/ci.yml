@@ -26,3 +26,24 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest -q
+
+  web:
+    # Static checks of the Next.js app only: types, lint and the copy rules
+    # of lib/demand.ts. No `npm run build` here: prerendering queries the
+    # database, and this job has no secrets or env vars (none of these
+    # commands reads DATABASE_URL; they never import lib/db.ts at runtime).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm run check:demand
