@@ -10,6 +10,22 @@
 
 ## Ready
 
+- [ ] **Round 17 follow-ups (live user-test ACCEPT, model 2026.11-v15)**
+  1. Waiting on the user: the "ไม่เด่นทั้งคนดูและยอดขาย" label still appears on models that outsell ≥ 50% of the store (about 14 of 157, e.g. WD SN7100 2TB at 94%). Proposal: label the leftover group only below the 50% sales bar and show the rest unlabelled like the other 9 models. Also fix the sentence "ชื่อกลุ่มจึงไม่ได้อ้างตัวเลขใด" in the (i) panel, on /ml and on the product page.
+  2. Hydration error #418 on production list pages: 5 in about 110 loads on v15, 0 in 100+ on the round-16 deploy.
+     - Server HTML is correct. The mismatch is at `div.flex` around `AutoSubmitSelect`, under `<section products-title>`.
+     - Do NOT wrap page content in Suspense: it moved the cards out of the first HTML.
+     - Start from the header Suspense (HeaderSearch / SiteNav with useSearchParams).
+  3. The demand payload cache (15 minutes) mixes new numbers with old wording after a train. Revalidate on train or deploy.
+  4. /insights tiles show the mean sales share ("~17%") while the list shows the median ("เกินครึ่งยังไม่เห็นยอดขาย"). Use one statistic or label the mean.
+  5. The group comparison line has two stacked parentheses and takes 4 lines at 375px. Merge them when the group and all-model texts are the same.
+  6. Check that "ขายดีกว่าแค่ N%" also applies on unlabelled cards (G.Skill DDR4 8GB 44%, Lexar NM620 46%).
+- [ ] **Longer history without extra load on stores** (ideator research 2026-11-13)
+  - Use the listing month embedded in IHAVECPU `sku` and IT City `PRD` codes for `days_listed`, after validating against data.
+  - Store IT City "คงเหลือ N รายการ" and "ราคาปกติ", and IHAVECPU `price_before`.
+  - Ask the user: email the stores for permission and history. BaNANA's terms forbid storing or copying content without written consent.
+  - Not worth doing: a JIB Wayback backfill before 2024. archive.org returned 429 on 149 of 158 requests, coverage is sparse and there are no sold counts before Aug 2025.
+
 - [ ] **/ml copy follow-ups from the round-15 live user-test (ACCEPT)**. Fix items 1 and 2 before the course presentation:
   1. K-Means centroid 4 is labelled "คนดูน้อย ขายน้อย" but sits at about 35k views and about 55% sales rank. Say which dimension separates it (normalized price, the third dimension), using the centroid value from the payload.
   2. Decision Tree "อ่านกราฟ": describe the features that are actually in the tree (e.g. "ราคาเทียบอดีตของร้านนี้ ≤ 44%" is a historical price percentile), not "ราคาเทียบค่ากลางของรุ่น". Explain the "ซื้อเลย n=13, 8%" leaf, which comes from balanced weighting. Fix the typo "ใบใบ".
