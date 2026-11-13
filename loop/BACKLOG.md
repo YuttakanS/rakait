@@ -9,6 +9,19 @@
 ```
 
 ## Ready
+
+- [ ] **/ml copy follow-ups from the round-15 live user-test (ACCEPT)**. Fix items 1 and 2 before the course presentation:
+  1. K-Means centroid 4 is labelled "คนดูน้อย ขายน้อย" but sits at about 35k views and about 55% sales rank. Say which dimension separates it (normalized price, the third dimension), using the centroid value from the payload.
+  2. Decision Tree "อ่านกราฟ": describe the features that are actually in the tree (e.g. "ราคาเทียบอดีตของร้านนี้ ≤ 44%" is a historical price percentile), not "ราคาเทียบค่ากลางของรุ่น". Explain the "ซื้อเลย n=13, 8%" leaf, which comes from balanced weighting. Fix the typo "ใบใบ".
+  3. K-Means copy:
+     - "คนดูน้อย" at 8,329 views: say it is low relative to the median from split_views.
+     - Remove the repeated sentence and add the missing space at "1 ถึง 4สี่เหลี่ยม…".
+     - Explain the horizontal band of points at about 30% (tied sales ranks).
+     - Show the x-axis as "1M" instead of "1000k".
+  4. Regression tree in dark mode: the copy says "แถบเข้ม = แพง", but in dark mode the most expensive leaf is white. Add a cheap→expensive legend or neutral wording.
+  5. Edge direction differs: ≤ questions put "ใช่" on the left, flag questions put "ใช่" on the right. Consider always placing "ใช่" on the left.
+  6. Dendrogram: add a tick at the cut height.
+  7. Page weight: the HTML is 864 KB raw (96 KB gzip) with 5.4k DOM nodes. Consider rendering only the selected category.
 - [ ] ตรวจ UX/UI ทั้งเว็บเทียบกับ `.claude/skills/design.md` แล้วแตกปัญหาที่พบเป็นงานย่อยใน Ready เรียงตามความรุนแรง (M)
   - เกณฑ์ผ่าน: 1) user-tester เดินผ่านทุกหน้าหลักอย่างน้อยบนจอเดสก์ท็อปและมือถือ 2) ทุกปัญหาที่พบถูกเขียนเป็นงานพร้อมเกณฑ์ผ่าน 3) งานนี้ไม่แก้โค้ดใดๆ
 
