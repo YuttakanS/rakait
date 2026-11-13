@@ -10,34 +10,20 @@
 
 ## Ready
 
-- [ ] **Round 17 follow-ups (live user-test ACCEPT, model 2026.11-v15)**
-  1. Waiting on the user: the "ไม่เด่นทั้งคนดูและยอดขาย" label still appears on models that outsell ≥ 50% of the store (about 14 of 157, e.g. WD SN7100 2TB at 94%). Proposal: label the leftover group only below the 50% sales bar and show the rest unlabelled like the other 9 models. Also fix the sentence "ชื่อกลุ่มจึงไม่ได้อ้างตัวเลขใด" in the (i) panel, on /ml and on the product page.
-  2. Hydration error #418 on production list pages: 5 in about 110 loads on v15, 0 in 100+ on the round-16 deploy.
-     - Server HTML is correct. The mismatch is at `div.flex` around `AutoSubmitSelect`, under `<section products-title>`.
-     - Do NOT wrap page content in Suspense: it moved the cards out of the first HTML.
-     - Start from the header Suspense (HeaderSearch / SiteNav with useSearchParams).
-  3. The demand payload cache (15 minutes) mixes new numbers with old wording after a train. Revalidate on train or deploy.
-  4. /insights tiles show the mean sales share ("~17%") while the list shows the median ("เกินครึ่งยังไม่เห็นยอดขาย"). Use one statistic or label the mean.
-  5. The group comparison line has two stacked parentheses and takes 4 lines at 375px. Merge them when the group and all-model texts are the same.
-  6. Check that "ขายดีกว่าแค่ N%" also applies on unlabelled cards (G.Skill DDR4 8GB 44%, Lexar NM620 46%).
+- [ ] **Round 19 (approved plan): flag sibling models whose fair prices are inverted** (detect + mark uncertain, no MLR restructure; user decision 2026-11-13). See the "ต้องให้ผู้ใช้ตัดสินใจ" item below for the examples.
+- [ ] **Round 18 follow-ups (live, model 2026.11-v16)**
+  1. Hydration error #418 on production list pages (5 in ~110 loads on v15). Server HTML is correct; mismatch at `div.flex` around `AutoSubmitSelect` under `<section products-title>`. Do NOT wrap page content in Suspense. Start from the header Suspense (HeaderSearch / SiteNav with useSearchParams).
+  2. The demand payload cache (15 minutes) mixes new numbers with old wording after a train. Revalidate on train or deploy.
+  3. /ml at 320px: SLR "n = ⏎ 430", Deal Score "= 100 ⏎ ×", Gini "(0 = ⏎ …)" line breaks; the SLR formula with numbers is JSX and bypasses `formulaUnits`.
+  4. A demand chip whose payload has labelled models but whose live count is 0 links to an empty state that blames the numbers (wrong cause).
+  5. Presentation questions: /insights says "เป็น DDR5 ▼ ราคาต่ำกว่า" while the RAM regression tree prices DDR5 higher; the RAM tree has a leaf "DDR4 > 5,000 MHz → ฿1,329" (n=10), probably odd data.
 - [ ] **Longer history without extra load on stores** (ideator research 2026-11-13)
   - Use the listing month embedded in IHAVECPU `sku` and IT City `PRD` codes for `days_listed`, after validating against data.
   - Store IT City "คงเหลือ N รายการ" and "ราคาปกติ", and IHAVECPU `price_before`.
   - Ask the user: email the stores for permission and history. BaNANA's terms forbid storing or copying content without written consent.
   - Not worth doing: a JIB Wayback backfill before 2024. archive.org returned 429 on 149 of 158 requests, coverage is sparse and there are no sold counts before Aug 2025.
 
-- [ ] **/ml copy follow-ups from the round-15 live user-test (ACCEPT)**. Fix items 1 and 2 before the course presentation:
-  1. K-Means centroid 4 is labelled "คนดูน้อย ขายน้อย" but sits at about 35k views and about 55% sales rank. Say which dimension separates it (normalized price, the third dimension), using the centroid value from the payload.
-  2. Decision Tree "อ่านกราฟ": describe the features that are actually in the tree (e.g. "ราคาเทียบอดีตของร้านนี้ ≤ 44%" is a historical price percentile), not "ราคาเทียบค่ากลางของรุ่น". Explain the "ซื้อเลย n=13, 8%" leaf, which comes from balanced weighting. Fix the typo "ใบใบ".
-  3. K-Means copy:
-     - "คนดูน้อย" at 8,329 views: say it is low relative to the median from split_views.
-     - Remove the repeated sentence and add the missing space at "1 ถึง 4สี่เหลี่ยม…".
-     - Explain the horizontal band of points at about 30% (tied sales ranks).
-     - Show the x-axis as "1M" instead of "1000k".
-  4. Regression tree in dark mode: the copy says "แถบเข้ม = แพง", but in dark mode the most expensive leaf is white. Add a cheap→expensive legend or neutral wording.
-  5. Edge direction differs: ≤ questions put "ใช่" on the left, flag questions put "ใช่" on the right. Consider always placing "ใช่" on the left.
-  6. Dendrogram: add a tick at the cut height.
-  7. Page weight: the HTML is 864 KB raw (96 KB gzip) with 5.4k DOM nodes. Consider rendering only the selected category.
+- [ ] /ml page weight: the HTML is 864 KB raw (96 KB gzip) with 5.4k DOM nodes. Consider rendering only the selected category.
 - [ ] ตรวจ UX/UI ทั้งเว็บเทียบกับ `.claude/skills/design.md` แล้วแตกปัญหาที่พบเป็นงานย่อยใน Ready เรียงตามความรุนแรง (M)
   - เกณฑ์ผ่าน: 1) user-tester เดินผ่านทุกหน้าหลักอย่างน้อยบนจอเดสก์ท็อปและมือถือ 2) ทุกปัญหาที่พบถูกเขียนเป็นงานพร้อมเกณฑ์ผ่าน 3) งานนี้ไม่แก้โค้ดใดๆ
 
@@ -77,7 +63,6 @@
 - [ ] **ต้องให้ผู้ใช้ตัดสินใจ:** ราคายุติธรรมกลับด้านในรุ่นพี่น้อง (RTX 3050 6GB ฿10,072 > 8GB ฿7,935; RX 9060 XT 8GB > 16GB; 5070 Ti > 5080; 9070 XT ฿48,647 vs 9070 GRE ฿16,611; 9800X3D ฿11,981 vs 9950X3D ฿42,109) ทางเลือก: monotonic constraint (VRAM/tier), แยกโมเดลตามสถาปัตยกรรม, หรือเตือนเมื่อพี่น้องกลับด้าน (L)
 - [ ] GPU: ลองตัด feature ยอดขายออกจาก MLR (no-sales variant R²cv .940 vs .925) (S)
 - [ ] /insights "อะไรทำให้ราคาแพงขึ้น": "เป็น DDR5 ▼ ราคาต่ำกว่า" ต้องบอกว่าเทียบที่ความเร็วเท่ากัน; ตารางสัมประสิทธิ์แสดง featureLabel คู่ชื่อดิบ (S)
-- [ ] Vercel git integration สร้าง deployment ที่ล้ม ("Couldn't find any pages or app directory") ทุกครั้งที่ push เพราะ build จาก root ของ repo: ปิด auto-deploy จาก git หรือตั้ง Root Directory = web (ระวัง: ถ้าเปิดให้ deploy อัตโนมัติจะชนกับลำดับ deploy เว็บก่อน train) — ต้องให้ผู้ใช้ตัดสินใจ (S)
 
 - [ ] React hydration error #418 (args HTML) เกิดเป็นบางครั้งบนหน้ารายการ (/?sort=stores, /?category=cpu&sort=price) น่าจะมีข้อความที่ขึ้นกับเวลา/ISR ระหว่าง server กับ client ต่างกัน (เช่น "อัปเดตล่าสุด", วันที่ภาษาไทย) (M)
 - [ ] "สูงสุดที่เคยเห็นใน 120 วัน ฿X" ใน hero หาในกราฟไม่เจอ (กราฟแสดงราคาต่ำสุดต่อวัน) และไปตรงกับ "ราคาสูงสุด (มีของ)" ในหน้าสินค้า: ใช้คำเดียวกันทั้งสองที่ หรือแสดงเส้นสูงสุดในกราฟ (S)
@@ -95,3 +80,4 @@
 
 ## Done
 (บรรทัดเดียวต่องาน)
+- รอบ 18 (2026-11-13, 5f279a1, model v16): /ml พร้อมนำเสนอ (centroid, Decision Tree, legend, ใช่ซ้าย, dendrogram, สูตรครบ, ปุ่มเลื่อนต้นไม้), กลุ่มที่เหลือชื่อ "ยอดขายไม่เด่น" ติดป้ายเมื่อขายดีกว่า < 50%, ชิปกลุ่มว่าง, จำนวนรุ่นตรงกันทุกหน้า, /insights ใช้มัธยฐาน; ปิด Vercel git auto-deploy (1ac51e0)
