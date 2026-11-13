@@ -216,12 +216,14 @@ function verdictOf(o: Offer, cluster: DemandCluster | null = null) {
  * recommendation.
  */
 /**
- * The reason printed for an offer. An uncertain fair price always reads
- * `uncertainReason` built from the offer's own gap ("ราคาจริงแพงกว่าราคา
- * ยุติธรรม 42% …"), whichever model version stored the row.
+ * The reason printed for an offer. An uncertain fair price reads
+ * `uncertainReason`: the stored sibling reason when the model's fair price is
+ * above a better-spec sibling's (2026.11-v17+), otherwise the sentence built
+ * from the offer's own gap ("ราคาจริงแพงกว่าราคายุติธรรม 42% …"), whichever
+ * model version stored the row.
  */
 function reasonOf(o: Offer): string | null {
-  return o.fairUncertain ? uncertainReason(o.pctVsFair) : o.recommendationReason;
+  return o.fairUncertain ? uncertainReason(o.pctVsFair, o.recommendationReason) : o.recommendationReason;
 }
 
 function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {

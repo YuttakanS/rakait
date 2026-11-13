@@ -12,6 +12,7 @@ import {
   LinkageCurve,
   MarkerSwatch,
   ResidualHistogram,
+  UncertainKey,
 } from "@/components/ml-charts";
 import { SpecScatter } from "@/components/spec-scatter";
 import { TreeDiagram } from "@/components/tree-diagram";
@@ -19,12 +20,16 @@ import { CATEGORY_LABELS, CLUSTER_LABELS, RECOMMENDATION_LABELS, featureLabel, f
 import {
   demandPoints,
   dendrogram,
+  fitExample,
   fitPoints,
+  fitUncertain,
   leaves,
   minorityLeaf,
   pathTo,
   priceLeafText,
   residualBins,
+  siblingExampleText,
+  siblingInversions,
   silhouetteByK,
   treeFeatures,
   treeNodes,
@@ -344,19 +349,17 @@ export default async function MlPage() {
     const b = mlr.find((m) => m.bins)?.bins;
     return b ? Math.round((b.edges[1] - b.edges[0]) * 100) : null;
   })();
+  // Sibling-inversion margin (train.SIBLING_TOLERANCE, 2026.11-v17+); null hides the rule.
+  const siblingTolerance = mlr.map((m) => siblingInversions(m.p)?.tolerance ?? null).find((v) => v !== null) ?? null;
   const cvFolds = mlr.map((m) => opt(m.p.cv_folds)).find((v) => v !== null) ?? null;
   const intervalLevel = mlr.map((m) => opt(m.p.interval_level)).find((v) => v !== null) ?? null;
   const intervalPct = intervalLevel === null ? null : Math.round(intervalLevel * 100);
   const mlrExample = (() => {
     const first = mlr.find((m) => m.points.length > 0);
     if (!first) return null;
-    // The cheapest listing relative to fair that is still within the gap the
-    // model trusts: a clear case of "under the line".
-    const trusted =
-      uncertainGap === null ? first.points : first.points.filter((q) => Math.abs(q[0] / q[1] - 1) <= uncertainGap);
-    const pool = trusted.length > 0 ? trusted : first.points;
-    const point = pool.reduce((a, b) => (b[0] / b[1] < a[0] / a[1] ? b : a));
-    return { c: first.c, point, gap: point[0] / point[1] - 1 };
+    // Never a listing flagged uncertain (wide gap or sibling inversion).
+    const point = fitExample(first.points, uncertainGap);
+    return point === null ? null : { c: first.c, point, gap: point[0] / point[1] - 1 };
   })();
 
   // ---- C. Regression tree
@@ -697,12 +700,25 @@ export default async function MlPage() {
                             <span>
                               <LineKey marker="none" /> y = x (ราคาจริง = ราคายุติธรรม)
                             </span>
-                            {opt(p.uncertain_gap) !== null && (
-                              <span>
-                                <LineKey marker="none" dash="6 5" /> ห่าง ±{Math.round(num(p.uncertain_gap) * 100)}% (เกินนี้ =
-                                ประเมินไม่แน่นอน)
-                              </span>
-                            )}
+                            {opt(p.uncertain_gap) !== null &&
+                              (pts.some((q) => q.length === 4) ? (
+                                // 2026.11-v17: the flag is per point, and a
+                                // sibling inversion can sit inside the band.
+                                <>
+                                  <span>
+                                    <LineKey marker="none" dash="6 5" /> ห่าง ±{Math.round(num(p.uncertain_gap) * 100)}%
+                                  </span>
+                                  <span>
+                                    <UncertainKey /> ประเมินไม่แน่นอน (ห่างเกินเส้นประ หรือราคากลับด้านกับรุ่นพี่น้อง){" "}
+                                    <span className="tabular">{pts.filter(fitUncertain).length.toLocaleString("th-TH")}</span> จุด
+                                  </span>
+                                </>
+                              ) : (
+                                <span>
+                                  <LineKey marker="none" dash="6 5" /> ห่าง ±{Math.round(num(p.uncertain_gap) * 100)}% (เกินนี้ =
+                                  ประเมินไม่แน่นอน)
+                                </span>
+                              ))}
                             <span>
                               แสดง {pts.length.toLocaleString("th-TH")} รายการ
                               {num(p.n) > pts.length ? " (สุ่มมาจากทั้งหมด)" : ""}
@@ -752,6 +768,13 @@ export default async function MlPage() {
               (ระยะเท่ากันหมายถึงคูณเท่ากัน เช่น ฿1k → ฿10k ยาวเท่า ฿10k → ฿100k) จุดบนเส้นทึบ y = x
               คือราคาจริงเท่าราคายุติธรรม <span className="font-semibold">จุดใต้เส้นคือถูกกว่าตลาด</span> จุดเหนือเส้นคือแพงกว่า
               {gapPct !== null && <> และจุดที่เลยเส้นประออกไปคือห่างเกิน {gapPct}% ซึ่งระบบถือว่าโมเดลประเมินรุ่นนั้นไม่แน่นอน</>}
+              {siblingTolerance !== null && (
+                <>
+                  {" "}
+                  · จุดกากบาทคือรายการที่ประเมินไม่แน่นอน ซึ่งรวมรุ่นที่ราคายุติธรรมกลับด้านกับรุ่นพี่น้อง (หัวข้อผลลัพธ์ด้านล่าง)
+                  แม้จะอยู่ในเส้นประ
+                </>
+              )}
             </p>
             <p>
               <span className="font-semibold">Histogram:</span> แต่ละแท่งนับจำนวนรายการที่ส่วนต่างตกในช่วงนั้น
@@ -786,6 +809,7 @@ export default async function MlPage() {
                 const jbFail = d ? num(d.jarque_bera_p) < 0.05 : false;
                 const bpFail = d ? num(d.breusch_pagan_p) < 0.05 : false;
                 const vifHigh = d ? num(d.max_vif) > 10 : false;
+                const siblings = siblingInversions(p);
                 return (
                   <li key={c} className="border-l-[3px] border-border pl-3">
                     <div className="font-semibold">{CATEGORY_LABELS[c]}</div>
@@ -807,6 +831,26 @@ export default async function MlPage() {
                         </>
                       )}
                     </div>
+                    {siblings && (
+                      <div>
+                        รุ่นพี่น้องที่ราคายุติธรรมกลับด้าน <span className="tabular">{count(siblings.pairs)}</span> คู่
+                        {siblings.pairs > 0 && (
+                          <>
+                            {" "}
+                            (รุ่นที่ด้อยกว่าติดป้ายประเมินไม่แน่นอน <span className="tabular">{count(siblings.flagged)}</span> รายการ)
+                          </>
+                        )}
+                        {siblings.examples.length > 0 && (
+                          <ul className="mt-1 space-y-0.5 text-muted">
+                            {siblings.examples.map((e) => (
+                              <li key={`${e.worse}|${e.better}`} className="tabular">
+                                {siblingExampleText(e)}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                     {d && (
                       <div className="text-muted">
                         ตรวจสมมติฐาน: residual {jbFail ? "ไม่ได้กระจายแบบระฆังคว่ำ (การแจกแจงปกติ)" : "กระจายใกล้เคียงแบบปกติ"} (Jarque–Bera
@@ -834,6 +878,16 @@ export default async function MlPage() {
                 </>
               )}
             </p>
+            {siblingTolerance !== null && (
+              <p>
+                <span className="font-semibold">ตรวจรุ่นพี่น้อง:</span> เทียบรุ่นในสายเดียวกัน (การ์ดจอ: ค่ายและรุ่นปีเดียวกัน ·
+                ซีพียู: ตระกูลและเจเนอเรชันเดียวกัน · แรม: แบรนด์และ DDR เดียวกัน · SSD: รุ่นเดียวกันต่างความจุ)
+                ถ้ารุ่นหนึ่งสเปกด้อยกว่าหรือเท่ากับอีกรุ่นทุกด้าน (เช่น ระดับชิป VRAM จำนวนคอร์ ความจุ) แต่ราคายุติธรรมสูงกว่าเกิน{" "}
+                {Math.round(siblingTolerance * 100)}% โมเดลเรียงสองรุ่นนี้ผิด รุ่นที่ด้อยกว่าจะได้ป้ายประเมินไม่แน่นอนและไม่ได้ Deal Score
+                เพราะราคายุติธรรมที่สูงเกินจริงจะทำให้ดูเหมือนเป็นดีล ส่วนรุ่นที่ดีกว่ายังได้ Deal Score ตามปกติ
+                จำนวนคู่และตัวอย่างของแต่ละหมวดอยู่ในรายการด้านบน
+              </p>
+            )}
             <details className="group">
               <summary className="flex min-h-11 items-center gap-2 text-sm font-medium">
                 ดูค่า β ทุกตัว

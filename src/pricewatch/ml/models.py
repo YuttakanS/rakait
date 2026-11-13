@@ -458,6 +458,103 @@ def deal_score(z_residual: pd.Series) -> pd.Series:
     return pd.Series(np.clip(np.rint(100 * (1 - phi)), 0, 100), index=z_residual.index)
 
 
+#: Columns of :func:`sibling_inversions`, one row per inverted pair.
+SIBLING_PAIR_COLUMNS = ("worse", "better", "worse_fair", "better_fair", "ratio")
+
+
+def sibling_inversions(
+    line: pd.Series, dims: pd.DataFrame, fair: pd.Series, tolerance: float
+) -> pd.DataFrame:
+    """Sibling product pairs whose fair prices run against their specs.
+
+    Within one product line, product A is *dominated* by product B when A's
+    spec is no higher than B's on every dimension and lower on at least one
+    (every dimension is oriented so that higher should cost more). Such a
+    pair is *inverted* when ``fair[A] > fair[B] * (1 + tolerance)``: the
+    regression priced the lesser product above the better one.
+
+    A product with no line, no fair price or a missing dimension is never
+    compared: NaN fails every ``<=`` / ``<``, so it dominates nothing and is
+    dominated by nothing. Products are grouped by line (one hash pass), then
+    each group is compared all-pairs with NumPy broadcasting: a
+    ``(g, g, d)`` comparison per group of g products on d dimensions, no
+    Python loop over pairs. O(sum_g g^2 d) time, O(max_g g^2 d) memory;
+    lines hold tens of products, so this is microseconds.
+
+    Args:
+        line: Line label per product (index = product key); NaN = no line.
+        dims: Spec dimensions per product (aligned by index), higher = dearer.
+        fair: Fair price per product (aligned by index); NaN = not priced.
+        tolerance: Relative margin before an inversion counts, e.g. 0.05.
+
+    Returns:
+        One row per inverted pair with ``SIBLING_PAIR_COLUMNS``: the dominated
+        (``worse``) and dominating (``better``) product keys, their fair
+        prices and ``ratio = worse_fair / better_fair`` (> 1 + tolerance),
+        sorted by ratio, largest first.
+    """
+    # Aligned on the product key, whatever order each input arrives in.
+    values = dims.reindex(line.index).to_numpy(float)
+    prices = fair.reindex(line.index).to_numpy(float)
+    keys = line.index.to_numpy()
+    usable = line.notna().to_numpy() & np.isfinite(prices)
+    usable_positions = np.flatnonzero(usable)
+    rows: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+    for members in line[usable].groupby(line[usable], sort=False).indices.values():
+        if len(members) < 2:
+            continue
+        positions = usable_positions[members]
+        spec, price = values[positions], prices[positions]
+        # le[i, j]: i <= j on every dimension; lt[i, j]: i < j on at least one.
+        le = (spec[:, None, :] <= spec[None, :, :]).all(axis=2)
+        lt = (spec[:, None, :] < spec[None, :, :]).any(axis=2)
+        inverted = le & lt & (price[:, None] > price[None, :] * (1 + tolerance))
+        worse, better = np.nonzero(inverted)
+        rows.append((positions[worse], positions[better], price[worse], price[better]))
+    if not rows:
+        return pd.DataFrame({c: pd.Series(dtype=float) for c in SIBLING_PAIR_COLUMNS})
+    worse_pos, better_pos, worse_fair, better_fair = (
+        np.concatenate(parts) for parts in zip(*rows, strict=True)
+    )
+    pairs = pd.DataFrame(
+        {
+            "worse": keys[worse_pos],
+            "better": keys[better_pos],
+            "worse_fair": worse_fair,
+            "better_fair": better_fair,
+            "ratio": worse_fair / better_fair,
+        }
+    )
+    return pairs.sort_values("ratio", ascending=False, kind="stable").reset_index(drop=True)
+
+
+def widest_sibling_pair(pairs: pd.DataFrame) -> pd.DataFrame:
+    """The widest inversion of each lesser-spec product (SPEC round 19, option B).
+
+    Only the dominated side of a pair is flagged: its fair price is the one
+    above its better sibling's, so its Deal Score is the one that could rank
+    as a false deal. A product dominated by several siblings is explained by
+    the pair with the largest ``ratio``. ``pairs`` is already sorted by ratio,
+    so one stable re-sort and a dedup suffice: O(p log p) for p pairs.
+
+    Args:
+        pairs: Output of :func:`sibling_inversions`.
+
+    Returns:
+        One row per flagged (``worse``) product, index = product key, with
+        ``other`` (the better sibling's key), ``own_fair`` and ``other_fair``.
+    """
+    widest = pairs.sort_values("ratio", ascending=False, kind="stable").drop_duplicates("worse")
+    return pd.DataFrame(
+        {
+            "other": widest["better"].to_numpy(),
+            "own_fair": widest["worse_fair"].to_numpy(float),
+            "other_fair": widest["better_fair"].to_numpy(float),
+        },
+        index=pd.Index(widest["worse"].to_numpy(), name="product"),
+    )
+
+
 # ------------------------------------------------ Tree structure for the web
 
 

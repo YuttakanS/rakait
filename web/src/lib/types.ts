@@ -64,7 +64,10 @@ export interface ProductSummary {
   fairPrice: number | null;
   /** Half-width of the fair price's 80% interval, as a fraction ("± Y%"). */
   fairErrorPct: number | null;
-  /** Price over 40% away from fair: shown for reference, never ranked. */
+  /**
+   * Fair price shown for reference, never ranked: over 40% away from the
+   * price, or above a better-spec sibling's (`cheapestReason` says which).
+   */
   fairUncertain: boolean;
   /**
    * Highest price any store recorded for the model in price_history over the

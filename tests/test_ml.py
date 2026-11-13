@@ -1284,7 +1284,8 @@ def test_run_models_stores_chart_data_within_the_payload_budget() -> None:
 
     mlr = report.market[("gpu", "fair_value_mlr")]
     assert 0 < len(mlr["fit_points"]) <= CHART_POINTS
-    assert all(len(p) == 3 and p[0] > 0 and p[1] > 0 for p in mlr["fit_points"])
+    assert all(len(p) == 4 and p[0] > 0 and p[1] > 0 for p in mlr["fit_points"])
+    assert all(isinstance(p[3], bool) for p in mlr["fit_points"])
     assert mlr["residual_bins"]["n"] == sum(mlr["residual_bins"]["counts"])
     assert 2 <= mlr["cv_folds"] <= 5
     assert mlr["uncertain_gap"] == pytest.approx(0.40)

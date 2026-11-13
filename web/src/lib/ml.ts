@@ -31,8 +31,16 @@ export interface TreeNode {
   impurity: number;
 }
 
-/** `[listed price, fair price, name]` per sampled listing. */
-export type FitPoint = [number, number, string];
+/**
+ * `[listed price, fair price, name, uncertain]` per sampled listing. The
+ * fourth member (2026.11-v17+) says whether the listing's fair price is
+ * flagged "ประเมินไม่แน่นอน" (a wide gap or a sibling inversion); older
+ * payloads have three members.
+ */
+export type FitPoint = [number, number, string, boolean?];
+
+/** Whether a fit point is flagged uncertain; false for a v16 point, which has no flag. */
+export const fitUncertain = (p: FitPoint): boolean => p[3] === true;
 
 export interface ResidualBins {
   edges: number[];
@@ -114,9 +122,35 @@ export function treeNodes(payload: Record<string, unknown> | undefined): TreeNod
   return nodes as TreeNode[];
 }
 
+/**
+ * The fit points of a `fair_value_mlr` payload with positive prices; a
+ * fourth member that is not a boolean is dropped (read as unflagged).
+ */
 export function fitPoints(payload: Record<string, unknown> | undefined): FitPoint[] {
   const v = payload?.fit_points;
-  return Array.isArray(v) ? (v as FitPoint[]).filter((p) => isNum(p[0]) && isNum(p[1]) && p[0] > 0 && p[1] > 0) : [];
+  if (!Array.isArray(v)) return [];
+  return (v as unknown[]).flatMap((raw): FitPoint[] => {
+    if (!Array.isArray(raw)) return [];
+    const [price, fair, name, flag] = raw as unknown[];
+    if (!isNum(price) || !isNum(fair) || price <= 0 || fair <= 0) return [];
+    const label = typeof name === "string" ? name : String(name ?? "");
+    return [typeof flag === "boolean" ? [price, fair, label, flag] : [price, fair, label]];
+  });
+}
+
+/**
+ * The listing /ml uses as its worked example: the cheapest relative to its
+ * fair price among the points the model trusts, so the example is a clear
+ * "under the line" case. Trusted = not flagged uncertain (2026.11-v17
+ * points carry the flag; a sibling inversion can sit inside the gap) and,
+ * for every payload, within `gap` of fair when the payload has one. Falls
+ * back to all points when none is trusted; null without points. O(n).
+ */
+export function fitExample(points: FitPoint[], gap: number | null): FitPoint | null {
+  if (points.length === 0) return null;
+  const trusted = points.filter((q) => !fitUncertain(q) && (gap === null || Math.abs(q[0] / q[1] - 1) <= gap));
+  const pool = trusted.length > 0 ? trusted : points;
+  return pool.reduce((a, b) => (b[0] / b[1] < a[0] / a[1] ? b : a));
 }
 
 export function residualBins(payload: Record<string, unknown> | undefined): ResidualBins | null {
@@ -132,6 +166,69 @@ export function demandPoints(payload: Record<string, unknown> | undefined): Dema
 export function dendrogram(payload: Record<string, unknown> | undefined): Dendrogram | null {
   const v = payload?.dendrogram as Dendrogram | undefined;
   return v && Array.isArray(v.icoord) && Array.isArray(v.dcoord) && v.icoord.length > 0 ? v : null;
+}
+
+/** One inverted sibling pair as stored (`train.SiblingCheck.payload`), fair prices in whole THB. */
+export interface SiblingExample {
+  /** The lesser-spec model, whose fair price is the higher one. */
+  worse: string;
+  worseFair: number;
+  /** The sibling that is at least as good on every compared spec. */
+  better: string;
+  betterFair: number;
+}
+
+/** The sibling check of one `fair_value_mlr` payload (SPEC round 19, model 2026.11-v17+). */
+export interface SiblingInversions {
+  /** Inverted pairs in the category. */
+  pairs: number;
+  /** Listings of the lesser-spec models, flagged uncertain (some may have had no Deal Score anyway). */
+  flagged: number;
+  /** Margin before an inversion counts, e.g. 0.05. */
+  tolerance: number;
+  /** The widest 1-3 pairs, widest first. */
+  examples: SiblingExample[];
+}
+
+/**
+ * The sibling check of a `fair_value_mlr` payload, or null for a payload
+ * from before 2026.11-v17 (or with a malformed field), where the page shows
+ * no sibling line. Malformed examples are dropped. O(examples).
+ */
+export function siblingInversions(payload: Record<string, unknown> | undefined): SiblingInversions | null {
+  const pairs = payload?.sibling_inversions;
+  const flagged = payload?.sibling_flagged;
+  const tolerance = payload?.sibling_tolerance;
+  if (!isNum(pairs) || !isNum(flagged) || !isNum(tolerance)) return null;
+  const raw = Array.isArray(payload?.sibling_examples) ? (payload.sibling_examples as unknown[]) : [];
+  const examples = raw.flatMap((e): SiblingExample[] => {
+    const { worse, worse_fair, better, better_fair } = (e ?? {}) as Record<string, unknown>;
+    return typeof worse === "string" && typeof better === "string" && isNum(worse_fair) && isNum(better_fair)
+      ? [{ worse, worseFair: worse_fair, better, betterFair: better_fair }]
+      : [];
+  });
+  return { pairs, flagged, tolerance, examples };
+}
+
+/** "Radeon RX 9070 16GB (฿52,050) สูงกว่า Radeon RX 9070 XT 16GB (฿44,107)". */
+export const siblingExampleText = (e: SiblingExample): string =>
+  `${e.worse} (${formatTHB(e.worseFair)}) สูงกว่า ${e.better} (${formatTHB(e.betterFair)})`;
+
+/**
+ * One sentence on a category's sibling check for the /insights diagnostics:
+ * the rule with its stored tolerance, the pair and listing counts, and the
+ * widest stored pair as the example. Everything comes from the payload.
+ */
+export function siblingSentence(s: SiblingInversions): string {
+  // "ไม่ดีกว่า…เลยสักด้าน": the rule is ≤ on every compared spec and < on at
+  // least one, so equal specs (14900F vs 14900K: same cores) still count.
+  const rule = `รุ่นที่สเปกไม่ดีกว่ารุ่นพี่น้องเลยสักด้านแต่ราคายุติธรรมสูงกว่าเกิน ${Math.round(s.tolerance * 100)}%`;
+  if (s.pairs === 0) return `ไม่พบ${rule}`;
+  const example = s.examples.length > 0 ? ` เช่น ${siblingExampleText(s.examples[0])}` : "";
+  // sibling_flagged counts every listing of the lesser models, including
+  // ones already unscored (over the gap or sold out), so it is not "Deal
+  // Scores lost".
+  return `พบ${rule} ${s.pairs.toLocaleString("th-TH")} คู่ รุ่นที่ด้อยกว่าติดป้ายประเมินไม่แน่นอน ${s.flagged.toLocaleString("th-TH")} รายการ${example}`;
 }
 
 /** Silhouette per k tried (JSON object keys are strings), sorted by k. */

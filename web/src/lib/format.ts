@@ -48,24 +48,52 @@ export function uncertainGap(pct: number | null | undefined): string | null {
   return `ราคาจริง${pct > 0 ? "แพงกว่า" : "ถูกกว่า"}ราคายุติธรรม ${wholePct(Math.abs(pct))}%`;
 }
 
+/** Lead-in of every stored "ประเมินไม่แน่นอน" reason. */
+const UNCERTAIN_LEAD = "ประเมินไม่แน่นอน: ";
+
 /**
- * Why an uncertain fair price is not ranked: the listing's measured gap,
- * then `UNCERTAIN_FIT`, never a guessed cause. The card line, the chip
- * tooltip and the product page all print this. O(1).
+ * Start of the pipeline's reason for a model whose fair price is above a
+ * sibling's with a better spec (`train.SIBLING_REASON_PREFIX`, model
+ * 2026.11-v17, SPEC round 19), e.g. "ประเมินไม่แน่นอน: ราคายุติธรรมของรุ่นนี้
+ * (฿9,579) สูงกว่ารุ่นที่สเปกดีกว่า GeForce RTX 3050 8GB (฿8,328) …".
  */
-export function uncertainNote(pct: number | null | undefined): string {
+export const SIBLING_REASON_PREFIX = `${UNCERTAIN_LEAD}ราคายุติธรรมของรุ่นนี้`;
+
+/**
+ * The stored reason when it is a sibling inversion, else null. Such a model
+ * may sit well inside the 40% gap, so its reason cannot be rebuilt from the
+ * gap and is printed as stored. O(length).
+ */
+export function siblingReason(stored: string | null | undefined): string | null {
+  return stored?.startsWith(SIBLING_REASON_PREFIX) ? stored : null;
+}
+
+/**
+ * Why an uncertain fair price is not ranked, without the "ประเมินไม่แน่นอน"
+ * lead-in (the card's tag already says it): the stored sibling reason when
+ * there is one (it names the sibling and both fair prices), otherwise the
+ * listing's measured gap, then `UNCERTAIN_FIT`, never a guessed cause. The
+ * card line and the chip tooltip print this. O(1).
+ *
+ * @param pct price / fair - 1 of the listing.
+ * @param stored The listing's stored `recommendation_reason`.
+ */
+export function uncertainNote(pct: number | null | undefined, stored?: string | null): string {
+  const sibling = siblingReason(stored);
+  if (sibling !== null) return sibling.slice(UNCERTAIN_LEAD.length);
   const gap = uncertainGap(pct);
   return gap === null ? UNCERTAIN_NOTE : `${gap} ${UNCERTAIN_FIT}`;
 }
 
 /**
- * The pipeline's reason for such a listing (`train.uncertain_reason`, model
- * 2026.11-v12, same words and `shown_pct` rounding). The web rebuilds it
- * from the stored gap, so rows stored by older models (fixed "เกิน 40%"
- * wording) read the same.
+ * The pipeline's reason for such a listing, as the product page prints it.
+ * A sibling inversion (2026.11-v17+) is printed as stored. A gap reason
+ * (`train.uncertain_reason`, 2026.11-v12+, same words and `shown_pct`
+ * rounding) is rebuilt from the stored gap, so rows stored by older models
+ * (fixed "เกิน 40%" wording) read the same.
  */
-export function uncertainReason(pct: number | null | undefined): string {
-  return `ประเมินไม่แน่นอน: ${uncertainNote(pct)}`;
+export function uncertainReason(pct: number | null | undefined, stored?: string | null): string {
+  return siblingReason(stored) ?? `${UNCERTAIN_LEAD}${uncertainNote(pct)}`;
 }
 
 export function formatDateTime(iso: string | null): string {

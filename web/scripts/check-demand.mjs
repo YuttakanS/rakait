@@ -488,4 +488,80 @@ eq(
 );
 checks += 3;
 
+// ---- Sibling inversions (SPEC round 19, model 2026.11-v17): stored reason wins over the gap sentence.
+{
+  const fit = f.UNCERTAIN_FIT;
+  const sibling = `ประเมินไม่แน่นอน: ราคายุติธรรมของรุ่นนี้ (฿9,579) สูงกว่ารุ่นที่สเปกดีกว่า GeForce RTX 3050 8GB (฿8,328) ${fit}`;
+  // The live RTX 3050 6GB sits only 6% under its fair price: no 40% gap to quote.
+  eq(f.uncertainReason(-0.06, sibling), sibling, "product page prints the stored sibling reason");
+  eq(
+    f.uncertainNote(-0.06, sibling),
+    `ราคายุติธรรมของรุ่นนี้ (฿9,579) สูงกว่ารุ่นที่สเปกดีกว่า GeForce RTX 3050 8GB (฿8,328) ${fit}`,
+    "card line drops only the lead-in its chip already says",
+  );
+  assert.ok(!f.uncertainReason(-0.06, sibling).includes("ราคาจริง"), "no gap sentence on top of a sibling reason");
+  // A gap reason (or an older row) is still rebuilt from the gap.
+  const gapStored = `ประเมินไม่แน่นอน: ราคาจริงแพงกว่าราคายุติธรรม 42% ${fit}`;
+  eq(f.uncertainReason(0.42, gapStored), gapStored, "gap reason rebuilt as before");
+  eq(f.uncertainReason(0.42, "ประเมินไม่แน่นอน: ราคาจริงต่างจากราคายุติธรรมเกิน 40%"), gapStored, "v11 wording rebuilt from the gap");
+  eq(f.uncertainNote(-0.6, null), `ราคาจริงถูกกว่าราคายุติธรรม 60% ${fit}`, "no stored reason: gap note");
+  eq(f.siblingReason("Decision Tree: x"), null, "other reasons are not sibling reasons");
+  checks += 1;
+
+  const v17 = {
+    sibling_tolerance: 0.05,
+    sibling_inversions: 3,
+    sibling_flagged: 37,
+    sibling_examples: [
+      { worse: "Radeon RX 9070 16GB", worse_fair: 52050, better: "Radeon RX 9070 XT 16GB", better_fair: 44107 },
+      { worse: "GeForce RTX 3050 6GB", worse_fair: 9579, better: "GeForce RTX 3050 8GB", better_fair: 8328 },
+      { worse: 1, worse_fair: "x" },
+    ],
+  };
+  const s = ml.siblingInversions(v17);
+  eq(s.pairs, 3, "pair count read");
+  eq(s.examples.length, 2, "malformed example dropped");
+  eq(ml.siblingExampleText(s.examples[0]), "Radeon RX 9070 16GB (฿52,050) สูงกว่า Radeon RX 9070 XT 16GB (฿44,107)", "example text");
+  eq(
+    ml.siblingSentence(s),
+    "พบรุ่นที่สเปกไม่ดีกว่ารุ่นพี่น้องเลยสักด้านแต่ราคายุติธรรมสูงกว่าเกิน 5% 3 คู่ รุ่นที่ด้อยกว่าติดป้ายประเมินไม่แน่นอน 37 รายการ เช่น Radeon RX 9070 16GB (฿52,050) สูงกว่า Radeon RX 9070 XT 16GB (฿44,107)",
+    "insights sentence from the payload",
+  );
+  eq(
+    ml.siblingSentence(ml.siblingInversions({ sibling_tolerance: 0.05, sibling_inversions: 0, sibling_flagged: 0, sibling_examples: [] })),
+    "ไม่พบรุ่นที่สเปกไม่ดีกว่ารุ่นพี่น้องเลยสักด้านแต่ราคายุติธรรมสูงกว่าเกิน 5%",
+    "no pairs",
+  );
+  // A v16 payload has no sibling fields: no line at all.
+  eq(ml.siblingInversions({ r2_cv: 0.9, uncertain: 12, uncertain_gap: 0.4 }), null, "v16 payload: no sibling line");
+  eq(ml.siblingInversions(undefined), null, "no payload");
+}
+
+// ---- /ml MLR worked example never picks an uncertain listing (round 19 review).
+{
+  // Live-like v17 points: RTX 5050 sits 39% under its fair price, inside the
+  // ±40% band, but is flagged by its sibling inversion with RTX 5060.
+  const v17 = ml.fitPoints({
+    fit_points: [
+      [12500, 20581, "GeForce RTX 5050 8GB", true],
+      [8990, 9579, "GeForce RTX 3050 6GB", true],
+      [10900, 12990, "GeForce RTX 5060 8GB", false],
+      [3000, 9000, "far below", true],
+      [0, 100, "bad", false],
+      [500, 600, "no flag field"],
+    ],
+  });
+  eq(v17.length, 5, "malformed point dropped");
+  eq(v17.filter(ml.fitUncertain).length, 3, "flags read");
+  eq(ml.fitExample(v17, 0.4)[2], "no flag field", "example skips sibling-flagged points inside the band");
+  eq(ml.fitExample(v17.slice(0, 3), 0.4)[2], "GeForce RTX 5060 8GB", "cheapest trusted point");
+  // v16: three members, only the gap filter applies.
+  const v16 = ml.fitPoints({ fit_points: [[12500, 20581, "a"], [3000, 9000, "b"], [10900, 12990, "c"]] });
+  eq(v16.some(ml.fitUncertain), false, "v16 points carry no flag");
+  eq(ml.fitExample(v16, 0.4)[2], "a", "v16 keeps the gap filter");
+  eq(ml.fitExample([], 0.4), null, "no points");
+  // All flagged: fall back to every point rather than show nothing.
+  eq(ml.fitExample([[1, 2, "x", true]], 0.4)[2], "x", "fallback when nothing is trusted");
+}
+
 console.log(`check-demand: ${checks} checks passed`);

@@ -10,9 +10,10 @@ import { resolveVerdict } from "@/lib/verdict";
 
 /**
  * Fair price worth printing: the headline offer's, while it is in stock and
- * trusted. An uncertain fair price (over 40% from the market) is left off the
- * card, where "฿X" next to a far lower price would read as a half-price deal;
- * the product page still shows it with its explanation.
+ * trusted. An uncertain fair price (over 40% from the market, or above a
+ * better-spec sibling's) is left off the card, where "฿X" next to a far lower
+ * price would read as a half-price deal; the product page still shows it with
+ * its explanation (a sibling reason quotes both fair prices in its sentence).
  */
 export function shownFair(p: ProductSummary): number | null {
   return p.inStockOffers > 0 && !p.fairUncertain ? p.fairPrice : null;
@@ -123,9 +124,10 @@ export function ProductCard({
           <div className="space-y-1.5">
             {p.fairUncertain ? (
               <>
-                <UncertainTag pct={p.bestPctVsFair} />
-                {/* Visible, not a tooltip: phones cannot hover. */}
-                <p className="text-xs leading-snug text-muted">{uncertainNote(p.bestPctVsFair)}</p>
+                <UncertainTag pct={p.bestPctVsFair} reason={p.cheapestReason} />
+                {/* Visible, not a tooltip: phones cannot hover. A sibling
+                    inversion names the sibling and both fair prices. */}
+                <p className="text-xs leading-snug text-muted">{uncertainNote(p.bestPctVsFair, p.cheapestReason)}</p>
               </>
             ) : p.fairPrice === null ? (
               // Visible in place of the gap tag, so the card never just goes blank.

@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { useTooltipLeft } from "@/components/use-tooltip-left";
 import { useWidth } from "@/components/use-width";
 import { formatTHB } from "@/lib/format";
-import type { CurvePoint, Dendrogram, DemandPoint, FitPoint, ResidualBins } from "@/lib/ml";
+import { fitUncertain, type CurvePoint, type Dendrogram, type DemandPoint, type FitPoint, type ResidualBins } from "@/lib/ml";
 import type { DemandCluster } from "@/lib/types";
 
 /*
@@ -54,6 +54,19 @@ function shortTHB(v: number): string {
 
 // ------------------------------------------------------------ MLR fit scatter
 
+/** A 7 px "×" centred on (x, y), coordinates rounded like every other mark. */
+const crossPath = (x: number, y: number): string =>
+  `M${px(x - 3.5)} ${px(y - 3.5)}L${px(x + 3.5)} ${px(y + 3.5)}M${px(x - 3.5)} ${px(y + 3.5)}L${px(x + 3.5)} ${px(y - 3.5)}`;
+
+/** Legend swatch for the uncertain points of `FitScatter`. */
+export function UncertainKey() {
+  return (
+    <svg width={14} height={14} viewBox="-7 -7 14 14" aria-hidden className="inline-block align-middle">
+      <path d={crossPath(0, 0)} fill="none" stroke="var(--warn)" strokeWidth={1.75} />
+    </svg>
+  );
+}
+
 const FIT_PAD = { top: 10, right: 12, bottom: 40, left: 58 };
 
 /**
@@ -61,7 +74,10 @@ const FIT_PAD = { top: 10, right: 12, bottom: 40, left: 58 };
  * (price equals fair price) and dashed lines at ± the payload's
  * `uncertain_gap` (beyond them a fair price is flagged "ประเมินไม่แน่นอน";
  * not drawn when the payload has no gap). Points under y = x are cheaper
- * than fair.
+ * than fair. Points flagged uncertain (2026.11-v17+: a wide gap or a sibling
+ * inversion, which may sit inside the dashed lines) are drawn as `--warn`
+ * crosses instead of hollow squares (`UncertainKey`), so shape alone tells
+ * them apart.
  */
 export function FitScatter({ points, label, gap }: { points: FitPoint[]; label: string; gap: number | null }) {
   const svg = useRef<SVGSVGElement>(null);
@@ -149,9 +165,12 @@ export function FitScatter({ points, label, gap }: { points: FitPoint[]; label: 
         )}
         {/* Shared style on the group: each point is only x / y (a few hundred points per chart). */}
         <g fill="none" stroke="var(--foreground)" strokeOpacity={0.55}>
-          {xy.map((p, i) => (
-            <rect key={i} x={px(p.px - 2.5)} y={px(p.py - 2.5)} width={5} height={5} />
-          ))}
+          {xy.map((p, i) =>
+            fitUncertain(points[i]) ? null : <rect key={i} x={px(p.px - 2.5)} y={px(p.py - 2.5)} width={5} height={5} />,
+          )}
+        </g>
+        <g fill="none" stroke="var(--warn)" strokeWidth={1.75}>
+          {xy.map((p, i) => (fitUncertain(points[i]) ? <path key={i} d={crossPath(p.px, p.py)} /> : null))}
         </g>
         {diag && <line {...diag} stroke="var(--foreground)" strokeWidth={3} />}
         {h && <rect x={h.px - 5} y={h.py - 5} width={10} height={10} fill="var(--foreground)" stroke="var(--surface)" strokeWidth={2} />}

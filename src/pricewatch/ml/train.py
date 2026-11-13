@@ -27,7 +27,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v16"
+MODEL_VERSION = "2026.11-v17"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -490,6 +490,329 @@ def uncertain_reason(pct_vs_fair: float) -> str:
     return f"ประเมินไม่แน่นอน: ราคาจริง{direction}ราคายุติธรรม {gap}% {UNCERTAIN_FIT}"
 
 
+#: Relative margin before a lesser sibling's fair price counts as inverted
+#: (SPEC round 19): flagged when fair(worse) > fair(better) * (1 + this).
+#: 5% keeps rounding-level ties out; inversions on the live catalogue
+#: (2026-11-13) ran from 5% (RTX 5050 over 5060) to 53% (an SSD family).
+#: Only the lesser-spec model is flagged (the user's option B).
+SIBLING_TOLERANCE = 0.05
+
+#: Spec dimensions compared between siblings, per category; every one is
+#: oriented so that higher should cost more (see :func:`sibling_spec`).
+SIBLING_DIMENSIONS: dict[Category, tuple[str, ...]] = {
+    Category.GPU: ("perf_class", "vram_gb", "memory_rank"),
+    Category.CPU: ("sku", "cores", "threads", "x3d", "unlocked", "has_igpu"),
+    Category.RAM: ("capacity_gb", "speed_mhz"),
+    Category.SSD: ("capacity_gb",),
+}
+
+#: GPU memory generations, slowest first. Within a launch year a faster
+#: memory never sits on a cheaper tier, except the GT 1030 DDR4 variant,
+#: which this keeps apart from the GDDR5 one (more VRAM, slower memory).
+_GPU_MEMORY_RANK = {
+    "DDR3": 1,
+    "DDR4": 2,
+    "GDDR5": 3,
+    "GDDR5X": 4,
+    "GDDR6": 5,
+    "GDDR6X": 6,
+    "GDDR7": 7,
+}
+
+#: CPU families, most specific first ("Ryzen Threadripper" is not a Ryzen).
+_CPU_FAMILIES = ("Threadripper", "Core Ultra", "Core i", "Ryzen", "Pentium", "Athlon", "Xeon")
+_CPU_SKU = re.compile(r"(?<!\d)\d{3,5}(?!\d)")
+#: A trailing capacity in an SSD model name ("WD SN7100 1TB" -> "WD SN7100").
+_SSD_CAPACITY = re.compile(r"\s+\d+(?:\.\d+)?\s*(?:GB|TB)\s*$", re.IGNORECASE)
+
+
+def _cpu_line(model: object, generation: float = np.nan) -> tuple[str | None, float]:
+    """Product line and model number of a CPU, for the sibling check.
+
+    The model number is the first 3-5 digit number of the name (so a
+    trailing "LGA1700" is ignored). The generation is the parser's
+    ``generation`` spec when present (normalize.py: 14 for "Core i5-14400F",
+    5 for "Ryzen 5 5600"), else the model number's leading digit(s), which
+    covers Core Ultra (no parsed generation): 225 -> 2. O(len(model)).
+
+    Args:
+        model: Canonical model name, e.g. "Core i5-14400F".
+        generation: The parsed ``generation`` spec, NaN when absent.
+
+    Returns:
+        ``(line, number)``, e.g. ("Core i 14", 14400.0), ("Ryzen 5", 5600.0)
+        or ("Core Ultra 2", 225.0); (None, NaN) when the family or the number
+        cannot be read.
+    """
+    if not isinstance(model, str):
+        return (None, np.nan)
+    family = next((f for f in _CPU_FAMILIES if f in model), None)
+    number = _CPU_SKU.search(model)
+    if family is None or number is None:
+        return (None, np.nan)
+    sku = int(number.group(0))
+    if np.isfinite(generation):
+        gen = int(generation)
+    else:
+        gen = sku // 1000 if sku >= 1000 else sku // 100
+    return (f"{family} {gen}", float(sku))
+
+
+def _text(frame: pd.DataFrame, column: str) -> pd.Series:
+    """A text column as object dtype, all-NaN when absent."""
+    if column not in frame:
+        return pd.Series(np.nan, index=frame.index, dtype=object)
+    return frame[column].astype(object)
+
+
+def sibling_spec(
+    frame: pd.DataFrame, specs: pd.DataFrame, category: Category
+) -> tuple[pd.Series, pd.DataFrame]:
+    """Product line and dominance dimensions per listing (SPEC round 19).
+
+    Two products are compared only within one line, on dimensions where a
+    higher value should never make a product cheaper:
+
+    * GPU: line = vendor + launch year (``is_amd``, ``release_year``: one
+      generation, e.g. GeForce RTX 50 or Radeon RX 9000); dimensions =
+      ``perf_class`` (the tier ladder 5050 < 5060 < 5060 Ti < 5070 ... with
+      suffixes), ``vram_gb`` and ``memory_rank`` (``_GPU_MEMORY_RANK``).
+    * CPU: line = family + generation from the model name (``_cpu_line``,
+      e.g. Ryzen 9000, Core i 14th gen, Core Ultra 200); dimensions = the
+      model number (5500 < 5600, 14400 < 14600), ``cores``, ``threads``,
+      ``x3d``, ``unlocked`` (K / X) and ``has_igpu`` (non-F). No clock: the
+      parser has base clocks only, which run backwards between siblings
+      (a 5500GT is listed at a higher base clock than a 5600GT).
+    * RAM: line = manufacturer + DDR generation; dimensions = ``capacity_gb``
+      and ``speed_mhz``.
+    * SSD: line = model name without its capacity (the product family, e.g.
+      "WD SN7100") + interface (SATA or NVMe PCIe generation); dimension =
+      ``capacity_gb``.
+
+    Unlinked or unnamed listings (no canonical model name) get no line: there
+    is no name to quote to the shopper and their specs come from one title. A
+    missing dimension is NaN, which the comparison treats as incomparable.
+    O(n) vectorised, plus one regex per CPU listing.
+
+    Args:
+        frame: Listings of ``category`` (``canonical_id``, ``model``,
+            ``manufacturer`` and the category's raw spec columns).
+        specs: ``spec_features(frame, category)``.
+        category: The category of ``frame``.
+
+    Returns:
+        ``(line, dims)`` aligned with ``frame``: a string label per listing
+        (NaN = not compared) and ``SIBLING_DIMENSIONS[category]`` as floats.
+    """
+    linked = (
+        frame["canonical_id"].notna()
+        if "canonical_id" in frame
+        else pd.Series(False, index=frame.index)
+    )
+    if category is Category.GPU:
+        vendor = specs["is_amd"].map({1.0: "AMD", 0.0: "NVIDIA"})
+        year = specs["release_year"] + _YEAR0
+        line = vendor + " " + year.map(lambda y: f"{y:.0f}", na_action="ignore")
+        dims = pd.DataFrame(
+            {
+                "perf_class": specs["perf_class"],
+                "vram_gb": specs["vram_gb"],
+                "memory_rank": _text(frame, "memory_type").map(_GPU_MEMORY_RANK).astype(float),
+            }
+        )
+    elif category is Category.CPU:
+        parsed = [
+            _cpu_line(model, gen)
+            for model, gen in zip(_text(frame, "model"), numeric(frame, "generation"), strict=True)
+        ]
+        line = pd.Series([p[0] for p in parsed], index=frame.index, dtype=object)
+        dims = pd.DataFrame(
+            {
+                "sku": [p[1] for p in parsed],
+                "cores": numeric(frame, "cores"),
+                "threads": numeric(frame, "threads"),
+                "x3d": numeric(frame, "x3d"),
+                "unlocked": numeric(frame, "unlocked"),
+                "has_igpu": numeric(frame, "has_igpu"),
+            },
+            index=frame.index,
+        )
+    elif category is Category.RAM:
+        ddr = numeric(frame, "ddr").map(lambda d: f"DDR{d:.0f}", na_action="ignore")
+        line = _text(frame, "manufacturer") + " " + ddr
+        dims = pd.DataFrame({"capacity_gb": specs["capacity_gb"], "speed_mhz": specs["speed_mhz"]})
+    else:
+        family = _text(frame, "model").map(
+            lambda m: _SSD_CAPACITY.sub("", m) if isinstance(m, str) else np.nan
+        )
+        # One interface per model: titles of one drive may omit or misread
+        # its PCIe generation (Samsung 990 EVO PLUS read as 4 and 5), and a
+        # per-listing value would split the model across two lines.
+        pcie_gen = specs["pcie_gen"].groupby(product_key(frame)).transform("max")
+        interface = pcie_gen.map(
+            lambda g: "SATA" if g == 0 else f"NVMe PCIe {g:.0f}", na_action="ignore"
+        )
+        line = family + " " + interface
+        dims = pd.DataFrame({"capacity_gb": specs["capacity_gb"]})
+    named = _text(frame, "model").notna()
+    return line.where(linked & named & line.notna()), dims[list(SIBLING_DIMENSIONS[category])]
+
+
+#: Start of every sibling reason; the web tells it from a gap reason by it.
+SIBLING_REASON_PREFIX = "ประเมินไม่แน่นอน: ราคายุติธรรมของรุ่นนี้"
+
+
+def _thb(value: float) -> str:
+    """Whole baht as the web prints it ("฿10,072"); halves round up like JS."""
+    return f"฿{math.floor(value + 0.5):,}"
+
+
+def sibling_reason(own_fair: float, better_model: str, better_fair: float) -> str:
+    """Reason stored for a lesser-spec listing whose fair price is inverted.
+
+    Only the lesser side of a pair is flagged (SPEC round 19, option B), so
+    the reason always reads "this model's fair price is above the better
+    sibling's". Quotes both fair prices as the product page prints them and
+    the sibling's name, then ``UNCERTAIN_FIT``. The web prints it as stored
+    (``uncertainReason`` in web/src/lib/format.ts recognises
+    ``SIBLING_REASON_PREFIX``). O(1).
+
+    Args:
+        own_fair: This model's fair price (THB).
+        better_model: The better sibling's name, e.g. "GeForce RTX 3050 8GB".
+        better_fair: The better sibling's fair price (THB), lower than own.
+
+    Returns:
+        "ประเมินไม่แน่นอน: ราคายุติธรรมของรุ่นนี้ (฿9,579) สูงกว่ารุ่นที่สเปกดีกว่า
+        GeForce RTX 3050 8GB (฿8,328) โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล".
+    """
+    return (
+        f"{SIBLING_REASON_PREFIX} ({_thb(own_fair)}) สูงกว่ารุ่นที่สเปกดีกว่า {better_model} "
+        f"({_thb(better_fair)}) {UNCERTAIN_FIT}"
+    )
+
+
+#: Inverted pairs quoted as examples in the payload (SPEC round 19: 1-3).
+SIBLING_EXAMPLES = 3
+
+
+@dataclass
+class SiblingCheck:
+    """Outcome of the sibling check for one category.
+
+    Attributes:
+        flagged: Per listing, whether its model is the lesser-spec side of
+            an inverted pair (the better side is never flagged).
+        reasons: Per listing, the ``sibling_reason`` of its model's widest
+            pair, None when not flagged.
+        pairs: One row per inverted pair (``models.SIBLING_PAIR_COLUMNS``
+            plus ``worse_model`` / ``better_model`` names), widest first.
+    """
+
+    flagged: pd.Series
+    reasons: pd.Series
+    pairs: pd.DataFrame
+
+    def payload(self) -> dict[str, Any]:
+        """The ``fair_value_mlr`` fields of this check (2026.11-v17)."""
+        examples = self.pairs.head(SIBLING_EXAMPLES)
+        return {
+            "sibling_tolerance": SIBLING_TOLERANCE,
+            "sibling_inversions": int(len(self.pairs)),
+            "sibling_flagged": int(self.flagged.sum()),
+            "sibling_examples": [
+                {
+                    "worse": str(r.worse_model),
+                    "worse_fair": int(math.floor(r.worse_fair + 0.5)),
+                    "better": str(r.better_model),
+                    "better_fair": int(math.floor(r.better_fair + 0.5)),
+                }
+                for r in examples.itertuples()
+            ],
+        }
+
+
+def _model_mode(line: pd.Series, key: pd.Series) -> pd.Series:
+    """The most frequent line label per model (ties: alphabetically first).
+
+    One value per model whatever the order of its listings; NaN for a model
+    none of whose listings has a line. One ``value_counts`` and a sort over
+    (model, line) pairs: O(n log n).
+
+    Args:
+        line: Line label per listing (NaN = none).
+        key: Model key per listing, aligned with ``line``.
+
+    Returns:
+        The label per model, indexed by every key in ``key``.
+    """
+    counts = (
+        pd.DataFrame({"key": key, "line": line})
+        .dropna()
+        .value_counts()
+        .rename("n")
+        .reset_index()
+        .sort_values(["key", "n", "line"], ascending=[True, False, True], kind="stable")
+        .drop_duplicates("key")
+    )
+    models = pd.Index(key.unique()).sort_values()
+    return counts.set_index("key")["line"].reindex(models).astype(object)
+
+
+def sibling_check(
+    frame: pd.DataFrame, specs: pd.DataFrame, category: Category, fair_price: pd.Series
+) -> SiblingCheck:
+    """Find sibling models whose fair prices run against their specs.
+
+    Per model (``product_key``, the MLR's grouping): the line is the most
+    frequent label of its listings (``_model_mode``), each dimension the median over them
+    (as ``model_level`` reconciles specs), and the fair price the median of
+    the listings' rounded fair prices (one value per model, the one the
+    product page prints). ``models.sibling_inversions`` then compares the
+    models of each line. Every listing of the lesser-spec model of an
+    inverted pair is flagged (SPEC round 19, option B: its inflated fair
+    price is what would rank as a false deal; the better model keeps its
+    Deal Score) and explained by its widest pair. O(n) groupbys plus
+    O(sum g^2 d) for the comparisons.
+
+    Args:
+        frame: Listings of ``category``.
+        specs: ``spec_features(frame, category)``.
+        category: The category of ``frame``.
+        fair_price: The MLR's fair price per listing (NaN = unscored).
+
+    Returns:
+        The flags, reasons and pairs (see :class:`SiblingCheck`).
+    """
+    key = product_key(frame)
+    line, dims = sibling_spec(frame, specs, category)
+    model_line = _model_mode(line, key)
+    model_dims = dims.groupby(key).median()
+    model_fair = fair_price.round(0).groupby(key).median()
+    names = frame.get("model", pd.Series(np.nan, index=frame.index)).groupby(key).first()
+    pairs = m.sibling_inversions(model_line, model_dims, model_fair, SIBLING_TOLERANCE)
+    pairs["worse_model"] = pairs["worse"].map(names)
+    pairs["better_model"] = pairs["better"].map(names)
+    widest = m.widest_sibling_pair(pairs)
+    model_reason = pd.Series(
+        [
+            sibling_reason(float(own), str(names[other]), float(theirs))
+            for own, other, theirs in zip(
+                widest["own_fair"].to_numpy(float),
+                widest["other"],
+                widest["other_fair"].to_numpy(float),
+                strict=True,
+            )
+        ],
+        index=widest.index,
+        dtype=object,
+    )
+    flagged = key.isin(widest.index)
+    return SiblingCheck(
+        flagged=flagged, reasons=key.map(model_reason).where(flagged, None), pairs=pairs
+    )
+
+
 def gap_clears_band(pct_vs_fair: float, fair_error_pct: float) -> bool:
     """Whether the shown gap exceeds the shown "± Y%" band.
 
@@ -666,28 +989,38 @@ def sample_positions(n: int, limit: int, seed: int = 42) -> np.ndarray:
 
 
 def fit_points(
-    price: pd.Series, fair: pd.Series, names: pd.Series, limit: int = CHART_POINTS
+    price: pd.Series,
+    fair: pd.Series,
+    names: pd.Series,
+    uncertain: pd.Series | None = None,
+    limit: int = CHART_POINTS,
 ) -> list[list[Any]]:
-    """``[price, fair price, name]`` per scored row, sampled to ``limit`` rows.
+    """``[price, fair price, name, uncertain]`` per scored row, sampled to ``limit``.
 
     Rows without a fair price are left out (nothing to plot). Prices are
-    whole baht to keep the payload small.
+    whole baht to keep the payload small. The fourth member (2026.11-v17)
+    says whether the row's fair price is flagged "ประเมินไม่แน่นอน" (a gap
+    over ``UNCERTAIN_GAP`` or a sibling inversion, which can sit inside the
+    gap), so /ml never picks such a row as its worked example.
 
     Args:
         price: Listing price (THB).
         fair: Out-of-fold fair price (THB, NaN when unscored), aligned.
         names: Label per row for the tooltip (model or title), aligned.
+        uncertain: ``fair_uncertain`` per row, aligned; all False when None.
         limit: Maximum rows.
 
     Returns:
         The sampled rows, in input order.
     """
     scored = fair.notna() & price.notna()
+    flags = pd.Series(False, index=price.index) if uncertain is None else uncertain.astype(bool)
     p = price[scored].to_numpy(float)
     f = fair[scored].to_numpy(float)
     n = names[scored].astype(str).to_numpy()
+    u = flags[scored].to_numpy(bool)
     keep = sample_positions(len(p), limit)
-    return [[round(float(p[i])), round(float(f[i])), str(n[i])[:80]] for i in keep]
+    return [[round(float(p[i])), round(float(f[i])), str(n[i])[:80], bool(u[i])] for i in keep]
 
 
 def residual_histogram(
@@ -857,6 +1190,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     insights["demand_label_fits"] = None
     insights["demand_label_miss"] = None
     report = TrainReport(insights=insights)
+    # Per listing, the sibling-inversion reason of its model (None when none).
+    sibling_reasons = pd.Series(None, index=current.index, dtype=object)
 
     for category in Category:
         frame = category_frame(current, category)
@@ -907,7 +1242,11 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 fit_mask=frame["in_stock"].fillna(False).astype(bool),
             )
             pct = price / mlr.fair_price - 1
-            uncertain = pct.abs() > UNCERTAIN_GAP
+            # Uncertain: a gap too wide for the fit, or a fair price that runs
+            # against a sibling model's (SPEC round 19, 2026.11-v17).
+            siblings = sibling_check(frame, specs, category, mlr.fair_price)
+            sibling_reasons.loc[frame.index] = siblings.reasons
+            uncertain = (pct.abs() > UNCERTAIN_GAP) | siblings.flagged
             scores = m.deal_score(mlr.z_residual).where(~uncertain)
             insights.loc[frame.index, "fair_price"] = mlr.fair_price.round(0)
             insights.loc[frame.index, "residual"] = (price - mlr.fair_price).round(0)
@@ -926,8 +1265,11 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "required": REQUIRED_FOR_FAIR_VALUE[category],
                 "unscored": int(mlr.fair_price.isna().sum()),
                 "extrapolated": mlr.extrapolated,
+                # Every uncertain listing, gap or sibling (2026.11-v17+); the
+                # sibling_* fields count the second cause on its own.
                 "uncertain": int(uncertain.sum()),
                 "uncertain_gap": UNCERTAIN_GAP,
+                **siblings.payload(),
                 "error_pct_median": float(mlr.error_pct().median()),
                 # Coverage of the "± Y%" interval (2026.11-v13).
                 "interval_level": m.INTERVAL_LEVEL,
@@ -935,7 +1277,10 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "diagnostics": mlr.diagnostics.summary() if mlr.diagnostics else None,
                 # Chart data for /ml (2026.11-v13): [price, fair, name] for at
                 # most CHART_POINTS scored listings, and the % gap histogram.
-                "fit_points": fit_points(price, mlr.fair_price, listing_names(frame)),
+                # 2026.11-v17: a fourth member per point, whether it is uncertain.
+                "fit_points": fit_points(
+                    price, mlr.fair_price, listing_names(frame), uncertain=uncertain
+                ),
                 "residual_bins": residual_histogram(pct),
             }
             if figures:
@@ -1097,12 +1442,16 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         recs = merged.apply(rule_recommendation, axis=1)
         insights["recommendation"] = [r[0] for r in recs]
         insights["recommendation_reason"] = [reason for _, reason in recs]
-    # Whatever produced the recommendation, a fair price this far off the
-    # market cannot back a buy / wait call.
+    # Whatever produced the recommendation, an uncertain fair price cannot
+    # back a buy / wait call. A sibling inversion names the other model, so
+    # it is the more specific reason when a listing has both causes.
     flagged = insights["fair_uncertain"].astype(bool)
     insights.loc[flagged, "recommendation"] = None
     insights.loc[flagged, "recommendation_reason"] = [
-        uncertain_reason(float(p)) for p in insights.loc[flagged, "pct_vs_fair"]
+        sibling if isinstance(sibling, str) else uncertain_reason(float(p))
+        for p, sibling in zip(
+            insights.loc[flagged, "pct_vs_fair"], sibling_reasons[flagged], strict=True
+        )
     ]
     return report
 

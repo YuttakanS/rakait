@@ -15,6 +15,7 @@ import {
   salesRate,
   tierLabel,
 } from "@/lib/market";
+import { siblingInversions, siblingSentence } from "@/lib/ml";
 import { countModelsByCluster, getMarketInsights, getSpecPoints } from "@/lib/queries";
 import type { Category, DemandCluster, MarketInsight, Recommendation } from "@/lib/types";
 
@@ -144,6 +145,15 @@ function demandSegments(kmeans: Record<string, unknown> | undefined): Segment[] 
     return (kmeans.segments as Segment[]).filter((s) => isSegmentLabel(s.label) && s.size > 0).sort(bySegmentOrder);
   }
   return mergeByLabel((kmeans?.centroids as Centroid[] | undefined) ?? []);
+}
+
+/**
+ * " · " plus the category's sibling-check sentence (SPEC round 19), or ""
+ * for a payload from before 2026.11-v17, which has no such fields.
+ */
+function siblingDetail(p: Record<string, unknown>): string {
+  const s = siblingInversions(p);
+  return s === null ? "" : ` · ${siblingSentence(s)}`;
 }
 
 function find(insights: MarketInsight[], category: string, kind: string) {
@@ -325,7 +335,7 @@ export default async function InsightsPage() {
                   <h3 className="display text-xl">{CATEGORY_LABELS[c]}</h3>
                   <StatNote
                     text={`ราคายุติธรรมคลาดเคลื่อนเฉลี่ย ~${fixed(num(p.mape_cv) * 100, 0)}%`}
-                    detail={`Multiple Linear Regression บน log(ราคา) · R²(cross-validated) = ${fixed(p.r2_cv)} · MAPE = ${fixed(num(p.mape_cv) * 100, 1)}% · n = ${String(p.n)}`}
+                    detail={`Multiple Linear Regression บน log(ราคา) · R²(cross-validated) = ${fixed(p.r2_cv)} · MAPE = ${fixed(num(p.mape_cv) * 100, 1)}% · n = ${String(p.n)}${siblingDetail(p)}`}
                   />
                 </div>
                 <ol className="space-y-3">

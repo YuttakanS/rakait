@@ -178,13 +178,14 @@ export function FairGapTag({ pct }: { pct: number | null }) {
 }
 
 /**
- * Fair price too far from the market to trust (|price / fair - 1| > 40%).
- * Words in an orange chip; the reason, with this listing's own gap
- * (`uncertainNote(pct)`), is the tooltip and is also printed next to it.
+ * Fair price the model cannot vouch for: over 40% from the market, or above
+ * a better-spec sibling's (SPEC round 19). Words in an orange chip; the
+ * reason (`uncertainNote`: the stored sibling reason, else this listing's own
+ * gap) is the tooltip and is also printed next to it.
  */
-export function UncertainTag({ pct }: { pct: number | null }) {
+export function UncertainTag({ pct, reason = null }: { pct: number | null; reason?: string | null }) {
   return (
-    <span className="chip text-warn" title={uncertainNote(pct)}>
+    <span className="chip text-warn" title={uncertainNote(pct, reason)}>
       ประเมินไม่แน่นอน
     </span>
   );
