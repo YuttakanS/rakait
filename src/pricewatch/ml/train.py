@@ -27,7 +27,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v15"
+MODEL_VERSION = "2026.11-v16"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -759,14 +759,22 @@ def zero_share_means_no_sales(frame: pd.DataFrame) -> bool:
 
 
 def kmeans_points(
-    models: pd.DataFrame, labels: pd.Series, limit: int = KMEANS_CHART_POINTS
+    models: pd.DataFrame,
+    labels: pd.Series,
+    limit: int = KMEANS_CHART_POINTS,
+    *,
+    fits: pd.Series | None = None,
 ) -> list[list[Any]]:
-    """``[log1p(views), sales_rank_pct, label]`` per clustered model, sampled.
+    """``[log1p(views), sales_rank_pct, label(, label_fits)]`` per clustered model, sampled.
 
     Args:
         models: ``model_demand`` rows with ``views`` and ``sales_rank_pct``.
         labels: Listing label per model (NaN for unclustered models).
         limit: Maximum rows.
+        fits: ``models.label_fit`` flag per model, indexed like ``labels``.
+            When given (2026.11-v16, SPEC round 18) each row gains a fourth
+            element, whether the web shows the label, so /ml can draw the
+            unbadged models apart; ``None`` where the flag is unknown.
 
     Returns:
         The sampled rows; coordinates rounded to 3 decimals.
@@ -776,7 +784,13 @@ def kmeans_points(
     y = models.loc[labelled.index, "sales_rank_pct"].to_numpy(float)
     names = labelled.astype(str).to_numpy()
     keep = sample_positions(len(names), limit)
-    return [[round(float(x[i]), 3), round(float(y[i]), 3), str(names[i])] for i in keep]
+    rows = [[round(float(x[i]), 3), round(float(y[i]), 3), str(names[i])] for i in keep]
+    if fits is None:
+        return rows
+    flags = fits.reindex(labelled.index).to_numpy(dtype=object)
+    for row, i in zip(rows, keep, strict=True):
+        row.append(None if flags[i] is None or pd.isna(flags[i]) else bool(flags[i]))
+    return rows
 
 
 def timing_payload(timing: m.TimingModel) -> dict[str, Any]:
@@ -1018,6 +1032,10 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 # Whether "outsold nothing" (sales share 0) means "no sales
                 # seen": true only when every store's lowest rate is 0.
                 "zero_share_means_no_sales": zero_share_means_no_sales(current),
+                # 2026.11-v16 (SPEC round 18): the remainder group's badge also
+                # needs a sales share under sales_bar. Absent (v15) means it
+                # always fitted, so the web words the rule only when this is true.
+                "niche_below_bar": True,
             },
             "unlabelled": {
                 "n": int(len(unlabelled)),
@@ -1025,7 +1043,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             },
             # Scatter for /ml (2026.11-v13): [log1p(views), sales_rank_pct,
             # label] for at most KMEANS_CHART_POINTS clustered models.
-            "points": kmeans_points(models, seg.labels),
+            # 2026.11-v16: a fourth element per point, whether its label is shown.
+            "points": kmeans_points(models, seg.labels, fits=seg.label_fits),
         }
         if seg.hierarchy is not None:
             h = seg.hierarchy

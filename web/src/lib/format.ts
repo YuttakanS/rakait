@@ -113,14 +113,16 @@ export const CLUSTER_LABELS: Record<DemandCluster, { label: string; hint: string
     label: "คนดูเยอะ แต่ขายน้อย",
     hint: "มีคนเข้าดูเยอะ แต่ขายได้น้อยกว่าที่ควรเมื่อเทียบกับคนดู",
   },
-  // The remainder group (SPEC round 17). Its old name, "คนดูน้อย ขายน้อย",
-  // claimed two things most of its models' numbers did not show; this one
-  // claims no number. `wrap` marks where the one long word may break on a
-  // narrow card ("|", see `Words` in badges.tsx).
+  // K-Means' remainder group. Its names so far, "คนดูน้อย ขายน้อย" (until
+  // SPEC round 17) and "ไม่เด่นทั้งคนดูและยอดขาย" (round 17), claimed views
+  // its models' numbers did not show; this one claims sales only, and from
+  // model 2026.11-v16 the pipeline badges only models under the sales bar
+  // (SPEC round 18, the user's option D). `wrap` marks where the word may
+  // break on a narrow card ("|", see `Words` in badges.tsx).
   niche: {
-    label: "ไม่เด่นทั้งคนดูและยอดขาย",
-    wrap: "ไม่เด่น|ทั้งคนดู|และยอดขาย",
-    hint: "กลุ่มที่เหลือ: ยอดขายไม่ได้เด่นชัด และยอดเข้าชมไม่ได้สูงกว่ายอดขายชัดเจน",
+    label: "ยอดขายไม่เด่น",
+    wrap: "ยอดขาย|ไม่เด่น",
+    hint: "กลุ่มที่เหลือจาก K-Means: ขายได้ไม่เด่นเมื่อเทียบกับสินค้าในร้านเดียวกัน ป้ายนี้ไม่ได้บอกอะไรเรื่องยอดเข้าชม",
   },
 };
 

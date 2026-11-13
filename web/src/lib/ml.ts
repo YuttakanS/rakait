@@ -42,8 +42,12 @@ export interface ResidualBins {
   n: number;
 }
 
-/** `[log1p(views), sales_rank_pct, listing label]` per sampled model. */
-export type DemandPoint = [number, number, string];
+/**
+ * `[log1p(views), sales_rank_pct, K-Means label, label shown?]` per sampled
+ * model; the fourth value (whether the web shows the label, `label_fit`) is
+ * stored from 2026.11-v16 and absent before.
+ */
+export type DemandPoint = [number, number, string, (boolean | null)?];
 
 export interface Dendrogram {
   icoord: number[][];
@@ -147,21 +151,29 @@ export function silhouetteByK(payload: Record<string, unknown> | undefined): { k
 const YEAR0 = 2020;
 
 /**
- * Yes/no specs (0/1). The tree splits them at 0.5, so the left (≤) branch is
- * the "no" side. The node asks the positive question ("เป็น AMD?") and its
- * edges read ไม่ใช่ (left) / ใช่ (right): see `edgeWords`.
+ * Yes/no specs (0/1). The tree splits them at 0.5, so sklearn's left (≤)
+ * branch is the "no" side. The node asks the positive question ("เป็น AMD?"),
+ * so its "ใช่" child is sklearn's right one: see `yesNoChildren`.
  */
 const FLAGS = new Set(["is_amd", "x3d", "unlocked", "ddr5", "nvme"]);
 
 /** Whether a split is a yes/no question asked positively. */
 export const isFlag = (feature: string | null): boolean => feature !== null && FLAGS.has(feature);
 
+/** Words on the [first, second] edges under a split, in `yesNoChildren` order. */
+export const EDGE_WORDS = ["ใช่", "ไม่ใช่"] as const;
+
 /**
- * Words on the [left, right] edges under a split: ใช่ / ไม่ใช่ for "≤ t",
- * swapped for a yes/no spec, whose left side (≤ 0.5) is "no". O(1).
+ * A split's children as [yes, no]: for "≤ t" the "ใช่" child is sklearn's
+ * left one; for a yes/no spec asked positively ("เป็น AMD?") it is the right
+ * one (> 0.5). Every drawing and outline puts the "ใช่" child first, i.e. on
+ * the left, whatever the kind of question (SPEC round 18). Null for a leaf.
+ * O(1).
  */
-export const edgeWords = (feature: string | null): [string, string] =>
-  isFlag(feature) ? ["ไม่ใช่", "ใช่"] : ["ใช่", "ไม่ใช่"];
+export function yesNoChildren(n: TreeNode): [number, number] | null {
+  if (n.left === null || n.right === null) return null;
+  return isFlag(n.feature) ? [n.right, n.left] : [n.left, n.right];
+}
 
 /** Thai labels for the timing tree's inputs (`models.TIMING_FEATURES`). */
 const TIMING_LABELS: Record<string, string> = {
@@ -171,6 +183,80 @@ const TIMING_LABELS: Record<string, string> = {
   sales_per_day: "ยอดขายต่อวัน",
   days_listed: "วางขายมาแล้ว",
 };
+
+/**
+ * What each timing-tree input measures, in a shopper's words, as
+ * `models.timing_examples` computes it for one listing at one scrape.
+ */
+const TIMING_NOTES: Record<string, string> = {
+  pct_vs_model_median: "ราคาของรายการนี้ต่างจากราคากลางของรุ่นเดียวกันทุกร้านในวันเดียวกันกี่ %",
+  price_percentile_own:
+    "กี่ % ของราคาที่ร้านนี้เคยตั้งให้สินค้าชิ้นเดียวกัน (รวมวันนั้น) ไม่แพงกว่าราคาวันนั้น · 100% = ราคาวันนั้นแพงที่สุดเท่าที่เคยเห็น · ยิ่งต่ำยิ่งใกล้ราคาต่ำสุดที่เคยเห็น",
+  pct_change_prev: "ราคาต่างจากราคาที่เก็บได้ครั้งก่อนของรายการเดียวกันกี่ % (ติดลบ = ลดราคา)",
+  sales_per_day: "ยอดขายที่ร้านประกาศเพิ่มขึ้นต่อวัน นับจากครั้งก่อนที่เก็บข้อมูล",
+  days_listed: "จำนวนวันนับจากที่ระบบเห็นรายการนี้ครั้งแรก",
+};
+
+/**
+ * The features a fitted tree actually splits on, in the order they first
+ * appear (root first), each with its Thai label and what it measures; only
+ * these are explained under the tree. O(nodes).
+ */
+export function treeFeatures(nodes: TreeNode[]): { feature: string; label: string; note: string | null }[] {
+  const seen = new Set<string>();
+  const out: { feature: string; label: string; note: string | null }[] = [];
+  for (const n of nodes) {
+    if (n.left === null || n.feature === null || seen.has(n.feature)) continue;
+    seen.add(n.feature);
+    out.push({ feature: n.feature, label: TIMING_LABELS[n.feature] ?? featureLabel(n.feature), note: TIMING_NOTES[n.feature] ?? null });
+  }
+  return out;
+}
+
+/** A classifier leaf whose predicted class is a minority of its own training rows. */
+export interface MinorityLeaf {
+  leaf: TreeNode;
+  /** Raw training rows of the predicted class in the leaf, and the leaf's total. */
+  winnerRows: number;
+  total: number;
+  /** `class_weight = "balanced"` weight per row of each class: N / (classes × rows of the class). */
+  weights: Record<string, number>;
+  /** Rows × weight per class in this leaf: what the split criterion compared. */
+  weighted: Record<string, number>;
+}
+
+/**
+ * The leaf whose predicted class has the smallest share of its own rows, if
+ * under half and not the class with the most raw rows: such a leaf comes from `class_weight = "balanced"`, which
+ * weighs each row by N / (classes × rows of its class) over the training set
+ * (the root's counts). Returned only when the weighted counts reproduce the
+ * stored winner, so the explanation never contradicts the tree. O(nodes ×
+ * classes).
+ */
+export function minorityLeaf(nodes: TreeNode[]): MinorityLeaf | null {
+  const root = nodes[0]?.value;
+  if (typeof root !== "object") return null;
+  const classes = Object.keys(root.counts);
+  const total = classes.reduce((s, c) => s + root.counts[c], 0);
+  if (total === 0 || classes.some((c) => root.counts[c] <= 0)) return null;
+  const weights = Object.fromEntries(classes.map((c) => [c, total / (classes.length * root.counts[c])]));
+  let best: MinorityLeaf | null = null;
+  for (const leaf of leaves(nodes)) {
+    const v = leaf.value;
+    if (typeof v !== "object") continue;
+    const rows = Object.values(v.counts).reduce((a, b) => a + b, 0);
+    const winnerRows = v.counts[v.winner] ?? 0;
+    if (rows === 0 || winnerRows * 2 >= rows) continue;
+    // A plurality winner (e.g. 40/35/25) would win unweighted too: not balanced weighting's doing.
+    const rawTop = classes.reduce((a, b) => ((v.counts[b] ?? 0) > (v.counts[a] ?? 0) ? b : a));
+    if (rawTop === v.winner) continue;
+    const weighted = Object.fromEntries(classes.map((c) => [c, (v.counts[c] ?? 0) * weights[c]]));
+    const top = classes.reduce((a, b) => (weighted[b] > weighted[a] ? b : a));
+    if (top !== v.winner) continue;
+    if (best === null || winnerRows / rows < best.winnerRows / best.total) best = { leaf, winnerRows, total: rows, weights, weighted };
+  }
+  return best;
+}
 
 const trim = (v: number, digits = 2): string => String(Number(v.toFixed(digits)));
 
@@ -197,7 +283,8 @@ function gpuClass(t: number): string {
   return `xx${base}0${suffix}`;
 }
 const count = (v: number): string => Math.floor(v + 1e-9).toLocaleString("th-TH");
-const signedPct = (v: number): string => `${v > 0 ? "+" : ""}${trim(v * 100, 1)}%`;
+/** Every % threshold in a tree with one decimal ("+6.0%", "+22.4%", "44.2%"), so they read alike. */
+const signedPct = (v: number): string => `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
 
 /**
  * A split as two short lines: the feature in Thai (`featureLabel`) and the
@@ -205,7 +292,7 @@ const signedPct = (v: number): string => `${v > 0 ? "+" : ""}${trim(v * 100, 1)}
  * show the largest whole value on the "ใช่" side (≤ 6.9 cores is ≤ 6 cores);
  * log2 core counts are shown as cores; GPU classes as "≤ xx60 Ti / XT";
  * yes/no features become one positive question ("เป็น AMD") with no second
- * line, whose edges `edgeWords` swaps (left = ไม่ใช่). O(1).
+ * line, whose "ใช่" child is sklearn's right one (`yesNoChildren`). O(1).
  */
 export function splitText(feature: string, threshold: number): [string, string] {
   if (isFlag(feature)) return [featureLabel(feature), ""];
@@ -250,7 +337,7 @@ export function splitText(feature: string, threshold: number): [string, string] 
     case "pct_change_prev":
       return [label, `≤ ${signedPct(t)}`];
     case "price_percentile_own":
-      return [label, `≤ ${trim(t * 100, 0)}%`];
+      return [label, `≤ ${(t * 100).toFixed(1)}%`];
     case "sales_per_day":
       return [label, `≤ ${trim(t)} ชิ้น/วัน`];
     case "days_listed":
@@ -282,9 +369,9 @@ export function treeOutline(nodes: TreeNode[], leafText: (n: TreeNode) => string
       return;
     }
     lines.push(`${pad}${head}${splitSentence(n.feature, n.threshold)}? (n = ${n.n.toLocaleString("th-TH")})`);
-    const [yesLeft, noRight] = edgeWords(n.feature);
-    walk(n.left, depth + 1, yesLeft);
-    walk(n.right, depth + 1, noRight);
+    const [yes, no] = yesNoChildren(n) ?? [n.left, n.right];
+    walk(yes, depth + 1, EDGE_WORDS[0]);
+    walk(no, depth + 1, EDGE_WORDS[1]);
   };
   walk(0, 0, "");
   return lines.join("\n");
@@ -305,11 +392,10 @@ export function pathTo(nodes: TreeNode[], target: number): string[] {
   while (id !== target) {
     const n = nodes[id];
     if (n.left === null || n.right === null || n.feature === null || n.threshold === null) break;
-    const goLeft = inSubtree(nodes, n.left, target);
-    const sentence = splitSentence(n.feature, n.threshold);
-    const [leftWord, rightWord] = edgeWords(n.feature);
-    steps.push(`“${sentence}” ${goLeft ? leftWord : rightWord}`);
-    id = goLeft ? n.left : n.right;
+    const [yes, no] = yesNoChildren(n) ?? [n.left, n.right];
+    const goYes = inSubtree(nodes, yes, target);
+    steps.push(`“${splitSentence(n.feature, n.threshold)}” ${goYes ? EDGE_WORDS[0] : EDGE_WORDS[1]}`);
+    id = goYes ? yes : no;
   }
   return steps;
 }

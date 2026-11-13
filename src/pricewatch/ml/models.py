@@ -669,8 +669,9 @@ def name_segments(centers: list[tuple[float, float]]) -> list[str]:
       rather than from one centroid each;
     * overpriced hype: the other centroids whose views exceed sales by the
       margin (attention that does not convert);
-    * niche: everything else. The remainder, not a claim: its shopper-facing
-      name is neutral ("ไม่เด่นทั้งคนดูและยอดขาย", SPEC round 17).
+    * niche: everything else. The remainder: its shopper-facing name,
+      "ยอดขายไม่เด่น" (SPEC round 18), claims only that sales do not stand out
+      and nothing about views.
 
     Args:
         centers: ``(views_z, sales_z)`` per cluster.
@@ -763,7 +764,10 @@ def label_fit(
     * ``hidden_gem``: sales share >= ``sales_bar`` and views <= ``split_views``;
     * ``community_favorite``: sales share >= ``sales_bar`` and views > ``split_views``;
     * ``overpriced_hype``: views > ``views_median`` and sales share < ``sales_bar``;
-    * ``niche``: always fits (its name, "ไม่เด่นทั้งคนดูและยอดขาย", claims no number).
+    * ``niche``: sales share < ``sales_bar`` (SPEC round 18). Its name,
+      "ยอดขายไม่เด่น", makes no views claim, but a model printed as
+      outselling half its store or more contradicts it; such a model misses
+      on ``"sales"``.
 
     Boolean masks over contiguous float arrays: O(n), no per-row Python.
 
@@ -792,9 +796,11 @@ def label_fit(
     views_ok = np.where(
         gem, shown_views <= split, np.where(favorite, shown_views > split, shown_views > median)
     )
-    sales_ok = np.where(hype, shown_sales < bar, sells_well)
+    niche = label == NICHE
+    sales_ok = np.where(hype | niche, shown_sales < bar, sells_well)
     named = gem | favorite | hype
-    views_miss, sales_miss = named & ~views_ok, named & ~sales_ok
+    # The neutral name claims nothing about views: only its sales can miss.
+    views_miss, sales_miss = named & ~views_ok, (named | niche) & ~sales_ok
     clustered = labels.notna().to_numpy()
     fits = np.where(clustered, ~(views_miss | sales_miss), None)
     miss = np.where(

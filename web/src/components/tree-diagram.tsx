@@ -1,5 +1,5 @@
 import { RECOMMENDATION_LABELS, formatTHB } from "@/lib/format";
-import { edgeWords, splitText, type ClassValue, type TreeNode } from "@/lib/ml";
+import { EDGE_WORDS, splitText, yesNoChildren, type ClassValue, type TreeNode } from "@/lib/ml";
 import type { Recommendation } from "@/lib/types";
 import { TreeScroll } from "./tree-scroll";
 
@@ -25,6 +25,14 @@ const isLeaf = (n: TreeNode): boolean => n.left === null || n.right === null;
 const boxWidth = (n: TreeNode): number => (isLeaf(n) ? LEAF_W : NODE_W);
 
 /**
+ * Fill of a price leaf's strip at `t` in [0, 1] (cheapest -> dearest): the
+ * foreground mixed into the surface, so it is darker in light mode and
+ * lighter in dark mode. The legend draws the same fills, so it reads right
+ * in both themes.
+ */
+const stripFill = (t: number): string => `color-mix(in srgb, var(--foreground) ${Math.round(15 + 85 * t)}%, var(--surface))`;
+
+/**
  * Compact tidy layout (Reingold–Tilford contour packing). Each subtree is
  * laid out on its own; the right sibling is then pushed right only as far
  * as needed for every shared row to keep `GAP` between the left subtree's
@@ -38,9 +46,11 @@ const boxWidth = (n: TreeNode): number => (isLeaf(n) ? LEAF_W : NODE_W);
 function pack(nodes: TreeNode[], id: number): Subtree {
   const node = nodes[id];
   const hw = boxWidth(node) / 2;
-  if (node.left === null || node.right === null) return { xs: new Map([[id, 0]]), left: [-hw], right: [hw] };
-  const a = pack(nodes, node.left);
-  const b = pack(nodes, node.right);
+  const children = yesNoChildren(node);
+  if (children === null) return { xs: new Map([[id, 0]]), left: [-hw], right: [hw] };
+  // "ใช่" child on the left (a), "ไม่ใช่" on the right (b), for every question.
+  const a = pack(nodes, children[0]);
+  const b = pack(nodes, children[1]);
   let shift = 0;
   for (let d = 0; d < Math.min(a.right.length, b.left.length); d++) shift = Math.max(shift, a.right[d] - b.left[d] + GAP);
   const half = shift / 2;
@@ -66,10 +76,7 @@ function layout(nodes: TreeNode[]): { placed: Placed[]; width: number; height: n
   const visit = (id: number, depth: number) => {
     const node = nodes[id];
     placed[id] = { node, x: PAD + (xs.get(id) ?? 0) - minX, y: PAD + depth * LEVEL, depth };
-    if (node.left !== null && node.right !== null) {
-      visit(node.left, depth + 1);
-      visit(node.right, depth + 1);
-    }
+    for (const child of yesNoChildren(node) ?? []) visit(child, depth + 1);
   };
   visit(0, 0);
   return { placed, width: PAD * 2 + (maxX - minX), height: PAD * 2 + (left.length - 1) * LEVEL + NODE_H };
@@ -87,12 +94,14 @@ const isClass = (v: TreeNode["value"]): v is ClassValue => typeof v === "object"
  * A fitted decision / regression tree as a node-link diagram (SPEC round 15).
  *
  * Inner nodes print the split in Thai with its unit and the rows reaching
- * them; each edge says "ใช่" (left, ≤) or "ไม่ใช่" (right, >), swapped for a
- * yes/no spec asked positively ("เป็น AMD?": left = ไม่ใช่). Price leaves
- * print the typical price and carry a top strip shaded from light (cheap)
- * to dark (dear) on a log scale; class leaves print the recommendation in
- * the colour of its badge, framed in that colour. Colour is never the only
- * signal: the price or the class name is always printed. Server component.
+ * them; the "ใช่" edge always goes left and "ไม่ใช่" right, for "≤ t"
+ * questions and yes/no specs alike (`yesNoChildren`, SPEC round 18). Price
+ * leaves print the typical price and carry a top strip whose fill moves from
+ * the surface colour (cheap) toward the text colour (dear) on a log scale,
+ * with a ถูก -> แพง legend drawn in the same fills, so it holds in light and
+ * dark mode; class leaves print the recommendation in the colour of its
+ * badge, framed in that colour. Colour is never the only signal: the price
+ * or the class name is always printed. Server component.
  */
 export function TreeDiagram({
   nodes,
@@ -113,11 +122,12 @@ export function TreeDiagram({
 
   return (
     <div className="space-y-2">
-      <TreeScroll rootX={placed[0].x} label={`${label} (เลื่อนซ้ายขวาได้)`}>
+      <TreeScroll rootX={placed[0].x} contentWidth={width} label={`${label} (เลื่อนซ้ายขวาได้)`}>
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label} className="block max-w-none">
           {placed.map(({ node, x, y }) => {
-            if (node.left === null || node.right === null) return null;
-            return [node.left, node.right].map((child, i) => {
+            const children = yesNoChildren(node);
+            if (children === null) return null;
+            return children.map((child, i) => {
               const c = placed[child];
               const x1 = x;
               const y1 = y + NODE_H;
@@ -126,7 +136,7 @@ export function TreeDiagram({
               // Label 45% down the edge, on a surface block so the line never runs through the text.
               const lx = x1 + (x2 - x1) * 0.45;
               const ly = y1 + (y2 - y1) * 0.45;
-              const word = edgeWords(node.feature)[i];
+              const word = EDGE_WORDS[i];
               const w = word === "ใช่" ? 26 : 40;
               return (
                 <g key={`${node.id}-${child}`}>
@@ -199,7 +209,7 @@ export function TreeDiagram({
                   y={y + 3}
                   width={LW - 6}
                   height={9}
-                  style={{ fill: `color-mix(in srgb, var(--foreground) ${Math.round(15 + 85 * t)}%, var(--surface))` }}
+                  style={{ fill: stripFill(t) }}
                 />
                 <text x={x} y={y + 2 * LINE} textAnchor="middle" fontSize="15" fontWeight={700} fill="var(--foreground)" className="tabular">
                   {formatTHB(price)}
@@ -212,6 +222,23 @@ export function TreeDiagram({
           })}
         </svg>
       </TreeScroll>
+      {prices.length > 0 && (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+          แถบบนกล่องใบ:
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+            ถูก
+            <span aria-hidden className="inline-flex border-2 border-border">
+              {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+                <span key={t} className="h-2.5 w-5" style={{ background: stripFill(t) }} />
+              ))}
+            </span>
+            แพง
+          </span>
+          <span className="tabular whitespace-nowrap">
+            ({formatTHB(Math.min(...prices))} → {formatTHB(Math.max(...prices))})
+          </span>
+        </p>
+      )}
       <details className="group">
         <summary className="flex min-h-11 items-center gap-2 text-sm font-medium">
           ดูต้นไม้นี้เป็นข้อความ

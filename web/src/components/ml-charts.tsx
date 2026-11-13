@@ -38,6 +38,13 @@ function logTicks(lo: number, hi: number, max = 6): number[] {
   return out.filter((v) => Math.abs(Math.log10(v) - Math.round(Math.log10(v))) < 1e-9);
 }
 
+/** A count on a log axis: 10, 1k, 100k, 1M (never "1000k"). */
+function shortCount(v: number): string {
+  if (v >= 1_000_000) return `${Number((v / 1_000_000).toFixed(1))}M`;
+  if (v >= 1_000) return `${Number((v / 1_000).toFixed(1))}k`;
+  return String(v);
+}
+
 /** "฿12k" style short THB for tight log axes. */
 function shortTHB(v: number): string {
   if (v >= 1_000_000) return `฿${Number((v / 1_000_000).toFixed(1))}M`;
@@ -238,12 +245,12 @@ export function ResidualHistogram({ bins, label, gap }: { bins: ResidualBins; la
  * enclosing `<g {...MARKER_STYLE}>`, so each of up to several hundred
  * points costs a few bytes of HTML.
  */
-function Marker({ label, x: cx, y: cy }: { label: string; x: number; y: number }) {
+function Marker({ label, x: cx, y: cy, solid = "var(--foreground)" }: { label: string; x: number; y: number; solid?: string }) {
   const x = px(cx);
   const y = px(cy);
   switch (label as DemandCluster) {
     case "hidden_gem":
-      return <rect x={px(x - 3)} y={px(y - 3)} width={6} height={6} fill="var(--foreground)" stroke="none" />;
+      return <rect x={px(x - 3)} y={px(y - 3)} width={6} height={6} fill={solid} stroke="none" />;
     case "community_favorite":
       return <rect x={px(x - 3)} y={px(y - 3)} width={6} height={6} />;
     case "overpriced_hype":
@@ -254,13 +261,23 @@ function Marker({ label, x: cx, y: cy }: { label: string; x: number; y: number }
 }
 
 const MARKER_STYLE = { fill: "none", stroke: "var(--foreground)", strokeWidth: 1.5 } as const;
+/**
+ * Models K-Means grouped but the web does not badge (SPEC round 18): the
+ * same shape in `--subtle` grey with a thinner stroke, drawn under the
+ * badged ones. `--subtle` keeps >= 3:1 against the chart surface in both
+ * themes (5.7:1 light, 7.8:1 dark; `--disabled-border` was under 3:1) while
+ * reading clearly fainter than the black / white badged points. The shape
+ * still names the K-Means group; the legend draws the same style.
+ */
+const FADED = "var(--subtle)";
+const FADED_STYLE = { ...MARKER_STYLE, stroke: FADED, strokeWidth: 1 } as const;
 
-/** Legend swatch for one demand label (also used by the page's text legend). */
-export function MarkerSwatch({ label }: { label: string }) {
+/** Legend swatch for one demand label (also used by the page's text legend); `faded` = unbadged. */
+export function MarkerSwatch({ label, faded = false }: { label: string; faded?: boolean }) {
   return (
     <svg width={14} height={14} viewBox="-7 -7 14 14" aria-hidden className="inline-block align-middle">
-      <g {...MARKER_STYLE}>
-        <Marker label={label} x={0} y={0} />
+      <g {...(faded ? FADED_STYLE : MARKER_STYLE)}>
+        <Marker label={label} x={0} y={0} solid={faded ? FADED : undefined} />
       </g>
     </svg>
   );
@@ -311,7 +328,7 @@ export function DemandScatter({
         ))}
         {shownTicks.map((v) => (
           <text key={v} x={sx(Math.log1p(v))} y={H - P.bottom + 16} textAnchor="middle" className="tabular" {...TICK}>
-            {v >= 1000 ? `${v / 1000}k` : v}
+            {shortCount(v)}
           </text>
         ))}
         <text x={W - P.right} y={H - 3} textAnchor="end" {...TICK}>
@@ -320,10 +337,14 @@ export function DemandScatter({
         {splitLogViews !== null && (
           <line x1={sx(splitLogViews)} x2={sx(splitLogViews)} y1={P.top} y2={sy(0)} stroke="var(--foreground)" strokeWidth={1.5} strokeDasharray="6 5" />
         )}
+        {/* Unbadged models (4th value false, 2026.11-v16+) first, in grey, so badged ones sit on top. */}
+        <g {...FADED_STYLE}>
+          {points.map((p, i) =>
+            p[3] === false ? <Marker key={i} label={p[2]} x={sx(p[0])} y={sy(p[1])} solid={FADED} /> : null,
+          )}
+        </g>
         <g {...MARKER_STYLE}>
-          {points.map((p, i) => (
-            <Marker key={i} label={p[2]} x={sx(p[0])} y={sy(p[1])} />
-          ))}
+          {points.map((p, i) => (p[3] === false ? null : <Marker key={i} label={p[2]} x={sx(p[0])} y={sy(p[1])} />))}
         </g>
         {centroids.map((c) => (
           <g key={c.index}>
@@ -452,7 +473,11 @@ export function DendrogramChart({ data, k, label }: { data: Dendrogram; k: numbe
   const sx = (v: number) => px(P.left + (v / (10 * leaves)) * (W - P.left - P.right));
   const leafPx = (W - P.left - P.right) / leaves;
   const groups = cut === null ? [] : cutGroups(data, cut);
-  const ticks = stretched ? [0, top] : [0, top / 2, top];
+  // The cut height gets its own labelled tick on the y axis (SPEC round 18);
+  // a plain tick closer than one text line to it is dropped so labels never
+  // overlap. The label is the payload's cut_height, the number /ml quotes.
+  const cutLabel = cut === null ? null : (data.cut_height ?? cut).toFixed(2);
+  const ticks = (stretched ? [0, top] : [0, top / 2, top]).filter((v) => cut === null || Math.abs(sy(v) - sy(cut)) >= 16);
   return (
     <div ref={box} className="space-y-1">
       <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={label}>
@@ -492,6 +517,10 @@ export function DendrogramChart({ data, k, label }: { data: Dendrogram; k: numbe
           ))}
         {cut !== null && (
           <g>
+            <line x1={P.left - 5} x2={P.left} y1={sy(cut)} y2={sy(cut)} stroke="var(--foreground)" strokeWidth={2} />
+            <text x={P.left - 7} y={px(sy(cut) + 4)} textAnchor="end" fontSize="12" fontWeight={700} fill="var(--foreground)" className="tabular">
+              {cutLabel}
+            </text>
             <line x1={P.left} x2={W - P.right} y1={sy(cut)} y2={sy(cut)} stroke="var(--foreground)" strokeWidth={2} strokeDasharray="8 5" />
             {groups.map((g, i) => {
               // On a narrow screen neighbouring branches can sit closer than a

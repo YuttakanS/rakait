@@ -8,9 +8,12 @@ import {
   DIMENSION_COUNT,
   countText,
   demandReference,
+  emptyGroupCause,
+  emptyGroupReason,
   groupComparison,
   groupNumbers,
   labelRuleText,
+  nicheRuleText,
   overallSalesText,
   unlabelledText,
   type DemandReference,
@@ -175,7 +178,8 @@ function Promos() {
  * The "(i)" panel's rules: what each group's badge promises, in the words
  * and with the thresholds of the training run (`labelRuleText`; the rule
  * itself is evaluated in the pipeline only), that the neutral group is the
- * remainder, and how many grouped models carry no badge. A payload from
+ * remainder (and, from 2026.11-v16, badged only under the sales bar:
+ * `nicheRuleText`), and how many grouped models carry no badge. A payload from
  * before model 2026.11-v15 has no thresholds: the panel then describes the
  * groups without numbers it does not have.
  */
@@ -192,6 +196,7 @@ function GroupRules({ reference }: { reference: DemandReference }) {
             rule && (
               <li key={c}>
                 “{CLUSTER_LABELS[c].label}” = {rule}
+                {emptyGroupReason(c, reference) && <> · {emptyGroupReason(c, reference)}</>}
               </li>
             ),
         )
@@ -208,7 +213,10 @@ function GroupRules({ reference }: { reference: DemandReference }) {
           <li>“{CLUSTER_LABELS.overpriced_hype.label}” = กลุ่มที่ยอดเข้าชมสูงกว่าระดับยอดขายชัดเจน</li>
         </>
       )}
-      <li>“{CLUSTER_LABELS.niche.label}” = กลุ่มที่เหลือจากกลุ่มข้างบน ชื่อกลุ่มจึงไม่ได้อ้างตัวเลขใด</li>
+      <li>
+        “{CLUSTER_LABELS.niche.label}” = {nicheRuleText(reference)}
+        {emptyGroupReason("niche", reference) && <> · {emptyGroupReason("niche", reference)}</>}
+      </li>
       {overall && <li>ยอดขายของทุกรุ่นโดยรวม: {overall}</li>}
       {unlabelled && <li>{unlabelled}</li>}
     </ul>
@@ -324,7 +332,11 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                     <div key={c}>
                       <dt className="font-semibold">{CLUSTER_LABELS[c].label}</dt>
                       <dd className="text-xs text-muted">{CLUSTER_LABELS[c].hint}</dd>
-                      {numbers && <dd className="tabular text-xs text-muted">{numbers}</dd>}
+                      {emptyGroupReason(c, reference) ? (
+                        <dd className="text-xs font-medium text-foreground">{emptyGroupReason(c, reference)}</dd>
+                      ) : (
+                        numbers && <dd className="tabular text-xs text-muted">{numbers}</dd>
+                      )}
                     </div>
                   );
                 })}
@@ -341,6 +353,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
           </details>
           {CLUSTERS.map((c) => {
             const active = cluster === c;
+            // A group with no model to list this run (SPEC round 18): a
+            // disabled chip that says so, not a link to an empty page.
+            if (!active && emptyGroupReason(c, reference)) {
+              return (
+                <span
+                  key={c}
+                  className="inline-flex min-h-11 cursor-not-allowed items-center border-2 border-[var(--disabled-border)] bg-surface-muted px-3.5 text-sm text-subtle"
+                >
+                  {CLUSTER_LABELS[c].label} · รอบนี้ไม่มีรุ่น
+                </span>
+              );
+            }
             return (
               <Link
                 key={c}
@@ -362,7 +386,19 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
         </div>
 
         {products.length === 0 ? (
-          <p className="card p-10 text-center text-sm text-muted">ไม่พบสินค้าที่ตรงกับเงื่อนไข ลองเปลี่ยนคำค้นหาหรือตัวกรอง</p>
+          <p className="card p-10 text-center text-sm text-muted">
+            {cluster && (emptyGroupReason(cluster, reference) || (!query && !category)) ? (
+              // Reached by URL (the chip is disabled): say why the group is empty.
+              <>
+                รอบนี้ไม่มีรุ่นที่ตัวเลขตรงกับกลุ่ม “{CLUSTER_LABELS[cluster].label}”
+                {emptyGroupCause(cluster, reference) && (
+                  <span className="mt-1 block text-xs">{emptyGroupCause(cluster, reference)}</span>
+                )}
+              </>
+            ) : (
+              "ไม่พบสินค้าที่ตรงกับเงื่อนไข ลองเปลี่ยนคำค้นหาหรือตัวกรอง"
+            )}
+          </p>
         ) : (
           <ul className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4">
             {products.map((p, index) => (

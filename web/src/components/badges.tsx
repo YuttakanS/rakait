@@ -33,7 +33,7 @@ export function RecommendationBadge({ value }: { value: Recommendation | null })
 /**
  * Demand-group chip. The label may wrap on a narrow card, but only at the
  * space between its words ("ขายดี แต่คนดูน้อย") and at the label's own break
- * marks ("ไม่เด่น|ทั้งคนดู|และยอดขาย", `CLUSTER_LABELS[…].wrap`): each run is
+ * marks ("ยอดขาย|ไม่เด่น", `CLUSTER_LABELS[…].wrap`): each run is
  * a nowrap span (`Words`), since the browser's Thai dictionary would
  * otherwise break inside one. The text sits in one inner span so the flex
  * chip keeps the spaces. O(words).

@@ -26,6 +26,10 @@ export interface GroupStats {
   /** Median share of the store's listings outsold (v14+), else the mean (older payloads). */
   salesBeats: number | null;
   salesBeatsIsMedian: boolean;
+  /** Models of the group that carry its badge (`labelled`, v15+), else its K-Means size; null when absent. */
+  labelled: number | null;
+  /** Models K-Means put in the group (`size`); null when absent. */
+  size: number | null;
 }
 
 /** What the training run stored about the groups as a whole. */
@@ -50,11 +54,20 @@ export interface DemandReference {
    * only when every store's lowest rate is 0. Null when not stored.
    */
   zeroMeansNoSales: boolean | null;
+  /**
+   * Whether the neutral remainder group's badge also needs a sales share
+   * under `salesBar` (`label_rule.niche_below_bar`, 2026.11-v16+). False for
+   * older payloads, whose remainder group always kept its badge: the copy
+   * then states no rule for it.
+   */
+  nicheBelowBar: boolean;
   /** Models clustered in all (`n`). */
   clustered: number | null;
   /** Clustered models that carry no badge because their numbers contradict the name (v15+). */
   unlabelled: number | null;
   groups: Partial<Record<DemandCluster, GroupStats>>;
+  /** Whether the payload lists its groups (`segments`): only then can a missing group mean "none this run". */
+  hasGroups: boolean;
 }
 
 export const NO_REFERENCE: DemandReference = {
@@ -64,9 +77,11 @@ export const NO_REFERENCE: DemandReference = {
   salesBar: null,
   windowDays: null,
   zeroMeansNoSales: null,
+  nicheBelowBar: false,
   clustered: null,
   unlabelled: null,
   groups: {},
+  hasGroups: false,
 };
 
 const finite = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -92,6 +107,8 @@ export function demandReference(payload: Record<string, unknown> | null | undefi
       viewsMedian: finite(s.labelled_views_median) ?? finite(s.views_median),
       salesBeats: median ?? finite(s.labelled_sales_beats_pct) ?? finite(s.sales_beats_pct),
       salesBeatsIsMedian: median !== null,
+      labelled: finite(s.labelled) ?? finite(s.size),
+      size: finite(s.size),
     };
   }
   return {
@@ -101,10 +118,33 @@ export function demandReference(payload: Record<string, unknown> | null | undefi
     salesBar: finite(rule.sales_bar),
     windowDays: finite(rule.window_days),
     zeroMeansNoSales: typeof rule.zero_share_means_no_sales === "boolean" ? rule.zero_share_means_no_sales : null,
+    nicheBelowBar: rule.niche_below_bar === true,
     clustered: finite(payload.n),
     unlabelled: finite(unlabelled.n),
     groups,
+    hasGroups: Array.isArray(payload.segments) && payload.segments.length > 0,
   };
+}
+
+/**
+ * Why a group has no model to list this run (SPEC round 18), or null when it
+ * has some or the payload cannot tell. Read from the payload's `segments`:
+ * no segment = K-Means named no cluster this way; a segment whose models all
+ * fail the badge rule (`labelled` 0) = their numbers did not fit the name.
+ * The chips, the "(i)" panel and the empty list use it. O(1).
+ */
+export function emptyGroupReason(cluster: DemandCluster, ref: DemandReference): string | null {
+  const cause = emptyGroupCause(cluster, ref);
+  return cause === null ? null : `รอบนี้ไม่มีรุ่นในกลุ่มนี้ เพราะ ${cause}`;
+}
+
+/** The cause alone ("K-Means ไม่ได้จัดกลุ่มใดให้ได้ชื่อนี้"), for the empty list under its own headline. */
+export function emptyGroupCause(cluster: DemandCluster, ref: DemandReference): string | null {
+  if (!ref.hasGroups) return null;
+  const g = ref.groups[cluster];
+  if (!g || g.size === 0) return "K-Means ไม่ได้จัดกลุ่มใดให้ได้ชื่อนี้";
+  if (g.labelled !== 0) return null;
+  return `K-Means จัดไว้ ${countText(g.size ?? 0)} รุ่น แต่ตัวเลขของทุกรุ่นไม่ตรงชื่อกลุ่ม`;
 }
 
 /** Whole count as printed everywhere ("35,120"). */
@@ -254,13 +294,18 @@ export const DIMENSIONS_TEXT = (() => {
  * What a group's badge promises about a model's numbers, in words, with the
  * thresholds the training run used (`label_rule`). This is the pipeline's
  * rule (`models.label_fit`) *described*, for the product page and the "(i)"
- * panel; it is never evaluated here. Null for the neutral remainder group
- * (its name claims no number) and when the payload lacks a threshold.
+ * panel; it is never evaluated here. The neutral remainder group promises
+ * only a sales share under the bar, and only from 2026.11-v16
+ * (`nicheBelowBar`; before, it always kept its badge). Null when the payload
+ * lacks a threshold.
  */
 export function labelRuleText(cluster: DemandCluster, ref: DemandReference): string | null {
-  if (cluster === "niche" || ref.salesBar === null) return null;
+  if (ref.salesBar === null) return null;
   const bar = wholePct(ref.salesBar);
   const window = windowText(ref);
+  if (cluster === "niche") {
+    return ref.nicheBelowBar ? `ขายดีกว่าไม่ถึง ${bar}% ของสินค้าในร้านเดียวกัน${window}` : null;
+  }
   if (cluster === "overpriced_hype") {
     if (ref.viewsMedian === null) return null;
     return `คนดูมากกว่าค่ากลางของทุกรุ่น (${countText(ref.viewsMedian)} ครั้ง) และขายดีกว่าไม่ถึง ${bar}% ของสินค้าในร้านเดียวกัน${window}`;
@@ -268,6 +313,25 @@ export function labelRuleText(cluster: DemandCluster, ref: DemandReference): str
   if (ref.splitViews === null) return null;
   const views = cluster === "community_favorite" ? "มากกว่า" : "ไม่เกิน";
   return `ขายดีกว่าอย่างน้อย ${bar}% ของสินค้าในร้านเดียวกัน${window} และคนดู${views}เส้นแบ่งของรุ่นขายดี (${countText(ref.splitViews)} ครั้ง)`;
+}
+
+/**
+ * The same rule in short form for the product page, which prints the
+ * model's own numbers and the tracking cap just above it: no window, no
+ * brackets, e.g. "ขายดีกว่าอย่างน้อย 50% และคนดูไม่เกิน 31,330 ครั้ง". A
+ * bracket around it then never nests (SPEC round 18). Null like
+ * `labelRuleText`.
+ */
+export function labelRuleShort(cluster: DemandCluster, ref: DemandReference): string | null {
+  if (ref.salesBar === null) return null;
+  const bar = wholePct(ref.salesBar);
+  if (cluster === "niche") return ref.nicheBelowBar ? `ขายดีกว่าไม่ถึง ${bar}%` : null;
+  if (cluster === "overpriced_hype") {
+    return ref.viewsMedian === null ? null : `คนดูมากกว่า ${countText(ref.viewsMedian)} ครั้ง และขายดีกว่าไม่ถึง ${bar}%`;
+  }
+  if (ref.splitViews === null) return null;
+  const views = cluster === "community_favorite" ? "มากกว่า" : "ไม่เกิน";
+  return `ขายดีกว่าอย่างน้อย ${bar}% และคนดู${views} ${countText(ref.splitViews)} ครั้ง`;
 }
 
 /**
@@ -286,6 +350,19 @@ export function priceGapText(normalizedPrice: number, inStock: boolean): string 
   return `${what}${normalizedPrice < 1 ? "ถูกกว่า" : "แพงกว่า"}ราคากลางของรุ่นนี้ ${gap}%`;
 }
 
+/**
+ * K-Means' remainder group ("ยอดขายไม่เด่น") in one line, for the "(i)" panel
+ * and /ml: "กลุ่มที่เหลือจาก K-Means ติดป้ายเฉพาะรุ่นที่ขายดีกว่าไม่ถึง 50% ของ
+ * สินค้าในร้านเดียวกัน … ไม่ได้บอกอะไรเรื่องยอดเข้าชม" (2026.11-v16+, SPEC
+ * round 18, option D). An older payload's remainder group kept every badge,
+ * so its line states no sales rule.
+ */
+export function nicheRuleText(ref: DemandReference): string {
+  const rule = labelRuleText("niche", ref);
+  const head = "กลุ่มที่เหลือจาก K-Means";
+  return `${rule === null ? head : `${head} ติดป้ายเฉพาะรุ่นที่${rule}`} ป้ายนี้ไม่ได้บอกอะไรเรื่องยอดเข้าชม`;
+}
+
 /** The product page's sentence under the evidence line of a labelled model. */
 export interface DemandWhy {
   /** Why the model carries this group's badge; null when the payload cannot say. */
@@ -294,20 +371,25 @@ export interface DemandWhy {
 
 /**
  * Why a model whose label fits (`labelFits === true`) carries its group's
- * badge: the rule the pipeline held it to, with the stored thresholds; for
- * the neutral remainder group, that it is what is left. Null for rows from
- * before 2026.11-v15 (`labelFits` unknown): the badge shows as before, with
- * the numbers but no claim about a rule nobody checked.
+ * badge, printed after "ที่ได้กลุ่มนี้:" (so no colon of its own, SPEC round
+ * 18): the rule in short form with the stored thresholds; for the remainder
+ * group, that it is what K-Means left and (2026.11-v16+) that it sells under
+ * the bar. Null for rows from before 2026.11-v15 (`labelFits` unknown): the
+ * badge shows as before, with the numbers but no claim about a rule nobody
+ * checked.
  */
 export function demandWhy(cluster: DemandCluster, e: DemandEvidence, ref: DemandReference): DemandWhy {
   if (e.labelFits !== true) return { why: null };
+  const rule = labelRuleShort(cluster, ref);
   if (cluster === "niche") {
     return {
-      why: "กลุ่มนี้คือรุ่นที่เหลือจากกลุ่มอื่น: ยอดขายไม่ได้เด่นชัด และยอดเข้าชมไม่ได้สูงกว่ายอดขายชัดเจน ชื่อกลุ่มจึงไม่ได้อ้างตัวเลขใด",
+      why:
+        rule === null
+          ? "กลุ่มที่เหลือจาก K-Means ป้ายนี้ไม่ได้บอกอะไรเรื่องยอดเข้าชม"
+          : `กลุ่มที่เหลือจาก K-Means และตัวเลขของรุ่นนี้ตรงเกณฑ์ของป้าย (${rule}) ป้ายนี้ไม่ได้บอกอะไรเรื่องยอดเข้าชม`,
     };
   }
-  const rule = labelRuleText(cluster, ref);
-  return { why: rule === null ? null : `ตัวเลขของรุ่นนี้ตรงกับเกณฑ์ของป้าย: ${rule}` };
+  return { why: rule === null ? null : `ตัวเลขของรุ่นนี้ตรงเกณฑ์ของป้าย (${rule})` };
 }
 
 /** The product page's explanation for a model K-Means grouped but the site does not badge. */
@@ -356,9 +438,9 @@ export function unlabelledWhy(
     e.driver === null || driverMissed
       ? "เมื่อดูยอดเข้าชม ยอดขาย และราคารวมกัน รุ่นนี้ยังคล้ายกลุ่มนี้มากกว่ากลุ่มอื่น K-Means จึงจัดไว้กลุ่มนี้"
       : `K-Means จัดรุ่นนี้ไว้กลุ่มนี้เพราะ${DRIVER_SHORT[e.driver]}เป็นหลัก${priceGap === null ? "" : `: ${priceGap}`}`;
-  const rule = labelRuleText(assigned, ref);
+  const rule = labelRuleShort(assigned, ref);
   return {
-    assigned: `K-Means จัดรุ่นนี้ไว้ในกลุ่ม “${CLUSTER_LABELS[assigned].label}” แต่เว็บไม่ติดป้ายกลุ่มให้ เพราะ${subject}ของรุ่นนี้ไม่ตรงกับชื่อกลุ่ม`,
+    assigned: `K-Means จัดรุ่นนี้ไว้กลุ่ม “${CLUSTER_LABELS[assigned].label}” แต่ไม่ติดป้าย เพราะ${subject}ไม่ตรงเกณฑ์ของป้าย`,
     rule: rule === null ? null : `ป้ายนี้ใช้กับรุ่นที่${rule}`,
     reason,
     method: `กลุ่มจัดด้วย K-Means จาก ${DIMENSION_COUNT} อย่างพร้อมกัน (${DIMENSIONS_TEXT}) ไม่ได้ตัดที่เกณฑ์ทีละตัว รุ่นหนึ่งจึงถูกจัดเข้ากลุ่มได้แม้ตัวเลขบางตัวไม่ตรงชื่อกลุ่ม เว็บติดป้ายเฉพาะรุ่นที่ตัวเลขตรงชื่อ`,
@@ -402,11 +484,14 @@ export function overallSalesText(ref: DemandReference): string | null {
 
 /**
  * The line under the chips when a group is selected: the group's typical
- * model beside the typical model overall, both halves in the same shape:
- * "รุ่นในกลุ่มนี้: ค่ากลางคนดู 104,249 ครั้ง (ทุกรุ่น 19,120 ครั้ง) · ค่ากลางยอดขาย:
- * ขายดีกว่า ~17% ของสินค้าในร้าน ช่วง 120 วันล่าสุด (เกินครึ่งของทุกรุ่นยังไม่เห็น
- * ยอดขายช่วงนี้)". Parts whose numbers the payload lacks are left out; null
- * when it has none.
+ * model beside the typical model overall, with the tracking cap said once at
+ * the end: "รุ่นในกลุ่มนี้: ค่ากลางคนดู 104,249 ครั้ง (ทุกรุ่น 19,120 ครั้ง) ·
+ * ค่ากลางยอดขาย: ขายดีกว่า ~17% ของสินค้าในร้าน (ทุกรุ่น: เกินครึ่งยังไม่เห็นยอดขาย) ·
+ * ติดตามไม่เกิน 120 วัน". At most one bracket per half (SPEC round 18: two
+ * stacked brackets took four lines at 375 px), and when the group's sales and
+ * the overall sales read the same, one sentence says both ("เกินครึ่งของรุ่นใน
+ * กลุ่มนี้และของทุกรุ่นยังไม่เห็นยอดขาย"). Parts whose numbers the payload lacks
+ * are left out; null when it has none. O(1).
  */
 export function groupComparison(cluster: DemandCluster, ref: DemandReference): string | null {
   const g = ref.groups[cluster];
@@ -416,12 +501,38 @@ export function groupComparison(cluster: DemandCluster, ref: DemandReference): s
     const all = ref.viewsMedian === null ? "" : ` (ทุกรุ่น ${countText(ref.viewsMedian)} ครั้ง)`;
     parts.push(`ค่ากลางคนดู ${countText(g.viewsMedian)} ครั้ง${all}`);
   }
-  const sales = groupSales(g, ref);
-  if (sales !== null) {
-    const all = overallSalesText(ref);
-    parts.push(`${sales}${all === null ? "" : ` (${all})`}`);
+  const sales = comparedSales(g, ref);
+  if (sales !== null) parts.push(sales);
+  if (!parts.length) return null;
+  const span = sales !== null && ref.windowDays !== null ? ` · ติดตามไม่เกิน ${countText(ref.windowDays)} วัน` : "";
+  return `รุ่นในกลุ่มนี้: ${parts.join(" · ")}${span}`;
+}
+
+/** "~17%" or "ไม่ถึง 1%" for a share above 0. */
+const approxPct = (s: ReturnType<typeof salesShare>): string => (s.kind === "tiny" ? "ไม่ถึง 1%" : `~${s.pct}%`);
+
+/**
+ * The sales half of `groupComparison`, group and all models in one sentence
+ * with at most one bracket. A share of exactly 0 is words, never "~0%"; with
+ * no tracking cap stored it says "…ช่วงนี้" itself.
+ */
+function comparedSales(g: GroupStats, ref: DemandReference): string | null {
+  if (g.salesBeats === null) return null;
+  const kind = g.salesBeatsIsMedian ? "ค่ากลาง" : "ค่าเฉลี่ย";
+  const none = `${plain(zeroShareText(ref))}${ref.windowDays === null ? "ช่วงนี้" : ""}`;
+  const own = salesShare(g.salesBeats);
+  const overall = ref.salesBeatsMedian === null ? null : salesShare(ref.salesBeatsMedian);
+  if (own.kind === "zero") {
+    // A mean of 0: none of the group's models outsold anything.
+    if (!g.salesBeatsIsMedian) return `${kind}ยอดขาย: ${none}`;
+    if (overall?.kind === "zero") return `ยอดขาย: เกินครึ่งของรุ่นในกลุ่มนี้และของทุกรุ่น${none}`;
+    return `${kind}ยอดขาย: เกินครึ่งของรุ่นในกลุ่มนี้${none}${overall === null ? "" : ` (ทุกรุ่น ${approxPct(overall)})`}`;
   }
-  return parts.length ? `รุ่นในกลุ่มนี้: ${parts.join(" · ")}` : null;
+  const head = `${kind}ยอดขาย: ขายดีกว่า ${approxPct(own)} ของสินค้าในร้าน`;
+  if (overall === null) return head;
+  if (overall.kind === "zero") return `${head} (ทุกรุ่น: เกินครึ่ง${none})`;
+  if (g.salesBeatsIsMedian && approxPct(overall) === approxPct(own)) return `${head} เท่ากับทุกรุ่น`;
+  return `${head} (ทุกรุ่น ${approxPct(overall)})`;
 }
 
 /** A group's typical numbers for the "(i)" panel, in the same shape, or null. */
@@ -445,15 +556,23 @@ export function unlabelledText(ref: DemandReference): string | null {
 }
 
 /**
- * The /insights sales tile of a group: its typical share as a headline and
- * what it is a share of. A share of exactly 0 is words, never "~0%"; one
- * that rounds to 0 is "ไม่ถึง 1%".
+ * The /insights sales tile of a group: what the figure is, its typical share
+ * as a headline, and what it is a share of. `median` (v14+ payloads) titles
+ * it "ยอดขายโดยทั่วไป", like the views tile beside it and the median the list
+ * quotes (SPEC round 18: the tile showed a mean while the list said median);
+ * a mean (older payloads) is titled "ยอดขายเฉลี่ย". A share of exactly 0 is
+ * words, never "~0%" (a median of 0: "เกินครึ่งของรุ่นในกลุ่มนี้"); one that
+ * rounds to 0 is "ไม่ถึง 1%".
  */
-export function shareTile(share: number, ref: DemandReference): { value: string; note: string } {
+export function shareTile(share: number, ref: DemandReference, median = false): { title: string; value: string; note: string } {
   const kind = salesShare(share);
   const span = windowText(ref);
-  if (kind.kind === "zero") return { value: plain(zeroShareText(ref)), note: span.trim() };
+  const title = median ? "ยอดขายโดยทั่วไป" : "ยอดขายเฉลี่ย";
+  if (kind.kind === "zero") {
+    return { title, value: plain(zeroShareText(ref)), note: median ? `เกินครึ่งของรุ่นในกลุ่มนี้${span}` : span.trim() };
+  }
   return {
+    title,
     value: kind.kind === "tiny" ? "ขายดีกว่าไม่ถึง 1%" : `ขายดีกว่า ~${kind.pct}%`,
     note: `ของสินค้าในร้านเดียวกัน${span}`,
   };

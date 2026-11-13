@@ -1294,6 +1294,8 @@ def test_run_models_stores_chart_data_within_the_payload_budget() -> None:
     kmeans = report.market[("all", "demand_kmeans")]
     assert 0 < len(kmeans["points"]) <= KMEANS_CHART_POINTS
     assert {p[2] for p in kmeans["points"]} <= set(m.SEGMENT_LABELS)
+    # 2026.11-v16: whether each drawn model's label is shown on the web.
+    assert all(len(p) == 4 and p[3] in (True, False) for p in kmeans["points"])
     assert all("log_views" in c for c in kmeans["centroids"])
     ward = report.market[("all", "demand_hierarchical")]
     assert ward["dendrogram"]["cut_height"] is not None
@@ -1512,8 +1514,13 @@ def test_label_fit_checks_each_group_name_against_the_printed_numbers() -> None:
         (m.HYPE, 19_120.0, 0.10, False, "views"),  # the median prints 19,120: not above it
         (m.HYPE, 500.0, 0.90, False, "both"),
         (m.HYPE, 50_000.0, np.nan, False, "sales"),  # an unknown number supports nothing
-        (m.NICHE, 900_000.0, 0.99, True, None),  # the neutral name claims no number
+        # The neutral name claims nothing about views, but "not standing out
+        # on sales" fails a model printed at or above the bar (SPEC round 18).
+        (m.NICHE, 900_000.0, 0.49, True, None),  # any views; prints 49%: under the bar
         (m.NICHE, 10.0, 0.0, True, None),
+        (m.NICHE, 10.0, 0.496, False, "sales"),  # prints 50%: on the bar is not under it
+        (m.NICHE, 900_000.0, 0.94, False, "sales"),  # never "views": the name makes no views claim
+        (m.NICHE, 5_000.0, np.nan, False, "sales"),  # an unknown share supports nothing
         (None, 5_000.0, 0.3, None, None),  # unclustered: no label to check
     ]
     frame = pd.DataFrame(rows, columns=["label", "views", "beats", "fits", "miss"])
@@ -1530,17 +1537,17 @@ def test_label_fit_checks_each_group_name_against_the_printed_numbers() -> None:
 
 
 def test_label_fit_bar_is_a_parameter_not_a_literal() -> None:
-    labels = pd.Series([m.HYPE, m.HIDDEN_GEM])
-    views = pd.Series([50_000.0, 100.0])
-    beats = pd.Series([0.6, 0.6])
+    labels = pd.Series([m.HYPE, m.HIDDEN_GEM, m.NICHE])
+    views = pd.Series([50_000.0, 100.0, 100.0])
+    beats = pd.Series([0.6, 0.6, 0.6])
 
     strict, _ = m.label_fit(labels, views, beats, split_views=1_000, views_median=5_000)
     loose, _ = m.label_fit(
         labels, views, beats, split_views=1_000, views_median=5_000, sales_bar=0.7
     )
 
-    assert strict.tolist() == [False, True]
-    assert loose.tolist() == [True, False]
+    assert strict.tolist() == [False, True, False]
+    assert loose.tolist() == [True, False, True]
 
 
 def test_run_models_flags_labels_and_reports_the_rule_it_used() -> None:
@@ -1580,12 +1587,12 @@ def test_run_models_flags_labels_and_reports_the_rule_it_used() -> None:
         "views_median": kmeans["reference"]["views_median"],
         "window_days": DEMAND_WINDOW_DAYS,
         "zero_share_means_no_sales": False,
+        "niche_below_bar": True,
     }
     # Counts the web quotes: unlabelled models, and labelled ones per group.
     hidden = per_model[per_model["demand_label_fits"].eq(False)]
     assert kmeans["unlabelled"]["n"] == len(hidden)
     assert kmeans["unlabelled"]["by_label"] == hidden["demand_cluster"].value_counts().to_dict()
-    assert m.NICHE not in kmeans["unlabelled"]["by_label"]
     for s in kmeans["segments"]:
         members = per_model[per_model["demand_cluster"] == s["label"]]
         assert s["labelled"] == int(members["demand_label_fits"].eq(True).sum())
@@ -1628,10 +1635,15 @@ def test_labelled_segment_stats_cover_only_models_whose_label_fits() -> None:
         assert s["labelled_sales_beats_pct"] == pytest.approx(
             fitting["model_sales_beats_pct"].mean()
         )
-    # The neutral group always fits: its labelled stats equal the cluster's.
-    niche = next(s for s in kmeans["segments"] if s["label"] == m.NICHE)
-    assert niche["labelled"] == niche["size"]
-    assert niche["labelled_views_median"] == pytest.approx(niche["views_median"])
+    # The neutral group keeps only models printed under the sales bar
+    # (SPEC round 18); the ones at or above it are unlabelled on "sales".
+    niche = per_model[per_model["demand_cluster"] == m.NICHE]
+    shown = m.shown_whole(niche["model_sales_beats_pct"].to_numpy(float) * 100)
+    under = shown < m.shown_whole(np.array([m.LABEL_SALES_BAR * 100]))[0]
+    assert niche["demand_label_fits"].tolist() == under.tolist()
+    assert (niche.loc[~under, "demand_label_miss"] == "sales").all()
+    segment = next(s for s in kmeans["segments"] if s["label"] == m.NICHE)
+    assert segment["labelled"] == int(under.sum())
 
 
 def test_zero_sales_share_is_worded_as_no_sales_only_when_every_store_has_unsold_listings() -> None:

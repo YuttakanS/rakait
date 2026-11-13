@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { RecommendationBadge } from "@/components/badges";
 import { CategoryTabs } from "@/components/category-tabs";
 import { EffectBars, type Effect } from "@/components/effect-bars";
@@ -21,10 +21,12 @@ import {
   dendrogram,
   fitPoints,
   leaves,
+  minorityLeaf,
   pathTo,
   priceLeafText,
   residualBins,
   silhouetteByK,
+  treeFeatures,
   treeNodes,
   treeOutline,
   translateRules,
@@ -32,8 +34,9 @@ import {
   type CurvePoint,
   type TreeNode,
 } from "@/lib/ml";
-import { demandReference, labelRuleText, unlabelledText } from "@/lib/demand";
-import { getCoverage, getMarketInsights, getSpecPoints } from "@/lib/queries";
+import { FORMULAS, formulaUnits } from "@/lib/formula";
+import { countText, demandReference, emptyGroupReason, labelRuleText, nicheRuleText, unlabelledText } from "@/lib/demand";
+import { countModelsByCluster, getCoverage, getMarketInsights, getSpecPoints } from "@/lib/queries";
 import type { Category, DemandCluster, MarketInsight, Recommendation } from "@/lib/types";
 
 export const revalidate = 900;
@@ -60,7 +63,78 @@ type CategoryLinkage = {
   similarity_linked?: number;
   evaluation?: { threshold: number | null; curve: CurvePoint[] };
 };
-type Centroid = { label: string; size: number; views: number; log_views?: number; sales_rank_pct?: number };
+type Centroid = {
+  label: string;
+  size: number;
+  views: number;
+  log_views?: number;
+  sales_rank_pct?: number;
+  normalized_price?: number;
+  /** Standardised coordinates (the space K-Means measured distances in). */
+  views_z?: number;
+  sales_z?: number;
+  price_z?: number;
+};
+
+/** The clustered dimensions, in `models.DEMAND_DIMENSIONS` order, as the K-Means note names them. */
+const DIMENSION_NAMES = {
+  views: "ยอดเข้าชม",
+  sales: "อันดับยอดขายในร้าน",
+  price: "ราคาเทียบราคาปกติของรุ่น",
+} as const;
+type Dimension = keyof typeof DIMENSION_NAMES;
+const DIMENSIONS = Object.keys(DIMENSION_NAMES) as Dimension[];
+
+/** A z value as its direction from the all-model mean: "สูงกว่าค่าเฉลี่ย 0.13 SD". */
+const zWords = (v: number): string => `${v < 0 ? "ต่ำกว่า" : "สูงกว่า"}ค่าเฉลี่ย ${Math.abs(v).toFixed(2)} SD`;
+
+/** A centroid's value on one dimension, in that dimension's own unit. */
+function dimensionValue(c: Centroid, d: Dimension): string {
+  if (d === "views") return `${countText(c.views)} ครั้ง`;
+  if (d === "sales") return Number.isFinite(num(c.sales_rank_pct)) ? `${Math.round(num(c.sales_rank_pct) * 100)}%` : "–";
+  if (!Number.isFinite(num(c.normalized_price))) return "–";
+  const gap = Math.round((num(c.normalized_price) - 1) * 100);
+  return gap === 0 ? "เท่าราคาปกติ" : `${gap > 0 ? "แพงกว่า" : "ถูกกว่า"}ราคาปกติ ${Math.abs(gap)}%`;
+}
+
+type NumberedCentroid = Centroid & { index: number };
+type Coordinates = [number, number, number];
+
+/** A centroid's standardised coordinates in `DIMENSIONS` order, or null for payloads without them. */
+const zOf = (c: Centroid): Coordinates | null =>
+  [c.views_z, c.sales_z, c.price_z].every((v) => Number.isFinite(num(v))) ? [num(c.views_z), num(c.sales_z), num(c.price_z)] : null;
+
+/**
+ * K-Means centroids whose name reads against where they sit on the
+ * views x sales chart (SPEC round 18): the remainder group ("ยอดขายไม่เด่น",
+ * a sales claim only) above the all-model average on sales, or "คนดูเยอะ แต่ขายน้อย" at or below
+ * average views or above average sales. For each, the dimension that most
+ * separates it from the nearest other centroid (largest |Δz| in the
+ * standardised space K-Means measured), from the payload's
+ * `views_z / sales_z / price_z`; no number is written into the copy.
+ * O(k² · dimensions).
+ */
+function offChartCentroids(centroids: NumberedCentroid[]) {
+  return centroids.flatMap((c) => {
+    const z = zOf(c);
+    if (z === null) return [];
+    const above = DIMENSIONS.filter((d, i) => (c.label === "niche" ? d === "sales" : d !== "price") && z[i] > 0);
+    const off = c.label === "niche" ? above.length > 0 : c.label === "overpriced_hype" ? z[0] <= 0 || z[1] > 0 : false;
+    if (!off) return [];
+    let nearest: { other: NumberedCentroid; d2: number; otherZ: Coordinates } | null = null;
+    for (const o of centroids) {
+      const oz = zOf(o);
+      if (o === c || oz === null) continue;
+      const d2 = oz.reduce((sum, v, i) => sum + (v - z[i]) ** 2, 0);
+      if (nearest === null || d2 < nearest.d2) nearest = { other: o, d2, otherZ: oz };
+    }
+    if (nearest === null) return [];
+    const { other, otherZ } = nearest;
+    const gaps = z.map((v, i) => Math.abs(v - otherZ[i]));
+    const split = gaps.indexOf(Math.max(...gaps));
+    return [{ c, z, above, other, otherZ, split }];
+  });
+}
 
 /** SLR axis per category (the spec getSpecPoints reads, as train.SLR_FEATURES). */
 const AXIS: Record<Category, { name: string; unit: string }> = {
@@ -119,7 +193,17 @@ const signedTHB = (v: number): string => (v < 0 ? `−${formatTHB(-v)}` : format
 function Formula({ children }: { children: ReactNode }) {
   return (
     <p className="tabular border-2 border-border bg-surface-muted px-3 py-2 text-sm break-words whitespace-normal">
-      {children}
+      {/* Plain text breaks only between `formulaUnits` (each nowrap): Thai
+          words never split ("ต่ำ|สุด") and short math runs stay whole;
+          every character of the source is kept. */}
+      {typeof children === "string"
+        ? formulaUnits(children).map((unit, i) => (
+            <Fragment key={i}>
+              {i > 0 && " "}
+              <span className="whitespace-nowrap">{unit}</span>
+            </Fragment>
+          ))
+        : children}
     </p>
   );
 }
@@ -218,7 +302,14 @@ const classLeafText = (n: TreeNode): string => {
 const biggestLeaf = (nodes: TreeNode[]): TreeNode => leaves(nodes).reduce((a, b) => (b.n > a.n ? b : a));
 
 export default async function MlPage() {
-  const [insights, coverage, specPoints] = await Promise.all([getMarketInsights(), getCoverage(), getSpecPoints()]);
+  // Live counts per group, the same query as the home page chips' list and
+  // the /insights tiles, so /ml can quote the numbers those pages show.
+  const [insights, coverage, specPoints, liveCounts] = await Promise.all([
+    getMarketInsights(),
+    getCoverage(),
+    getSpecPoints(),
+    countModelsByCluster(),
+  ]);
   const categories = Object.keys(CATEGORY_LABELS) as Category[];
   const computedAt = insights.find((i) => i.kind !== "linkage_quality")?.computedAt ?? null;
   const kmeans = find(insights, "all", "demand_kmeans");
@@ -305,14 +396,38 @@ export default async function MlPage() {
   const silhouettes = silhouetteByK(kmeans);
   const bestSilhouette = Math.max(...silhouettes.map((s) => s.score), 0.01);
   const splitViews = num(kmeans?.split_views);
-  const segmentSizes = DEMAND_ORDER.map((label) => ({
-    label,
-    size: points.filter((p) => p[2] === label).length,
-  }));
+  // Per group: K-Means' members (payload `segments[].size`, else the drawn
+  // points), those whose label fits (`labelled`, v15+) and those listed on
+  // the site now (live, like the home page and /insights). O(points).
+  const segmentSizes = DEMAND_ORDER.map((label) => {
+    const drawn = points.filter((p) => p[2] === label).length;
+    const g = demandRef.groups[label];
+    return { label, drawn, size: g?.size ?? drawn, labelled: g?.labelled ?? null, live: liveCounts[label] ?? 0 };
+  });
+  // 2026.11-v16 points carry whether the model's label is shown (4th value).
+  const fitKnown = points.some((p) => typeof p[3] === "boolean");
+  const unfitDrawn = points.filter((p) => p[3] === false).length;
   const exampleCentroid = plotCentroids.reduce<(typeof plotCentroids)[number] | null>(
     (a, b) => (a === null || b.size > a.size ? b : a),
     null,
   );
+  // Both read the sales axis as a within-store rank (2026.11-v9+); older
+  // log-sales payloads get neither.
+  const offCentroids = rankedSales ? offChartCentroids(centroids) : [];
+  // Horizontal bands of dots: many models on one sales rank (average ranks
+  // give every tie, e.g. every model a store saw no sales of, the same
+  // value). Ranks held by at least 5% of the plotted models (and 5), at most two. O(points).
+  const salesBands = (() => {
+    if (!rankedSales) return [];
+    const byRank = new Map<string, number>();
+    for (const p of points) byRank.set(p[1].toFixed(3), (byRank.get(p[1].toFixed(3)) ?? 0) + 1);
+    return [...byRank.entries()]
+      .filter(([, n]) => n >= Math.max(5, points.length * 0.05))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([y, n]) => ({ y: Number(y), n }));
+  })();
+  const viewsMedian = opt((kmeans?.reference as Payload | undefined)?.views_median);
 
   // ---- E. Ward
   const dendro = dendrogram(ward);
@@ -323,6 +438,10 @@ export default async function MlPage() {
   const timingClasses = (timing?.classes as string[] | undefined) ?? [];
   const confusion = (timing?.confusion as number[][] | undefined) ?? [];
   const timingExample = timingNodes ? { leaf: biggestLeaf(timingNodes), nodes: timingNodes } : null;
+  // Only the features the fitted tree splits on are explained (SPEC round 18).
+  const timingFeatures = timingNodes ? treeFeatures(timingNodes) : [];
+  const timingMinority = timingNodes ? minorityLeaf(timingNodes) : null;
+  const recommendationName = (c: string): string => RECOMMENDATION_LABELS[c as Recommendation] ?? c;
   // Labelling settings and the usefulness bar, stored from 2026.11-v13 (absent: no number shown).
   const horizonDays = opt(timing?.horizon_days);
   const dropPct = opt(timing?.drop_pct) === null ? null : Math.round(num(timing?.drop_pct) * 1000) / 10;
@@ -421,7 +540,7 @@ export default async function MlPage() {
               ลากเส้นตรงหนึ่งเส้นผ่านกลุ่มจุด (ราคา, สเปกหลัก) ให้ใกล้ทุกจุดที่สุด โดยทำให้ผลรวมของระยะห่างยกกำลังสองน้อยที่สุด
               (Ordinary Least Squares หรือ OLS) ความชันของเส้นคือราคาที่เพิ่มขึ้นเมื่อสเปกเพิ่มหนึ่งหน่วย
             </p>
-            <Formula>ŷ = β₀ + β₁x · β₁ = cov(x, y) / var(x) · β₀ = ȳ − β₁x̄</Formula>
+            <Formula>{FORMULAS.slr}</Formula>
             <p className="text-xs text-muted">
               ŷ = ราคาที่เส้นทำนาย, x = สเปก (เช่น GB), β₁ = ความชัน (บาทต่อหน่วย), β₀ = จุดตัดแกน (ราคาเมื่อ x = 0)
             </p>
@@ -543,8 +662,8 @@ export default async function MlPage() {
               ทำนาย log(ราคา) ผลที่ได้คือ <span className="font-semibold">ราคายุติธรรม</span> ของสเปกนั้น
               แล้วเทียบกับราคาจริงเพื่อให้ <span className="font-semibold">Deal Score</span>
             </p>
-            <Formula>log(ราคา) = β₀ + β₁x₁ + β₂x₂ + … + βₚxₚ + ε</Formula>
-            <Formula>residual e = log(ราคาจริง) − log(ราคายุติธรรม) · Deal Score = 100 × (1 − Φ(e / (s√(1 + h))))</Formula>
+            <Formula>{FORMULAS.mlr}</Formula>
+            <Formula>{FORMULAS.dealScore}</Formula>
             <p className="text-xs text-muted">
               ใช้ log เพราะราคาเพิ่มเป็นสัดส่วน (เช่น +20%) มากกว่าเป็นจำนวนบาทคงที่ · residual คือส่วนต่างระหว่างราคาจริงกับราคาที่โมเดลคาด ·
               s = ขนาดความคลาดเคลื่อนทั่วไปของโมเดล, h = leverage (สเปกนี้ห่างจากข้อมูลที่โมเดลเคยเห็นแค่ไหน), Φ = ฟังก์ชันสะสมของการแจกแจงปกติ ·
@@ -756,7 +875,7 @@ export default async function MlPage() {
               ถามคำถามใช่ / ไม่ใช่ทีละข้อ เช่น “VRAM ไม่เกิน 10 GB ไหม” แต่ละครั้งเลือกคำถามที่แบ่งสินค้าออกเป็นสองกลุ่มที่ราคาภายในกลุ่มใกล้กันที่สุด
               (ผลรวมความคลาดเคลื่อนกำลังสองต่ำที่สุด) จำกัดจำนวนชั้นของคำถาม{maxDepth !== null && <> (max_depth = {maxDepth})</>} เพื่อไม่ให้จำข้อมูลมากเกินไป (overfitting)
             </p>
-            <Formula>เลือกการแบ่ง (ฟีเจอร์ j, ค่า t) ที่ทำให้ Σ(y − ȳ_ซ้าย)² + Σ(y − ȳ_ขวา)² ต่ำสุด · y = log(ราคา)</Formula>
+            <Formula>{FORMULAS.tierTree}</Formula>
           </>
         }
         chart={
@@ -795,10 +914,10 @@ export default async function MlPage() {
           <>
             {tier.some((t) => t.nodes) ? (
               <p>
-                อ่านจากบนลงล่าง กล่องเทา (node ภายใน) คือคำถาม เดินตามเส้นที่ป้ายตรงกับคำตอบ: คำถามแบบ “≤” ใช่ไปซ้าย ไม่ใช่ไปขวา
-                ส่วนคำถามแบบมี / ไม่มี เช่น “เป็น AMD?” ใช่ไปขวา (ป้ายบนเส้นบอกเสมอ) จนถึงกล่องขอบหนาด้านล่างสุด (node ใบ)
-                ซึ่งบอกราคาทั่วไปของสินค้ากลุ่มนั้น n คือจำนวนรายการที่มาถึงกล่องนั้น แถบบนกล่องใบยิ่งเข้มยิ่งแพง ·
-                ต้นไม้กว้างกว่าจอเลื่อนซ้ายขวาได้ในกรอบ หรือกด “ดูต้นไม้นี้เป็นข้อความ”
+                อ่านจากบนลงล่าง กล่องเทา (node ภายใน) คือคำถาม เดินตามเส้นที่ป้ายตรงกับคำตอบ: ทุกคำถาม ทั้งแบบ “≤” และแบบมี /
+                ไม่มี เช่น “เป็น AMD?” ใช่ไปซ้าย ไม่ใช่ไปขวา จนถึงกล่องขอบหนาด้านล่างสุด (node ใบ) ซึ่งบอกราคาทั่วไปของสินค้ากลุ่มนั้น
+                n คือจำนวนรายการที่มาถึงกล่องนั้น แถบบนกล่องใบบอกระดับราคาตามแถบตัวอย่าง “ถูก → แพง” ใต้ต้นไม้
+                (ราคาเขียนไว้ในกล่องเสมอ) · ต้นไม้กว้างกว่าจอเลื่อนซ้ายขวาได้ในกรอบ หรือกด “ดูต้นไม้นี้เป็นข้อความ”
               </p>
             ) : (
               <p>{RULES_READ} (ราคาทั่วไป ≈ ราคาของกลุ่มนั้น)</p>
@@ -855,12 +974,7 @@ export default async function MlPage() {
               และให้ระยะรวมภายในกลุ่มน้อยที่สุด ทำซ้ำ “จัดกลุ่ม → ย้าย centroid ไปค่าเฉลี่ยของกลุ่ม” จนไม่เปลี่ยน
               ค่า k เลือกจากค่า silhouette ที่ดีที่สุด
             </p>
-            <Formula>
-              {rankedSales
-                ? "X = [log(ยอดเข้าชม + 1), อันดับยอดขายในร้าน (0–1), ราคาเทียบราคาปกติของรุ่น]"
-                : "X = [log(ยอดเข้าชม + 1), log(ยอดขายต่อวัน + 1), ราคาเทียบราคาปกติของรุ่น]"}{" "}
-              · ปรับทุกแกนให้ค่าเฉลี่ย 0 SD 1 (StandardScaler) · ต่ำสุด Σ‖x − μ_กลุ่ม‖²
-            </Formula>
+            <Formula>{rankedSales ? FORMULAS.kmeansRanked : FORMULAS.kmeansRates}</Formula>
             <p className="text-xs text-muted">
               ใช้อันดับยอดขายภายในร้านแทนจำนวนชิ้น เพราะแต่ละร้านวัดยอดขายต่างกัน (JIB ใช้ยอดขายที่ร้านประกาศ ส่วน IHAVECPU ใช้สต็อกที่ลดลง)
               {(opt(kmeans?.best_seller_margin_sd) !== null || opt(kmeans?.conversion_margin_sd) !== null) && (
@@ -896,8 +1010,25 @@ export default async function MlPage() {
                     {DEMAND_ORDER.map((label) => (
                       <li key={label}>
                         <MarkerSwatch label={label} /> {CLUSTER_LABELS[label].label}
+                        {Number.isFinite(splitViews) && (label === "hidden_gem" || label === "community_favorite") && (
+                          <span className="tabular">
+                            {" "}
+                            (คนดู{label === "hidden_gem" ? "ไม่เกิน" : "มากกว่า"} {countText(splitViews)} ครั้ง)
+                          </span>
+                        )}
+                        {/* A name with no point this run says why (SPEC round 18). */}
+                        {/* Also a v16 group whose points are all faded (labelled 0). */}
+                        {(segmentSizes.find((g) => g.label === label)?.drawn === 0 || emptyGroupReason(label, demandRef)) && (
+                          <> · {emptyGroupReason(label, demandRef) ?? "รอบนี้ไม่มีจุดของกลุ่มนี้บนกราฟ"}</>
+                        )}
                       </li>
                     ))}
+                    {fitKnown && unfitDrawn > 0 && (
+                      <li>
+                        <MarkerSwatch label="niche" faded /> สีจาง = ตัวเลขไม่ตรงชื่อกลุ่ม เว็บไม่ติดป้าย (
+                        <span className="tabular">{count(unfitDrawn)}</span> รุ่น)
+                      </li>
+                    )}
                     {Number.isFinite(splitViews) && (
                       <li>
                         <LineKey marker="none" dash="6 5" /> เส้นแบ่งยอดเข้าชมของรุ่นขายดี
@@ -952,17 +1083,88 @@ export default async function MlPage() {
         read={
           <>
             <p>
-              แกนนอนคือยอดเข้าชมรวมทุกร้านของรุ่นนั้นบนสเกล log (ตัวเลขใต้แกนคือจำนวนครั้งจริง) แกนตั้งคืออันดับยอดขายในร้าน
-              (100% = ขายดีที่สุดในร้าน) จุดหนึ่งจุดคือหนึ่งรุ่น รูปทรงของจุดคือชื่อกลุ่มที่เห็นบนเว็บซึ่งมี{" "}
-              {DEMAND_ORDER.length} ชื่อ ไม่ใช่หมายเลขกลุ่มของ K-Means: กลุ่ม K-Means ที่มีความหมายเดียวกัน (เช่นสองกลุ่มที่
-              “{CLUSTER_LABELS.niche.label}” แต่ราคาต่างกัน) ใช้ชื่อเดียวกัน ส่วนเลขในสี่เหลี่ยมข้าวหลามตัดคือ centroid ของกลุ่ม K-Means
-              ที่ 1 ถึง {String(kmeans?.k ?? "k")}
-              สี่เหลี่ยมข้าวหลามตัดสีทึบที่มีเลขคือ centroid ของแต่ละกลุ่ม เส้นประแนวตั้งแบ่งรุ่นขายดีออกเป็น
-              “{CLUSTER_LABELS.community_favorite.label}” (ขวา, □) กับ “{CLUSTER_LABELS.hidden_gem.label}” (ซ้าย, ■)
-              เพราะ K-Means ให้รุ่นขายดีอยู่กลุ่มเดียวกันโดยไม่สนว่าคนดูมากหรือน้อย แต่ผู้ซื้ออยากแยก “ขายดีเพราะคนรู้จัก” กับ
-              “ขายดีทั้งที่คนดูน้อย” ระบบจึงแบ่งรุ่นขายดีต่อด้วยค่ากลางของยอดเข้าชม
-              · มิติที่ 3 (ราคาเทียบราคาปกติ) ไม่ได้วาด จึงมีจุดต่างกลุ่มที่ดูทับกันได้
+              แกนนอนคือยอดเข้าชมรวมทุกร้านของรุ่นนั้นบนสเกล log (ตัวเลขใต้แกนคือจำนวนครั้งจริง k = พัน, M = ล้าน)
+              แกนตั้งคืออันดับยอดขายในร้าน (100% = ขายดีที่สุดในร้าน) จุดหนึ่งจุดคือหนึ่งรุ่น รูปทรงของจุดคือกลุ่มที่ K-Means
+              จัดให้รุ่นนั้น เรียกด้วยชื่อเดียวกับป้ายบนเว็บซึ่งมี {DEMAND_ORDER.length} ชื่อ ไม่ใช่หมายเลขกลุ่มของ K-Means:
+              กลุ่ม K-Means ที่มีความหมายเดียวกัน (เช่นสองกลุ่มที่ “{CLUSTER_LABELS.niche.label}” แต่ราคาต่างกัน)
+              ใช้ชื่อเดียวกัน
+              {fitKnown
+                ? unfitDrawn > 0 &&
+                  ` จุดสีจางคือรุ่นที่ K-Means จัดไว้ในกลุ่มนั้นแต่ตัวเลขของรุ่นเองไม่ตรงชื่อกลุ่ม เว็บจึงไม่ติดป้ายให้ (${count(unfitDrawn)} รุ่น) จุดสีเข้มคือรุ่นที่ติดป้ายบนเว็บ`
+                : demandRef.unlabelled !== null &&
+                  demandRef.unlabelled > 0 &&
+                  ` จุดทุกจุดวาดตามกลุ่มที่ K-Means จัด รวม ${count(demandRef.unlabelled)} รุ่นที่เว็บไม่ติดป้ายเพราะตัวเลขไม่ตรงชื่อกลุ่ม แต่ผลการ train รอบนี้ยังไม่ได้เก็บว่าเป็นจุดไหน`}{" "}
+              ส่วนสี่เหลี่ยมข้าวหลามตัดสีทึบที่มีเลขคือ centroid ของกลุ่ม K-Means ที่ 1 ถึง {String(kmeans?.k ?? "k")} · มิติที่
+              3 (ราคาเทียบราคาปกติ) ไม่ได้วาด จึงมีจุดต่างกลุ่มที่ดูทับกันได้
             </p>
+            <p>
+              เส้นประแนวตั้งแบ่งรุ่นขายดีออกเป็น “{CLUSTER_LABELS.community_favorite.label}” (ขวา, □) กับ “
+              {CLUSTER_LABELS.hidden_gem.label}” (ซ้าย, ■) เพราะ K-Means ให้รุ่นขายดีอยู่กลุ่มเดียวกันโดยไม่สนว่าคนดูมากหรือน้อย
+              แต่ผู้ซื้ออยากแยก “ขายดีเพราะคนรู้จัก” กับ “ขายดีทั้งที่คนดูน้อย” ระบบจึงแบ่งรุ่นขายดีต่อด้วยค่ากลางของยอดเข้าชม
+              {Number.isFinite(splitViews) ? (
+                <>
+                  {" "}
+                  ของรุ่นขายดีด้วยกัน (<span className="tabular">{countText(splitViews)}</span> ครั้ง): “คนดูน้อย”
+                  ในชื่อนี้จึงแปลว่าคนดูไม่เกิน <span className="tabular">{countText(splitViews)}</span> ครั้ง
+                  เมื่อเทียบกับรุ่นขายดีด้วยกัน ไม่ใช่เทียบกับทุกรุ่น
+                  {viewsMedian !== null && (
+                    <>
+                      {" "}
+                      (ค่ากลางของทุกรุ่นคือ <span className="tabular">{countText(viewsMedian)}</span> ครั้ง)
+                    </>
+                  )}
+                </>
+              ) : (
+                " ของรุ่นขายดีด้วยกัน"
+              )}
+            </p>
+            {salesBands.length > 0 && (
+              <p>
+                จุดที่เรียงเป็นแถบแนวนอนที่ราว{" "}
+                {salesBands.map((b, i) => (
+                  <span key={b.y}>
+                    {i > 0 && " และ "}
+                    <span className="tabular">{Math.round(b.y * 100)}%</span> (<span className="tabular">{count(b.n)}</span> รุ่น)
+                  </span>
+                ))}{" "}
+                คือรุ่นที่อันดับยอดขายในร้านเท่ากัน เช่น รุ่นที่ร้านยังไม่เห็นยอดขายเลยในช่วงที่ติดตาม:
+                รุ่นที่ยอดขายเท่ากันได้อันดับเฉลี่ย (average rank) เดียวกัน จึงวางที่ความสูงเดียวกัน
+              </p>
+            )}
+            {offCentroids.length > 0 && (
+              <div className="space-y-1">
+                <p>
+                  <span className="font-semibold">centroid ที่ตำแหน่งบนกราฟดูไม่ตรงชื่อ:</span> ชื่อกลุ่มตั้งจากเกณฑ์ SD ข้างบน
+                  และ K-Means วัดระยะจากทั้ง {DIMENSIONS.length} มิติพร้อมกัน จึงมีกลุ่มที่แยกออกมาเพราะมิติอื่น
+                </p>
+                <ul className="list-inside list-disc space-y-1">
+                  {offCentroids.map(({ c, z, other, otherZ, split }) => (
+                    <li key={c.index}>
+                      centroid กลุ่ม {c.index} (“{CLUSTER_NAMES[c.label] ?? c.label}”) อยู่ที่คนดู{" "}
+                      <span className="tabular">{dimensionValue(c, "views")}</span> และอันดับยอดขาย{" "}
+                      <span className="tabular">{dimensionValue(c, "sales")}</span>
+                      {c.label === "niche" ? (
+                        <>
+                          {" "}
+                          ซึ่งอันดับยอดขาย{zWords(z[1])} (หลังปรับสเกล) แต่ยังไม่ถึงเกณฑ์ “ขายดี”
+                          และคนดูไม่ได้เกินยอดขายถึงเกณฑ์ จึงอยู่ในกลุ่มที่เหลือ
+                        </>
+                      ) : (
+                        <>
+                          {" "}
+                          ชื่อนี้ดูที่คนดูเทียบกับยอดขายของกลุ่มเอง (คนดูสูงกว่ายอดขาย{" "}
+                          <span className="tabular">{(z[0] - z[1]).toFixed(2)}</span> SD) ไม่ได้เทียบกับค่าเฉลี่ยของทุกรุ่น
+                        </>
+                      )}{" "}
+                      · มิติที่ต่างจาก centroid กลุ่ม {other.index} (กลุ่มที่ใกล้ที่สุด) มากที่สุดคือ
+                      {DIMENSION_NAMES[DIMENSIONS[split]]}: <span className="tabular">{dimensionValue(c, DIMENSIONS[split])}</span> (
+                      {zWords(z[split])}) เทียบกับ<span className="tabular">{dimensionValue(other, DIMENSIONS[split])}</span> (
+                      {zWords(otherZ[split])})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <p>กราฟแท่ง silhouette: แท่งทึบคือ k ที่เลือก แท่งยาวกว่า = แบ่งกลุ่มได้ชัดกว่า</p>
             {exampleCentroid && (
               <p>
@@ -987,15 +1189,28 @@ export default async function MlPage() {
                   : " ค่านี้สูงกว่า 0.5 แปลว่ากลุ่มแยกกันค่อนข้างชัด"}
               </p>
               {points.length > 0 && (
-                <ul className="list-inside list-disc space-y-1">
-                  {segmentSizes
-                    .filter((s) => s.size > 0)
-                    .map((s) => (
-                      <li key={s.label}>
-                        {CLUSTER_LABELS[s.label].label}: <span className="tabular">{s.size.toLocaleString("th-TH")}</span> รุ่นในกราฟ
-                      </li>
-                    ))}
-                </ul>
+                <div className="space-y-1">
+                  <ul className="list-inside list-disc space-y-1">
+                    {segmentSizes
+                      .filter((s) => s.size > 0 || s.live > 0)
+                      .map((s) => (
+                        <li key={s.label}>
+                          {CLUSTER_LABELS[s.label].label}: K-Means จัด <span className="tabular">{count(s.size)}</span> รุ่น
+                          {s.labelled !== null && (
+                            <>
+                              {" "}
+                              · ติดป้าย <span className="tabular">{count(s.labelled)}</span> รุ่น
+                            </>
+                          )}{" "}
+                          · แสดงบนเว็บตอนนี้ <span className="tabular">{count(s.live)}</span> รุ่น
+                        </li>
+                      ))}
+                  </ul>
+                  <p className="text-xs text-muted">
+                    “แสดงบนเว็บตอนนี้” นับแบบเดียวกับหน้าแรกและหน้าภาพรวมตลาด คือเฉพาะรุ่นที่ติดป้ายและยังมีรายการขายอยู่ตอนนี้
+                    จึงน้อยกว่าหรือเท่ากับจำนวนที่ติดป้าย ส่วนจำนวนที่ K-Means จัดรวมรุ่นที่ตัวเลขไม่ตรงชื่อกลุ่มด้วย
+                  </p>
+                </div>
               )}
               {labelRules.length > 0 && (
                 <div className="space-y-1">
@@ -1008,11 +1223,14 @@ export default async function MlPage() {
                     {labelRules.map(({ c, rule }) => (
                       <li key={c}>
                         “{CLUSTER_LABELS[c].label}” = {rule}
+                        {emptyGroupReason(c, demandRef) && <> · {emptyGroupReason(c, demandRef)}</>}
                       </li>
                     ))}
                     <li>
-                      “{CLUSTER_LABELS.niche.label}” คือกลุ่มที่เหลือหลังแยกกลุ่มข้างบนออกไป ชื่อจึงไม่ได้อ้างตัวเลขใด
-                      และทุกรุ่นในกลุ่มติดป้ายได้
+                      “{CLUSTER_LABELS.niche.label}” = {nicheRuleText(demandRef)}
+                      {/* Before 2026.11-v16 the remainder group kept every model's badge. */}
+                      {!demandRef.nicheBelowBar && " ทุกรุ่นในกลุ่มนี้ติดป้ายได้"}
+                      {emptyGroupReason("niche", demandRef) && <> · {emptyGroupReason("niche", demandRef)}</>}
                     </li>
                   </ul>
                   <p>
@@ -1059,7 +1277,7 @@ export default async function MlPage() {
               เริ่มจากให้ทุกรุ่นเป็นกลุ่มของตัวเอง แล้วรวมสองกลุ่มที่ “รวมแล้วความกระจายภายในกลุ่มเพิ่มน้อยที่สุด” ทีละคู่
               จนเหลือกลุ่มเดียว (วิธี Ward ใช้เป้าหมายเดียวกับ K-Means) ผลคือต้นไม้ที่เรียกว่า dendrogram ตัดที่ความสูงหนึ่งก็ได้ k กลุ่ม
             </p>
-            <Formula>ต้นทุนการรวม A กับ B = (|A||B| / (|A| + |B|)) · ‖μ_A − μ_B‖²</Formula>
+            <Formula>{FORMULAS.ward}</Formula>
           </>
         }
         chart={
@@ -1082,8 +1300,10 @@ export default async function MlPage() {
           <>
             <p>
               แกนตั้งคือความสูงของการรวม (ต้นทุนแบบ Ward) รูป ∩ แต่ละรูปคือการรวมสองกลุ่มเข้าด้วยกัน ยิ่งรวมสูงยิ่งแปลว่าสองกลุ่มนั้นต่างกันมาก
-              เส้นประแนวนอนคือเส้นตัด วางไว้กลางช่องว่างระหว่างการรวมที่ทำให้เหลือ k กลุ่มกับการรวมครั้งถัดไป
-              ทุกเส้นแนวตั้งที่มันตัดผ่านคือหนึ่งกลุ่ม มีเลข 1, 2, … กำกับบนเส้นตัด และกิ่งย่อยใต้เส้นตัดของแต่ละกลุ่มวางบนแถบพื้นเทาสลับกับพื้นว่าง
+              เส้นประแนวนอนคือเส้นตัด (ตัวเลขตัวหนาบนแกนตั้งคือความสูงของเส้นตัด) วางไว้กลางช่องว่างระหว่างการรวมที่ทำให้เหลือ k
+              กลุ่มกับการรวมครั้งถัดไป
+              ทุกเส้นแนวตั้งที่มันตัดผ่านคือหนึ่งกลุ่ม มีเลข 1, 2, … กำกับบนเส้นตัดเรียงจากซ้ายไปขวา (ไม่ใช่เลขเดียวกับ centroid ของ
+              K-Means ข้างบน กลุ่ม 1 ของสองวิธีจึงอาจเป็นคนละกลุ่ม) และกิ่งย่อยใต้เส้นตัดของแต่ละกลุ่มวางบนแถบพื้นเทาสลับกับพื้นว่าง
               กิ่งล่างสุดแต่ละกิ่งรวมหลายรุ่นไว้แล้ว (ไม่ได้วาดทุกรุ่น)
             </p>
             {ward && dendro && dendro.cut_height !== null && (
@@ -1145,7 +1365,7 @@ export default async function MlPage() {
               หรือนิ่ง (“ราคาเหมาะสม”) เลือกคำถามที่ทำให้แต่ละกลุ่มมีคำตอบเป็นแบบเดียวกันมากที่สุด (Gini impurity ต่ำสุด)
               {maxDepth !== null && <> ลึกไม่เกิน {maxDepth} ชั้น</>}
             </p>
-            <Formula>Gini = 1 − Σ pₖ² · pₖ = สัดส่วนของคลาส k ใน node (0 = มีคลาสเดียวล้วน)</Formula>
+            <Formula>{FORMULAS.gini}</Formula>
             <p className="text-xs text-muted">
               แบ่งข้อมูล train / test ตามเวลา
               {testPct !== null && <> ({100 - testPct}% แรก / {testPct}% หลัง)</>} เพื่อไม่ให้โมเดลเห็นอนาคตของช่วงที่ใช้ทดสอบ
@@ -1182,12 +1402,51 @@ export default async function MlPage() {
           <>
             {!timingNodes && timing && <p>{RULES_READ} (แนะนำ: … คือป้ายที่กลุ่มนั้นได้)</p>}
             <p>
-              {timingNodes ? "อ่านเหมือน Regression Tree: เริ่มที่กล่องบนสุด เดินตามเส้นที่ป้าย “ใช่ / ไม่ใช่” ตรงกับคำตอบ จนถึงใบ" : "เมื่อมีโครงสร้างต้นไม้ จะวาดเป็นกล่องและเส้นแบบ Regression Tree:"}
-              ใบบอกป้ายที่โมเดลจะทำนาย (สีกรอบเหมือนป้ายบนเว็บ) จำนวนตัวอย่าง n และสัดส่วนที่เป็นป้ายนั้นจริงในข้อมูล train
+              {timingNodes
+                ? "อ่านเหมือน Regression Tree: เริ่มที่กล่องบนสุด เดินตามเส้นที่ป้าย “ใช่ / ไม่ใช่” ตรงกับคำตอบ (ใช่ไปซ้ายเสมอ) จนถึงใบ"
+                : "เมื่อมีโครงสร้างต้นไม้ จะวาดเป็นกล่องและเส้นแบบ Regression Tree:"}{" "}
+              แต่ละใบบอกป้ายที่โมเดลจะทำนาย (สีกรอบเหมือนป้ายบนเว็บ) จำนวนตัวอย่าง n และสัดส่วนที่เป็นป้ายนั้นจริงในข้อมูล train
               ชี้ที่ใบเพื่อดูจำนวนของทุกป้าย · ต้นไม้นี้ใช้ class_weight = &quot;balanced&quot; คือให้น้ำหนักตัวอย่างของป้ายที่พบน้อยมากกว่า
               (ไม่อย่างนั้นโมเดลจะทาย “ราคาเหมาะสม” แทบทุกครั้ง) ใบจึงอาจทาย “ซื้อเลย” หรือ “รอก่อน” ได้ แม้ป้ายนั้นจะเป็นส่วนน้อยของแถวในใบ
-              (% ในกล่องน้อยกว่าครึ่ง) · ฟีเจอร์ “ราคาเทียบค่ากลางของรุ่น” คือราคานี้ต่างจากราคากลางของรุ่นเดียวกันวันนั้นกี่ %
+              (% ในกล่องน้อยกว่าครึ่ง)
             </p>
+            {timingMinority && (
+              <p>
+                <span className="font-semibold">ตัวอย่างใบที่ป้ายส่วนน้อยชนะ:</span> ใบ “
+                {recommendationName((timingMinority.leaf.value as ClassValue).winner)}” มี n ={" "}
+                <span className="tabular">{count(timingMinority.total)}</span> แต่เป็นป้ายนี้จริงแค่{" "}
+                <span className="tabular">{count(timingMinority.winnerRows)}</span> ตัวอย่าง (
+                <span className="tabular">{Math.round((timingMinority.winnerRows / timingMinority.total) * 100)}%</span>)
+                เพราะแบบ balanced แต่ละตัวอย่างมีน้ำหนัก = จำนวนตัวอย่างทั้งหมด ÷ (จำนวนป้าย × จำนวนตัวอย่างของป้ายนั้น) ในข้อมูล train
+                นี้คือ{" "}
+                <span className="tabular">
+                  {Object.entries(timingMinority.weights)
+                    .map(([c, w]) => `“${recommendationName(c)}” ×${w.toFixed(2)}`)
+                    .join(", ")}
+                </span>{" "}
+                ใบนี้จึงมีน้ำหนักรวม{" "}
+                <span className="tabular">
+                  {Object.entries(timingMinority.weighted)
+                    .filter(([, w]) => w > 0)
+                    .map(([c, w]) => `${recommendationName(c)} ${w.toFixed(1)}`)
+                    .join(" เทียบกับ ")}
+                </span>{" "}
+                และป้ายที่น้ำหนักรวมมากที่สุดเป็นคำตอบของใบ
+              </p>
+            )}
+            {timingFeatures.length > 0 && (
+              <div className="space-y-1">
+                <p>คำถามในต้นไม้นี้ใช้ {timingFeatures.length} ฟีเจอร์:</p>
+                <ul className="list-inside list-disc space-y-1">
+                  {timingFeatures.map((f) => (
+                    <li key={f.feature}>
+                      <span className="font-semibold">{f.label}</span>
+                      {f.note && <>: {f.note}</>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {timingExample && (
               <p>
                 <span className="font-semibold">ตัวอย่างจากข้อมูลจริง:</span> ใบที่มีตัวอย่างมากที่สุดได้จากการตอบ{" "}
@@ -1281,7 +1540,7 @@ export default async function MlPage() {
               จะแปลงชื่อเป็นเวกเตอร์ TF-IDF (คำที่พบบ่อยในชื่อนี้แต่พบน้อยในชื่ออื่นได้น้ำหนักมาก) แล้วหารุ่นที่ชื่อคล้ายที่สุดด้วย cosine
               similarity จับคู่ก็ต่อเมื่อความคล้ายถึง threshold ที่ทดสอบแล้วว่าแม่นพอ
             </p>
-            <Formula>cosine(a, b) = (a · b) / (‖a‖ ‖b‖) · 1 = ชื่อเหมือนกันทุกคำ, 0 = ไม่มีคำร่วม</Formula>
+            <Formula>{FORMULAS.cosine}</Formula>
           </>
         }
         chart={

@@ -395,13 +395,13 @@ export default async function InsightsPage() {
               // v9+: share of the same store's items the group's models outsell
               // (strictly), as a whole percent; not sales_rank_pct, whose
               // average rank puts tied zero sellers mid-table.
-              // The tile counts models that carry the badge, so it averages
-              // those too when the payload has them (labelled_*, 2026.11-v15+);
-              // else the whole K-Means cluster, as before.
-              const beatsPct = Number.isFinite(num(c.labelled_sales_beats_pct))
-                ? num(c.labelled_sales_beats_pct)
-                : num(c.sales_beats_pct);
-              const salesTile = Number.isFinite(beatsPct) ? shareTile(beatsPct, demandRef) : null;
+              // The same statistic the list's group line quotes (SPEC round 18):
+              // the median over the models that carry the badge when the payload
+              // has it (labelled_*, 2026.11-v15+; v14: the cluster's median),
+              // else an older payload's mean, titled as a mean.
+              const group = demandRef.groups[c.label];
+              const salesTile =
+                group && group.salesBeats !== null ? shareTile(group.salesBeats, demandRef, group.salesBeatsIsMedian) : null;
               // Median when the payload has it (SPEC round 11), else the mean
               // of an older payload's merged centroids.
               const typicalViews = Number.isFinite(num(c.labelled_views_median))
@@ -432,7 +432,7 @@ export default async function InsightsPage() {
                     </div>
                     {salesTile ? (
                       <div className="border-2 border-border p-2.5">
-                        <dt className="text-muted">อันดับยอดขาย</dt>
+                        <dt className="text-muted">{salesTile.title}</dt>
                         <dd className="tabular text-sm font-semibold whitespace-nowrap">{salesTile.value}</dd>
                         <dd className="text-muted">{salesTile.note}</dd>
                       </div>
