@@ -5,6 +5,7 @@ schema that is dropped afterwards.
 """
 
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -392,13 +393,21 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
     import numpy as np
 
     from pricewatch.db.linking import link_listings
-    from pricewatch.ml.train import MODEL_VERSION, train, uncertain_reason
+    from pricewatch.ml.train import (
+        MODEL_VERSION,
+        SIBLING_REASON_PREFIX,
+        SIBLING_TOLERANCE,
+        train,
+        uncertain_reason,
+    )
 
     await apply_migrations(conn)
     rng = np.random.default_rng(1)
     # The same nine-product catalogue as test_train_persists_insights, except
     # every store sells the 5060 Ti 12GB at ~35% of its spec-implied price: a
-    # gap no fit can vouch for, so train flags it fair_uncertain.
+    # gap no fit can vouch for, so train flags it fair_uncertain. That outlier
+    # also bends the fit enough to price some lesser models above a better
+    # sibling (SPEC round 19), so those are flagged too, with a sibling reason.
     products = [
         (chip, vram, round(base * (1.15 if vram == 16 else 1.0)))
         for chip, base in (("5060", 11000), ("5060 Ti", 14000), ("5070", 20000))
@@ -429,20 +438,45 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
     await train(conn, figures=None)
 
     rows = await conn.fetch(
-        "SELECT l.title, i.fair_uncertain, i.fair_price, i.pct_vs_fair, i.deal_score, "
+        "SELECT l.title, c.model, i.fair_uncertain, i.fair_price, i.pct_vs_fair, i.deal_score, "
         "i.recommendation, "
         "i.recommendation_reason, i.model_version "
-        "FROM listing_insights i JOIN merchant_listings l ON l.id = i.listing_id"
+        "FROM listing_insights i JOIN merchant_listings l ON l.id = i.listing_id "
+        "JOIN canonical_products c ON c.id = l.canonical_product_id"
     )
+    fair_of = {r["model"]: float(r["fair_price"]) for r in rows if r["fair_price"] is not None}
     odd_title = "VGA MSI GEFORCE RTX 5060 Ti - 12GB GDDR7"
     odd_rows = [r for r in rows if r["title"] == odd_title]
     assert odd_rows and all(r["fair_uncertain"] for r in odd_rows)
+    # The outlier itself is explained by its own gap ("ราคาจริงถูกกว่า…").
+    assert all(
+        r["recommendation_reason"] == uncertain_reason(float(r["pct_vs_fair"])) for r in odd_rows
+    )
     flagged = [r for r in rows if r["fair_uncertain"]]
+    cited: set[tuple[str, str]] = set()  # (lesser model, better sibling it names)
     for r in flagged:
         assert r["fair_price"] is not None  # kept for the product page
         assert r["deal_score"] is None
         assert r["recommendation"] is None
-        assert r["recommendation_reason"] == uncertain_reason(float(r["pct_vs_fair"]))
+        reason = r["recommendation_reason"]
+        if not reason.startswith(SIBLING_REASON_PREFIX):
+            assert reason == uncertain_reason(float(r["pct_vs_fair"]))
+            continue
+        # A sibling reason quotes this model's stored fair price and a better
+        # sibling's, which really is lower by more than the tolerance.
+        quoted = re.fullmatch(
+            re.escape(SIBLING_REASON_PREFIX)
+            + r" \(฿([\d,]+)\) สูงกว่ารุ่นที่สเปกดีกว่า (.+) \(฿([\d,]+)\) .+",
+            reason,
+        )
+        assert quoted is not None, reason
+        own, better, better_fair = quoted.groups()
+        cited.add((r["model"], better))
+        assert int(own.replace(",", "")) == round(float(r["fair_price"]))
+        assert int(better_fair.replace(",", "")) == round(fair_of[better])
+        assert fair_of[r["model"]] > fair_of[better] * (1 + SIBLING_TOLERANCE)
+    # The case CI met: the 5060 8GB priced above the better 5060 16GB.
+    assert ("GeForce RTX 5060 8GB", "GeForce RTX 5060 16GB") in cited
     assert {r["model_version"] for r in rows} == {MODEL_VERSION}
     # Every other scored listing keeps a recommendation with a plain reason.
     rest = [r for r in rows if not r["fair_uncertain"] and r["deal_score"] is not None]
