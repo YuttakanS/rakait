@@ -23,6 +23,7 @@ from pricewatch.ml.train import (
     spec_features,
 )
 from pricewatch.models import Category
+from pricewatch.normalize import extract
 
 
 def _pairs(
@@ -208,6 +209,30 @@ def test_cpu_line_reads_family_generation_and_model_number(model: str, line: str
 
     assert lines.iloc[0] == line
     assert dims.loc[0, "sku"] == sku
+
+
+def test_x3d_is_not_a_better_sibling_of_x3d2() -> None:
+    # SPEC round 21: "9950X3D2" read as locked made the 9950X3D dominate it
+    # (better on unlocked, equal elsewhere), so an X3D2 priced above the X3D
+    # was flagged as an inversion. Parsed from real titles, the two now tie
+    # on every dimension and are not compared.
+    titles = {
+        "Ryzen 9 9950X3D": "CPU AMD RYZEN 9 9950X3D 4.3GHz 16C/32T AM5",
+        "Ryzen 9 9950X3D2": "ซีพียู AMD Ryzen 9 9950X3D2 4.3GHz 16C/32T AM5",
+    }
+    parsed = [extract(Category.CPU, title) for title in titles.values()]
+    frame = pd.DataFrame(
+        [{"model": ex.model, "manufacturer": ex.manufacturer, **ex.specs} for ex in parsed]
+    ).assign(listing_id=[0, 1], canonical_id=[1, 2])
+    specs = spec_features(frame, Category.CPU)
+    fair = pd.Series([27_000.0, 40_000.0], index=frame.index)
+
+    _, dims = sibling_spec(frame, specs, Category.CPU)
+    check = sibling_check(frame, specs, Category.CPU, fair)
+
+    assert dims.iloc[0].tolist() == dims.iloc[1].tolist()
+    assert check.pairs.empty
+    assert not check.flagged.any()
 
 
 def test_ssd_family_drops_the_capacity_and_keeps_the_interface() -> None:

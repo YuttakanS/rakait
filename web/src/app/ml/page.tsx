@@ -25,6 +25,7 @@ import {
   fitUncertain,
   leaves,
   minorityLeaf,
+  mlrInputs,
   pathTo,
   priceLeafText,
   residualBins,
@@ -340,8 +341,13 @@ export default async function MlPage() {
   // ---- B. Multiple linear regression
   const mlr = categories.flatMap((c) => {
     const p = find(insights, c, "fair_value_mlr");
-    return p ? [{ c, p, points: fitPoints(p), bins: residualBins(p) }] : [];
+    if (!p) return [];
+    const features = ((p.coefficients as Coefficient[] | undefined) ?? []).map((k) => String(k.feature));
+    return [{ c, p, points: fitPoints(p), bins: residualBins(p), inputs: mlrInputs(c, features) }];
   });
+  // Categories whose fit uses demand signals, from the payloads (none for CPU since v18).
+  const demandFits = mlr.filter((m) => m.inputs.demand.length > 0);
+  const demandLabels = [...new Set(demandFits.flatMap((m) => m.inputs.demand))];
   // Gap beyond which a fair price is flagged uncertain (train.UNCERTAIN_GAP, one value for every category).
   const uncertainGap = mlr.map((m) => opt(m.p.uncertain_gap)).find((v) => v !== null) ?? null;
   const gapPct = uncertainGap === null ? null : Math.round(uncertainGap * 100);
@@ -661,8 +667,14 @@ export default async function MlPage() {
         what={
           <>
             <p>
-              เหมือนหัวข้อก่อน แต่ใช้สเปกหลายตัวพร้อมกัน (เช่น VRAM ระดับชิป ปีที่ออก แบรนด์ ยอดเข้าชม และอันดับยอดขายในร้าน)
-              ทำนาย log(ราคา) ผลที่ได้คือ <span className="font-semibold">ราคายุติธรรม</span> ของสเปกนั้น
+              เหมือนหัวข้อก่อน แต่ใช้สเปกหลายตัวพร้อมกัน (เช่น VRAM ระดับชิป ปีที่ออก และแบรนด์
+              {demandFits.length > 0 && (
+                <>
+                  {" "}
+                  ส่วนหมวด{demandFits.map((m) => CATEGORY_LABELS[m.c]).join(" / ")} ใช้{demandLabels.join("และ")}ด้วย
+                </>
+              )}
+              ) ทำนาย log(ราคา) ผลที่ได้คือ <span className="font-semibold">ราคายุติธรรม</span> ของสเปกนั้น
               แล้วเทียบกับราคาจริงเพื่อให้ <span className="font-semibold">Deal Score</span>
             </p>
             <Formula>{FORMULAS.mlr}</Formula>
@@ -679,7 +691,7 @@ export default async function MlPage() {
           mlr.length > 0 ? (
             <CategoryTabs
               label="เลือกหมวดของกราฟ Multiple Linear Regression"
-              panels={mlr.map(({ c, p, points: pts, bins }) => ({
+              panels={mlr.map(({ c, p, points: pts, bins, inputs }) => ({
                 id: c,
                 label: CATEGORY_LABELS[c],
                 content: (
@@ -687,6 +699,30 @@ export default async function MlPage() {
                     <p className="tabular text-xs text-muted">
                       R²(cv) {fixed(p.r2_cv)} · MAPE {pct(p.mape_cv, 1)} · n = {count(p.n)}
                     </p>
+                    {inputs.specs.length > 0 && (
+                      <p className="text-sm">
+                        <span className="font-semibold">ฟีเจอร์ที่ใช้:</span> {inputs.specs.join(" · ")}
+                        {inputs.demand.length > 0 ? (
+                          <> · ข้อมูลฝั่งคนซื้อ: {inputs.demand.join(" · ")}</>
+                        ) : (
+                          <> · ไม่ใช้ยอดเข้าชมหรือยอดขาย ราคายุติธรรมคิดจากสเปกอย่างเดียว</>
+                        )}
+                        {inputs.pricesUnlocked === false && (
+                          <>
+                            {" "}
+                            · ไม่คิดส่วนเพิ่มของรุ่นปลดล็อก (K / X) รุ่น K / X จึงได้ราคายุติธรรมเท่ารุ่นที่ล็อกซึ่งสเปกอื่นเท่ากัน
+                          </>
+                        )}
+                        {/* 2026.11-v19: Threadripper is listed but left out of the fit. */}
+                        {(opt(p.workstation_excluded) ?? 0) > 0 && (
+                          <>
+                            {" "}
+                            · ไม่รวมซีพียูเวิร์กสเตชัน (Threadripper){" "}
+                            <span className="tabular">{count(p.workstation_excluded)}</span> รายการ ซึ่งไม่มีราคายุติธรรม
+                          </>
+                        )}
+                      </p>
+                    )}
                     <div className="space-y-2">
                       <h4 className="text-sm font-semibold">ราคาจริงเทียบราคายุติธรรม</h4>
                       {pts.length > 0 ? (

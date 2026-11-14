@@ -1,4 +1,4 @@
-import { formatBand, formatTHB, wholePct } from "@/lib/format";
+import { formatBand, formatTHB, noFairMeterText, wholePct } from "@/lib/format";
 
 const RANGE = 0.4; // ±40% fills half the track; beyond that the bar is clamped.
 
@@ -14,15 +14,18 @@ export function DealMeter({
   pct,
   errorPct = null,
   uncertain = false,
+  reason = null,
 }: {
   price: number;
   fair: number | null;
   pct: number | null;
   errorPct?: number | null;
   uncertain?: boolean;
+  /** The offer's stored reason; a workstation CPU's reads "ไม่ประเมิน…" (2026.11-v19). */
+  reason?: string | null;
 }) {
   if (fair === null || pct === null) {
-    return <span className="text-xs text-muted">ยังไม่มีราคายุติธรรม</span>;
+    return <span className="text-xs text-muted">{noFairMeterText(reason)}</span>;
   }
   if (uncertain) {
     // No bar: a green arm would read as a deal the model cannot back.

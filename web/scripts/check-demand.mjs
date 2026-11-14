@@ -564,4 +564,60 @@ checks += 3;
   eq(ml.fitExample([[1, 2, "x", true]], 0.4)[2], "x", "fallback when nothing is trusted");
 }
 
+// ---- /ml CPU tree and MLR inputs (SPEC round 21).
+{
+  // Tier splits name real tiers (1, 3, 5, 7, 9, 11): never "R6" / "i6".
+  eq(
+    [4, 6, 6.5, 8, 10].map((t) => ml.splitText("tier", t)[1]),
+    [
+      "Ryzen 3 / Core i3 หรือต่ำกว่า",
+      "Ryzen 5 / Core i5 หรือต่ำกว่า",
+      "Ryzen 5 / Core i5 หรือต่ำกว่า",
+      "Ryzen 7 / Core i7 หรือต่ำกว่า",
+      "Ryzen 9 / Core i9 หรือต่ำกว่า",
+    ],
+    "tier splits read as real tiers",
+  );
+  eq(ml.splitText("tier", 2)[1], "Pentium / Celeron", "tier below 3");
+  // No tier that does not exist ("R6", "i6", "Core i6", "Ryzen 6") in any split.
+  for (let t = 0; t <= 12; t += 0.25) {
+    const test = ml.splitText("tier", t).join(" ");
+    assert.ok(!/\b(?:R|i)[02468]\b|\bRyzen [02468]\b|\bCore i[02468]\b/.test(test), `no non-existent tier: ${test}`);
+  }
+  checks += 1;
+  eq(ml.splitText("x3d_share", 0.25)[1], "ไม่ใช่ X3D", "x3d_share split below a half");
+  eq(ml.splitText("apu_series", 0.5), ["เป็น Ryzen ซีรีส์ APU (4000 / 8000)", ""], "apu_series asked as yes/no");
+  eq(ml.isFlag("apu_series"), true, "apu_series is a yes/no split");
+  // v18 CPU payload: no demand signals, no K / X; GPU keeps views and sales.
+  const v18cpu = ["log2_cores", "log2_threads", "x3d", "has_igpu", "is_amd", "release_year", "tier"];
+  eq(
+    ml.mlrInputs("cpu", v18cpu),
+    {
+      specs: ["จำนวนคอร์", "จำนวนเธรด", "มี 3D V-Cache (X3D)", "มีกราฟิกในตัว", "เป็น AMD", "ปีที่ออกวางขาย", "ระดับรุ่น"],
+      demand: [],
+      pricesUnlocked: false,
+    },
+    "v18 CPU inputs",
+  );
+  const v19cpu = ["log2_threads", "has_igpu", "is_amd", "release_year", "tier", "x3d_share", "apu_series"];
+  eq(ml.mlrInputs("cpu", v19cpu).specs.slice(-2), ["สัดส่วนชิปเล็ตที่มี 3D V-Cache", "เป็น Ryzen ซีรีส์ APU (4000 / 8000)"], "v19 CPU labels");
+  eq(ml.mlrInputs("cpu", [...v18cpu, "unlocked"]).pricesUnlocked, true, "a fit with unlocked prices K / X");
+  eq(
+    ml.mlrInputs("gpu", ["log2_vram_gb", "vram_gb", "boost_clock_mhz_missing", "log_views", "sales_rank_pct"]),
+    { specs: ["ขนาด VRAM"], demand: ["ยอดเข้าชม", "อันดับยอดขายในร้าน"], pricesUnlocked: null },
+    "GPU: demand split out, labels deduplicated, missing indicators dropped",
+  );
+}
+
+// ---- Card line for a listing without a fair price (SPEC round 21, fix 1).
+eq(f.noFairPriceNote(f.WORKSTATION_REASON), "ซีพียูเวิร์กสเตชัน โมเดลไม่ประเมินราคายุติธรรม", "workstation CPU");
+eq(f.noFairPriceNote(null), "ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ)", "v18 / missing specs");
+eq(f.noFairPriceNote("ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ"), "ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ)", "stored missing-specs reason");
+assert.ok(!f.WORKSTATION_REASON.includes("ไม่ครบ"), "workstation reason never says specs are missing");
+// Product-page deal meter: a workstation part is never priced, so no "ยัง…".
+eq(f.noFairMeterText(f.WORKSTATION_REASON), "ไม่ประเมินราคายุติธรรม (เวิร์กสเตชัน)", "meter: workstation CPU");
+eq(f.noFairMeterText(null), "ยังไม่มีราคายุติธรรม", "meter: default");
+eq(f.noFairMeterText("ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ"), "ยังไม่มีราคายุติธรรม", "meter: missing specs");
+checks += 1;
+
 console.log(`check-demand: ${checks} checks passed`);

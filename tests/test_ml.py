@@ -1084,8 +1084,13 @@ def test_gpu_mlr_leaves_out_vendor_incomparable_specs() -> None:
     assert "is_amd" not in NOT_IN_MLR[Category.GPU]
 
 
-def test_cpu_mlr_has_igpu_and_leaves_out_clock_unlocked_and_demand() -> None:
-    from pricewatch.ml.train import fair_value_features, product_key, spec_features
+def test_cpu_mlr_leaves_out_clock_unlocked_demand_cores_and_the_x3d_flag() -> None:
+    from pricewatch.ml.train import (
+        REQUIRED_FOR_FAIR_VALUE,
+        fair_value_features,
+        product_key,
+        spec_features,
+    )
     from pricewatch.models import Category
 
     cpus = pd.DataFrame(
@@ -1110,11 +1115,14 @@ def test_cpu_mlr_has_igpu_and_leaves_out_clock_unlocked_and_demand() -> None:
     cpu = fair_value_features(cpus, specs, Category.CPU, product_key(cpus))
 
     assert specs["has_igpu"].tolist() == [0.0, 1.0, 0.0]
-    # The tier tree still sees the clock and the K / X flag; the MLR does not.
-    assert {"base_clock_ghz", "unlocked"} <= set(specs)
-    assert "has_igpu" in cpu
-    assert not {"base_clock_ghz", "unlocked", "log_views", "sales_rank_pct"} & set(cpu)
-    assert cpu["log2_cores"].tolist() == pytest.approx([np.log2(10)] * 3)
+    # The tier tree still sees the clock, the K / X flag, the core count and
+    # the X3D flag; the MLR does not (2026.11-v19: threads and x3d_share).
+    assert {"base_clock_ghz", "unlocked", "log2_cores", "x3d"} <= set(specs)
+    assert {"has_igpu", "x3d_share", "apu_series"} <= set(cpu)
+    excluded = {"base_clock_ghz", "unlocked", "log_views", "sales_rank_pct", "log2_cores", "x3d"}
+    assert not excluded & set(cpu)
+    assert cpu["log2_threads"].tolist() == pytest.approx([4.0] * 3)
+    assert REQUIRED_FOR_FAIR_VALUE[Category.CPU] == ["log2_threads"]
 
     gpus = pd.DataFrame(
         {
@@ -1212,12 +1220,224 @@ def test_cpu_fair_price_puts_an_f_part_below_its_igpu_sibling() -> None:
     payload = report.market[("cpu", "fair_value_mlr")]
     beta = {c["feature"]: c["beta"] for c in payload["coefficients"]}
     assert beta["has_igpu"] > 0
-    assert not {"base_clock_ghz", "unlocked", "log_views", "sales_rank_pct"} & set(beta)
+    left_out = {"base_clock_ghz", "unlocked", "log_views", "sales_rank_pct", "log2_cores"}
+    assert not left_out & set(beta)
     fair = report.insights["fair_price"].groupby(current["model"]).median()
     plain = [name for name in fair.index if not name.endswith("F")]
     assert len(plain) == 24
     assert all(fair[f"{name}F"] < fair[name] for name in plain)
     assert payload["sibling_inversions"] == 0
+
+
+@pytest.mark.parametrize(
+    ("model", "x3d", "cores", "generation", "expected"),
+    [
+        # (x3d_share, apu_series)
+        # One 8-core die, cached.
+        ("Ryzen 7 9800X3D", True, 8, 9, (1.0, 0.0)),
+        # Two dies, the cache on one of them.
+        ("Ryzen 9 9950X3D", True, 16, 9, (0.5, 0.0)),
+        ("Ryzen 9 9900X3D", True, 12, 9, (0.5, 0.0)),
+        # X3D2: the cache on both dies, whatever the core count says.
+        ("Ryzen 9 9950X3D2", True, 16, 9, (1.0, 0.0)),
+        ("Ryzen 9 9950X3D2", True, np.nan, 9, (1.0, 0.0)),
+        # Ryzen 8000 and 4000 are APU dies, F / no-G models included.
+        ("Ryzen 7 8700F", False, 8, 8, (0.0, 1.0)),
+        ("Ryzen 5 4500", False, 6, 4, (0.0, 1.0)),
+        # Ryzen 5000 mixes APU and chiplet models: not an APU series.
+        ("Ryzen 5 5600G", False, 6, 5, (0.0, 0.0)),
+        # Not a Ryzen: no APU series, generation known or not.
+        ("Core i5-14400", False, 10, 14, (0.0, 0.0)),
+        ("Core Ultra 5 225F", False, 10, np.nan, (0.0, 0.0)),
+    ],
+)
+def test_cpu_design_features_read_cache_dies_and_apu_series(
+    model: str, x3d: bool, cores: float, generation: float, expected: tuple[float, float]
+) -> None:
+    from pricewatch.ml.train import cpu_design_features
+
+    frame = pd.DataFrame(
+        {"model": [model], "x3d": [x3d], "cores": [cores], "generation": [generation]}
+    )
+
+    row = cpu_design_features(frame).iloc[0]
+
+    assert (row["x3d_share"], row["apu_series"]) == expected
+
+
+def test_cpu_design_features_leave_unknowns_missing() -> None:
+    from pricewatch.ml.train import cpu_design_features
+
+    frame = pd.DataFrame(
+        {
+            "model": ["Ryzen 7 7800X3D", "Ryzen 5 5600", None, "Ryzen 5 PRO"],
+            "x3d": [True, np.nan, np.nan, False],
+            "cores": [np.nan, 6, np.nan, 6],
+            "generation": [7, 5, np.nan, np.nan],
+        }
+    )
+
+    out = cpu_design_features(frame)
+
+    # An X3D without a core count may be one die or two; X3D unknown is unknown.
+    assert np.isnan(out.loc[0, "x3d_share"]) and np.isnan(out.loc[1, "x3d_share"])
+    assert out.loc[0, "apu_series"] == 0.0
+    assert out.loc[2].isna().all()
+    # A Ryzen of unknown generation may or may not be an APU-series part.
+    assert np.isnan(out.loc[3, "apu_series"]) and out.loc[3, "x3d_share"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("model", "workstation"),
+    [
+        ("Ryzen Threadripper Pro 9995WX", True),
+        # Not only the Pro line: every Threadripper is a workstation part.
+        ("Ryzen Threadripper 7980X", True),
+        ("Ryzen 9 9950X3D", False),
+        ("Core i9-14900K", False),
+        (None, False),
+    ],
+)
+def test_every_threadripper_is_a_workstation_part(model: str | None, workstation: bool) -> None:
+    from pricewatch.ml.train import workstation_cpu
+
+    assert workstation_cpu(pd.DataFrame({"model": [model]})).tolist() == [workstation]
+
+
+def _ryzen_catalogue(seed: int) -> pd.DataFrame:
+    """Synthetic in-stock Ryzen listings with a few Threadripper parts.
+
+    Desktop parts gain 35% per doubling of threads (Ryzen 5000, 7000 and
+    9000, the 5000 ones without graphics); Threadripper parts cost
+    2.5x what that slope gives for their threads (as the live 9965WX-9995WX
+    do), an X3D die adds 40% and APU-series parts sell 20% below. Three
+    listings per product.
+    """
+    rng = np.random.default_rng(seed)
+    products = []
+    for gen in (5, 7, 9):
+        for tier, cores in ((5, 6), (7, 8), (9, 12), (9, 16)):
+            products.append((f"Ryzen {tier} {gen}{tier}{cores:02d}X", gen, tier, cores, 0.0))
+        products.append((f"Ryzen 7 {gen}800X3D", gen, 7, 8, 1.0))
+        products.append((f"Ryzen 9 {gen}950X3D", gen, 9, 16, 0.5))
+    for tier, cores in ((5, 6), (7, 8)):
+        products.append((f"Ryzen {tier} 8{tier}00G", 8, tier, cores, 0.0))
+    for cores in (24, 32, 64, 96):
+        products.append((f"Ryzen Threadripper Pro 9{cores:03d}WX", 9, 11, cores, 0.0))
+    products.append(("Ryzen Threadripper 7980X", 7, 11, 64, 0.0))
+    rows = []
+    for canonical, (model, gen, tier, cores, cache) in enumerate(products):
+        workstation = "Threadripper" in model
+        price = (
+            4000
+            * 1.35 ** np.log2(cores / 3)
+            * 1.1 ** ((tier - 5) / 2)
+            * (2.5 if workstation else 1.0)
+            * 1.4**cache
+            * (0.8 if gen == 8 else 1.0)
+        )
+        for store in ("jib", "ihavecpu", "banana"):
+            rows.append(
+                {
+                    "canonical_id": canonical,
+                    "merchant": store,
+                    "model": model,
+                    "generation": gen,
+                    "cores": cores,
+                    "threads": cores * 2,
+                    "x3d": "X3D" in model,
+                    "unlocked": "X" in model,
+                    # Like Threadripper, chiplet Ryzen 5000 have no graphics.
+                    "has_igpu": not workstation and gen != 5,
+                    "price": price * rng.uniform(0.97, 1.03),
+                    "view_count": np.nan,
+                    "sales_per_day": np.nan,
+                }
+            )
+    frame = pd.DataFrame(rows)
+    return frame.assign(
+        listing_id=np.arange(len(frame)),
+        category="cpu",
+        manufacturer="AMD",
+        views_per_day=np.nan,
+        in_stock=True,
+        stock_quantity=np.nan,
+        age_days=30,
+    )
+
+
+def test_threadripper_is_listed_but_never_priced() -> None:
+    # SPEC round 21: in the fit, the 2.5x Threadripper premium steepened the
+    # thread slope and priced 16-core Ryzen 9 far above market; with a
+    # platform flag the 24-core part became a Deal 100. Workstation parts are
+    # now left out of the fit and carry no fair price, score or call.
+    from pricewatch.ml.train import WORKSTATION_REASON
+
+    current = _ryzen_catalogue(5)
+    current.loc[current["model"] == "Ryzen Threadripper 7980X", "in_stock"] = False
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    payload = report.market[("cpu", "fair_value_mlr")]
+    beta = {c["feature"]: c["beta"] for c in payload["coefficients"]}
+    assert beta["x3d_share"] > 0 and beta["apu_series"] < 0
+    workstation = current["model"].str.contains("Threadripper")
+    assert payload["workstation_excluded"] == int(workstation.sum()) == 15
+    assert payload["n"] == int((~workstation).sum())
+    ins = report.insights
+    for column in ("fair_price", "pct_vs_fair", "deal_score", "fair_error_pct"):
+        assert ins.loc[workstation, column].isna().all()
+    assert not ins.loc[workstation, "fair_uncertain"].astype(bool).any()
+    # Sold out or not, no buy / wait call, and never the "specs missing" text.
+    assert ins.loc[workstation, "recommendation"].isna().all()
+    assert (ins.loc[workstation, "recommendation_reason"] == WORKSTATION_REASON).all()
+    desktop = ~workstation
+    gap = (ins.loc[desktop, "fair_price"] / current.loc[desktop, "price"] - 1).abs()
+    assert gap.max() < 0.15
+    assert not ins.loc[desktop, "fair_uncertain"].astype(bool).any()
+
+
+def test_the_web_recognises_the_workstation_reason_verbatim() -> None:
+    # The card swaps its "specs missing" line for the workstation note only
+    # on an exact match (web/src/lib/format.ts WORKSTATION_REASON).
+    from pathlib import Path
+
+    from pricewatch.ml.train import WORKSTATION_REASON
+
+    web = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "format.ts"
+    assert f'"{WORKSTATION_REASON}"' in web.read_text(encoding="utf-8")
+
+
+def test_a_category_too_small_to_fit_still_explains_its_workstation_parts() -> None:
+    # The CPU fit is skipped under 15 listings; Threadripper must still read
+    # as a workstation part, not as "specs missing".
+    from pricewatch.ml.train import NO_FAIR_PRICE, WORKSTATION_REASON
+
+    full = _ryzen_catalogue(5)
+    workstation = full["model"].str.contains("Threadripper")
+    current = pd.concat([full[workstation].head(3), full[~workstation].head(6)])
+    assert len(current) < 15
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    assert ("cpu", "fair_value_mlr") not in report.market
+    reasons = report.insights["recommendation_reason"]
+    tr = current["model"].str.contains("Threadripper")
+    assert (reasons[tr] == WORKSTATION_REASON).all()
+    assert report.insights.loc[tr, "recommendation"].isna().all()
+    assert (reasons[~tr] == NO_FAIR_PRICE).all()
+
+
+def test_cpu_with_threads_but_no_core_count_is_still_priced() -> None:
+    # 2026.11-v19 gates the CPU fit on threads alone (log2_cores is not in it).
+    current = _cpu_catalogue(3)
+    model = current["model"] == "Core i5-14400F"
+    current.loc[model, "cores"] = np.nan
+
+    ins = run_models(current, pd.DataFrame(), figures=None).insights
+
+    assert ins.loc[model, "fair_price"].notna().all()
+    assert ins.loc[model, "deal_score"].notna().all()
 
 
 def test_fair_price_far_from_market_is_flagged_and_never_ranked() -> None:

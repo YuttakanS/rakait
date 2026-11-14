@@ -4,7 +4,7 @@ import { ClusterBadge, DealTag, DemandEvidenceLine, FairGapTag, UncertainTag, Ve
 import { ProductImage } from "@/components/product-image";
 import { cardReason } from "@/lib/card-reason";
 import { NO_REFERENCE, type DemandReference } from "@/lib/demand";
-import { CATEGORY_LABELS, formatBand, formatTHB, uncertainNote } from "@/lib/format";
+import { CATEGORY_LABELS, formatBand, formatTHB, noFairPriceNote, uncertainNote } from "@/lib/format";
 import type { ProductSummary } from "@/lib/types";
 import { resolveVerdict } from "@/lib/verdict";
 
@@ -131,7 +131,8 @@ export function ProductCard({
               </>
             ) : p.fairPrice === null ? (
               // Visible in place of the gap tag, so the card never just goes blank.
-              <p className="text-xs leading-snug text-muted">ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ)</p>
+              // A workstation CPU (2026.11-v19) says so instead of "specs missing".
+              <p className="text-xs leading-snug text-muted">{noFairPriceNote(p.cheapestReason)}</p>
             ) : (
               <FairGapTag pct={p.bestPctVsFair} />
             )}

@@ -27,7 +27,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v18"
+MODEL_VERSION = "2026.11-v19"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -125,6 +125,87 @@ def cpu_release(model: object, generation: object) -> tuple[float, float]:
     return (year, tier)
 
 
+#: Ryzen desktop series made only of APU dies (SPEC round 21): 4000 (Renoir,
+#: 2020) and 8000 (Phoenix / Hawk Point, 2024). These are laptop-derived
+#: monolithic chips with half the L3 cache and fewer PCIe lanes than the
+#: chiplet Ryzen of their era, F models (8400F, 8700F) included, and sell
+#: below them at the same core count and tier. Other series mix APU (G / GT)
+#: and chiplet models, so they are left out.
+_APU_ONLY_RYZEN_GENERATIONS = (4.0, 8.0)
+
+#: Cores per Ryzen core die (CCD): a model with more is built from two dies.
+_CORES_PER_CCD = 8
+
+
+def workstation_cpu(frame: pd.DataFrame) -> pd.Series:
+    """Whether each CPU listing is a workstation part (SPEC round 21, fix 1).
+
+    Every Threadripper, Pro or not (7980X, 9995WX): HEDT / workstation
+    platforms priced 115-470k THB for memory channels, PCIe lanes and
+    support, not on the desktop spec ladder. With them in the fit they set
+    the thread slope (v18: +0.60 per SD of ``log2_threads``) and the Ryzen 9
+    were priced from it; with a platform flag they were themselves mispriced
+    (the 24-core 9965WX at 189k THB against its 115k, Deal 100). Like
+    workstation GPUs (``normalize._WORKSTATION_RE``) they are left out of the
+    fair-value model, but they stay linked so the site still lists their
+    prices: ``run_models`` gives them no fair price, Deal Score or
+    recommendation, and ``WORKSTATION_REASON``. Vectorised, O(n * len(model)).
+
+    Args:
+        frame: CPU listings with ``model`` (missing: not a workstation part).
+
+    Returns:
+        A boolean per listing, aligned with ``frame``.
+    """
+    model = frame.get("model", pd.Series(np.nan, index=frame.index, dtype=object))
+    contains = model.astype("string").str.contains("Threadripper", regex=False, na=False)
+    return contains.astype(bool)
+
+
+def cpu_design_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """CPU silicon flags read from the model name (SPEC round 21).
+
+    * ``x3d_share``: share of the core dies (CCDs) that carry AMD's 3D
+      V-Cache. A single-die X3D (up to 8 cores, e.g. 9800X3D) and an X3D2
+      (cache on both dies, 9950X3D2) are 1; a two-die X3D (more than 8
+      cores, 9900X3D / 9950X3D) caches one die of two, 0.5; not X3D, 0. NaN
+      when the X3D flag, or the core count of a non-X3D2 X3D model, is
+      unknown.
+    * ``apu_series``: 1 for a Ryzen of an APU-only series
+      (``_APU_ONLY_RYZEN_GENERATIONS``), 0 for any other named CPU, NaN for
+      a Ryzen whose generation is unknown.
+
+    Vectorised string and array operations, O(n * len(model)).
+
+    Args:
+        frame: CPU listings with ``model`` and optionally ``x3d``, ``cores``
+            and ``generation``.
+
+    Returns:
+        ``x3d_share`` and ``apu_series`` per listing (NaN where the model
+        name is missing), aligned with ``frame``.
+    """
+    model = frame.get("model", pd.Series(np.nan, index=frame.index, dtype=object))
+    named = model.map(lambda name: isinstance(name, str)).astype(bool)
+    text = model.where(named, "").astype(str)
+    ryzen = text.str.startswith("Ryzen") & ~text.str.contains("Threadripper", regex=False)
+    x3d = numeric(frame, "x3d")
+    cores = numeric(frame, "cores")
+    both_dies = text.str.contains(r"X3D2\b", regex=True)
+    share = pd.Series(np.where(both_dies | ~(cores > _CORES_PER_CCD), 1.0, 0.5), index=frame.index)
+    # An X3D model whose die count is unknown (no core count) gets NaN.
+    share = share.where(both_dies | cores.notna() | (x3d == 0))
+    generation = numeric(frame, "generation")
+    apu = (ryzen & generation.isin(_APU_ONLY_RYZEN_GENERATIONS)).astype(float)
+    return pd.DataFrame(
+        {
+            "x3d_share": x3d * share,
+            "apu_series": apu.where(~ryzen | generation.notna()),
+        },
+        index=frame.index,
+    ).where(named)
+
+
 def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
     """Numeric hardware features per category (no demand signals)."""
     if category is Category.GPU:
@@ -150,6 +231,7 @@ def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
         models = frame.get("model", pd.Series(dtype=object, index=frame.index))
         gens = numeric(frame, "generation")
         year_tier = [cpu_release(mo, g) for mo, g in zip(models, gens, strict=True)]
+        design = cpu_design_features(frame)
         return pd.DataFrame(
             {
                 # Log scale: each extra core is worth less, and 64-96 core
@@ -169,6 +251,9 @@ def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
                 else 0.0,
                 "release_year": [yt[0] - _YEAR0 for yt in year_tier] if year_tier else np.nan,
                 "tier": [yt[1] for yt in year_tier] if year_tier else np.nan,
+                # Silicon flags (SPEC round 21, 2026.11-v19).
+                "x3d_share": design["x3d_share"],
+                "apu_series": design["apu_series"],
             },
             index=frame.index,
         )
@@ -204,7 +289,8 @@ _LOG2_FOR_MLR: tuple[str, ...] = ("vram_gb", "capacity_gb")
 #: specs may be missing (imputed with a missingness indicator).
 REQUIRED_FOR_FAIR_VALUE: dict[Category, list[str]] = {
     Category.GPU: ["log2_vram_gb", "perf_class", "release_year"],
-    Category.CPU: ["log2_cores", "log2_threads"],
+    # log2_cores is left out of the CPU fit (NOT_IN_MLR); threads gate it.
+    Category.CPU: ["log2_threads"],
     Category.RAM: ["log2_capacity_gb", "speed_mhz"],
     Category.SSD: ["log2_capacity_gb", "nvme"],
 }
@@ -247,9 +333,50 @@ REQUIRED_FOR_FAIR_VALUE: dict[Category, list[str]] = {
 #: splits) but a median of 10 pairs instead of 7 (over 15% flagged in 46% of
 #: splits vs 26%); keeping it despite the slightly worse CV was the user's
 #: decision (2026-11-14, SPEC round 20).
+#:
+#: CPU (SPEC round 21, 2026.11-v19): v18 priced the many-thread Ryzen far
+#: above their market (9950X 30,463 THB vs a 21,890 median, 9900X3D 32,517
+#: vs 22,090, 9950X3D 46,185 vs 26,990, 8700F 9,836 vs 6,690), the top CPU
+#: deals. Cause: the four Threadripper PRO (115-469k THB) sit 2-3x above a
+#: desktop thread slope, and with no platform signal they set it
+#: (``log2_threads`` +0.60 per SD; they were themselves priced at 0.4x).
+#: Threadripper is now left out of the fit (``workstation_cpu``; a platform
+#: flag instead priced the 24-core 9965WX at 189k THB against its 115k).
+#: Without it ``log2_threads`` falls to +0.20 per SD. Added
+#: (:func:`cpu_design_features`): ``x3d_share`` in place of ``x3d`` (+0.16;
+#: a 12-16-core X3D caches one die of two: the 9950X3D sells 23% above the
+#: 9950X, the 9800X3D 45% above the 9700X) and ``apu_series`` (-0.07). Also
+#: left out:
+#:
+#: * ``log2_cores``: ~0 beside threads (-0.01 without Threadripper, VIF 12
+#:   in v18, -0.04 in the v19 set) and threads alone cross-validate as well;
+#: * ``x3d``: replaced by ``x3d_share``.
+#:
+#: Fixed 5-fold GroupKFold, v18 -> v19: R2 0.883 -> 0.956, MAPE 22.4% ->
+#: 9.9%, inverted pairs 6 -> 1, scored listings flagged as the lesser
+#: sibling 7.3% -> 2.7%; 9950X 21,542, 9900X3D 23,442, 9950X3D 27,211, 8700F
+#: 7,285 THB, all within 10% of their median (2026-11-14). Over 50 random
+#: product 5-fold splits, median v18 -> v19: R2 0.872 -> 0.956, MAPE 24.0%
+#: -> 10.1%, pairs 7 -> 2, flagged 10.9% -> 4.2% (over 15% in 26% of splits
+#: -> none). Against the v18 features fitted without Threadripper (R2
+#: 0.929, MAPE 13.2%, 9950X3D +25%, 8700F +50%) the paired differences are
+#: R2 +0.020, MAPE -2.5 points. Socket dummies for AM5 / LGA1700 / LGA1851
+#: added nothing (R2 -0.005) and turned ``is_amd`` negative; a dummy per
+#: family generation fitted worse (R2 0.919) and left the 9950X3D at +32%.
+#: ``apu_series`` rests on few scored products (4500, 8500G, 8700F): when a
+#: split puts them in one fold they are left unscored (leverage above
+#: ``MAX_LEVERAGE``), the 8700F in 13 of the 50 splits and the 8500G in 22;
+#: when scored, the 8700F was within 24% of its median in every split.
 NOT_IN_MLR: dict[Category, tuple[str, ...]] = {
     Category.GPU: ("shader_cores", "boost_clock_mhz"),
-    Category.CPU: ("base_clock_ghz", "unlocked", "log_views", "sales_rank_pct"),
+    Category.CPU: (
+        "base_clock_ghz",
+        "unlocked",
+        "log_views",
+        "sales_rank_pct",
+        "log2_cores",
+        "x3d",
+    ),
 }
 
 
@@ -514,6 +641,16 @@ UNCERTAIN_FIT = "โมเดลยังประเมินรุ่นนี
 
 #: Reason shown when no fair price could be estimated for a listing.
 NO_FAIR_PRICE = "ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ"
+
+#: Reason stored for a workstation listing (``workstation_cpu``, SPEC round
+#: 21, 2026.11-v19): listed with its prices, never priced by the model. The
+#: web recognises it verbatim (``WORKSTATION_REASON`` in
+#: web/src/lib/format.ts) so the card does not fall back to its "specs
+#: missing" line.
+WORKSTATION_REASON = (
+    "ไม่ประเมินราคายุติธรรม: รุ่นนี้เป็นซีพียูเวิร์กสเตชัน (Threadripper) "
+    "ซึ่งโมเดลราคายุติธรรมไม่ครอบคลุม จึงไม่มี Deal Score และไม่ใช้จัดอันดับดีล"
+)
 
 
 def shown_pct(fraction: float) -> int:
@@ -1260,6 +1397,10 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     report = TrainReport(insights=insights)
     # Per listing, the sibling-inversion reason of its model (None when none).
     sibling_reasons = pd.Series(None, index=current.index, dtype=object)
+    # Per listing, whether it is a workstation part the MLR does not price.
+    # Flagged up front, so the reason never depends on a fit running (a
+    # category skipped for too few rows still says why it has no fair price).
+    workstation_rows = (current["category"] == Category.CPU.value) & workstation_cpu(current)
 
     for category in Category:
         frame = category_frame(current, category)
@@ -1290,30 +1431,35 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             report.notes.append(f"{category.value} simple regression: {exc}")
 
         # B. Multiple linear regression -> fair value and Deal Score.
+        # Workstation CPUs stay listed but are neither fitted nor priced
+        # (SPEC round 21, 2026.11-v19): ``WORKSTATION_REASON`` below.
+        workstation = workstation_rows.loc[frame.index]
+        priced = frame.loc[~workstation]
+        priced_specs, priced_price = specs.loc[~workstation], price.loc[~workstation]
         try:
-            key = product_key(frame)
+            key = product_key(priced)
             mlr = m.fit_fair_value(
-                fair_value_features(frame, specs, category, key),
-                price,
+                fair_value_features(priced, priced_specs, category, key),
+                priced_price,
                 required=REQUIRED_FOR_FAIR_VALUE[category],
                 groups=key,
                 # Learn from what can be bought today; sold-out rows carry
                 # stale prices but are still scored.
-                fit_mask=frame["in_stock"].fillna(False).astype(bool),
+                fit_mask=priced["in_stock"].fillna(False).astype(bool),
             )
-            pct = price / mlr.fair_price - 1
+            pct = priced_price / mlr.fair_price - 1
             # Uncertain: a gap too wide for the fit, or a fair price that runs
             # against a sibling model's (SPEC round 19, 2026.11-v17).
-            siblings = sibling_check(frame, specs, category, mlr.fair_price)
-            sibling_reasons.loc[frame.index] = siblings.reasons
+            siblings = sibling_check(priced, priced_specs, category, mlr.fair_price)
+            sibling_reasons.loc[priced.index] = siblings.reasons
             uncertain = (pct.abs() > UNCERTAIN_GAP) | siblings.flagged
             scores = m.deal_score(mlr.z_residual).where(~uncertain)
-            insights.loc[frame.index, "fair_price"] = mlr.fair_price.round(0)
-            insights.loc[frame.index, "residual"] = (price - mlr.fair_price).round(0)
-            insights.loc[frame.index, "pct_vs_fair"] = pct
-            insights.loc[frame.index, "deal_score"] = scores
-            insights.loc[frame.index, "fair_error_pct"] = mlr.error_pct()
-            insights.loc[frame.index, "fair_uncertain"] = uncertain
+            insights.loc[priced.index, "fair_price"] = mlr.fair_price.round(0)
+            insights.loc[priced.index, "residual"] = (priced_price - mlr.fair_price).round(0)
+            insights.loc[priced.index, "pct_vs_fair"] = pct
+            insights.loc[priced.index, "deal_score"] = scores
+            insights.loc[priced.index, "fair_error_pct"] = mlr.error_pct()
+            insights.loc[priced.index, "fair_uncertain"] = uncertain
             report.market[(category.value, "fair_value_mlr")] = {
                 "target": "log(price)",
                 "coefficients": mlr.coefficient_table(),
@@ -1324,6 +1470,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "n": mlr.n,
                 "required": REQUIRED_FOR_FAIR_VALUE[category],
                 "unscored": int(mlr.fair_price.isna().sum()),
+                # Listed but left out of the fit and unpriced (2026.11-v19+).
+                "workstation_excluded": int(workstation.sum()),
                 "extrapolated": mlr.extrapolated,
                 # Every uncertain listing, gap or sibling (2026.11-v17+); the
                 # sibling_* fields count the second cause on its own.
@@ -1339,12 +1487,12 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 # most CHART_POINTS scored listings, and the % gap histogram.
                 # 2026.11-v17: a fourth member per point, whether it is uncertain.
                 "fit_points": fit_points(
-                    price, mlr.fair_price, listing_names(frame), uncertain=uncertain
+                    priced_price, mlr.fair_price, listing_names(priced), uncertain=uncertain
                 ),
                 "residual_bins": residual_histogram(pct),
             }
             if figures:
-                _plot_mlr(figures, category, price, mlr)
+                _plot_mlr(figures, category, priced_price, mlr)
                 if mlr.diagnostics is not None:
                     _plot_mlr_diagnostics(figures, category, mlr.diagnostics)
         except ValueError as exc:
@@ -1513,6 +1661,10 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             insights.loc[flagged, "pct_vs_fair"], sibling_reasons[flagged], strict=True
         )
     ]
+    # Workstation parts carry no fair price; whatever the rules or the timing
+    # tree said (e.g. "sold out, wait"), they get no call and say why.
+    insights.loc[workstation_rows, "recommendation"] = None
+    insights.loc[workstation_rows, "recommendation_reason"] = WORKSTATION_REASON
     return report
 
 

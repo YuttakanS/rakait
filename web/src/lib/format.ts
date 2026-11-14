@@ -60,6 +60,36 @@ const UNCERTAIN_LEAD = "ประเมินไม่แน่นอน: ";
 export const SIBLING_REASON_PREFIX = `${UNCERTAIN_LEAD}ราคายุติธรรมของรุ่นนี้`;
 
 /**
+ * Reason the pipeline stores for a workstation CPU (every Threadripper,
+ * `train.WORKSTATION_REASON`, model 2026.11-v19, SPEC round 21): listed with
+ * its prices but never given a fair price, Deal Score or recommendation.
+ * Must match the pipeline's string exactly.
+ */
+export const WORKSTATION_REASON =
+  "ไม่ประเมินราคายุติธรรม: รุ่นนี้เป็นซีพียูเวิร์กสเตชัน (Threadripper) ซึ่งโมเดลราคายุติธรรมไม่ครอบคลุม จึงไม่มี Deal Score และไม่ใช้จัดอันดับดีล";
+
+/** The card's short line for a workstation CPU, in place of "สเปกในชื่อสินค้าไม่ครบ". */
+export const WORKSTATION_CARD_NOTE = "ซีพียูเวิร์กสเตชัน โมเดลไม่ประเมินราคายุติธรรม";
+
+/**
+ * Why a listing has no fair price, as the card prints it: the workstation
+ * note when the stored reason is `WORKSTATION_REASON`, otherwise the
+ * missing-specs line (every unpriced listing up to 2026.11-v18). O(length).
+ */
+export function noFairPriceNote(stored: string | null | undefined): string {
+  return stored === WORKSTATION_REASON ? WORKSTATION_CARD_NOTE : "ยังประเมินราคายุติธรรมไม่ได้ (สเปกในชื่อสินค้าไม่ครบ)";
+}
+
+/**
+ * The deal meter's text for an offer without a fair price: "ไม่ประเมิน…" for
+ * a workstation CPU (it will never get one), otherwise "ยังไม่มีราคายุติธรรม"
+ * (specs missing or not scored yet). O(length).
+ */
+export function noFairMeterText(stored: string | null | undefined): string {
+  return stored === WORKSTATION_REASON ? "ไม่ประเมินราคายุติธรรม (เวิร์กสเตชัน)" : "ยังไม่มีราคายุติธรรม";
+}
+
+/**
  * The stored reason when it is a sibling inversion, else null. Such a model
  * may sit well inside the 40% gap, so its reason cannot be rebuilt from the
  * gap and is printed as stored. O(length).
@@ -209,6 +239,12 @@ export const FEATURE_LABELS: Record<string, string> = {
   // 2026.11-v18+ (CPU): integrated graphics. False for Intel F / KF and Core
   // X-series parts, every Threadripper and AM4 Ryzen without a G (5600 vs 5600G).
   has_igpu: "มีกราฟิกในตัว",
+  // 2026.11-v19+ (CPU, SPEC round 21): the share of the core dies carrying
+  // 3D V-Cache (1 = every die: X3D up to 8 cores and X3D2; 0.5 = one of two:
+  // 12-16-core X3D) and the APU-only Ryzen series (4000 / 8000). The v19 fit
+  // has `x3d_share`, not `x3d`.
+  x3d_share: "สัดส่วนชิปเล็ตที่มี 3D V-Cache",
+  apu_series: "เป็น Ryzen ซีรีส์ APU (4000 / 8000)",
   is_amd: "เป็น AMD",
   capacity_gb: "ความจุ",
   speed_mhz: "ความเร็วแรม",

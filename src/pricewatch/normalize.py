@@ -233,7 +233,9 @@ def extract_cpu(title: str, spec_text: str | None = None) -> Extracted:
         specs["generation"] = int(number[0])
     if model is not None:
         specs["x3d"] = "X3D" in model
-        specs["unlocked"] = bool(re.search(r"\d(K|KF|KS|X|X3D)\b", model))
+        # Unlocked multiplier: Intel K / KF / KS and Core X "XE" (i9-7980XE),
+        # Ryzen X, X3D and X3D2 (9950X3D2, two 3D-cache dies).
+        specs["unlocked"] = bool(re.search(r"\d(?:K|KF|KS|XE|X|X3D|X3D2)\b", model))
         # No graphics: F / KF parts, Threadripper (HEDT / workstation, every
         # generation) and Intel's Core X-series ("10900X", "7980XE"). Ryzen
         # 7000+ desktop parts have graphics; older Ryzen only the G / GT APUs.

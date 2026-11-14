@@ -88,6 +88,33 @@ def test_cpu_integrated_graphics(title: str, has_igpu: bool) -> None:
 
 
 @pytest.mark.parametrize(
+    ("title", "unlocked"),
+    [
+        ("CPU (ซีพียู) AMD RYZEN 9 9950X3D 4.3 GHz (SOCKET AM5)", True),
+        # SPEC round 21: X3D2 (3D V-Cache on both dies) and Core X "XE" are
+        # unlocked too; before, "9950X3D2" read as locked.
+        ("ซีพียู AMD Ryzen 9 9950X3D2 4.3GHz 16C/32T AM5", True),
+        ("Intel Core i9-10980XE 3.0GHz 18C/36T LGA2066", True),
+        ("CPU INTEL CORE I9-14900KS 3.2 GHz (SOCKET LGA 1700)", True),
+        ("CPU INTEL CORE I7-14700KF 3.4 GHz (SOCKET LGA 1700)", True),
+        ("CPU (ซีพียู) AMD RYZEN 7 9700X 3.8 GHz (SOCKET AM5)", True),
+        ("CPU (ซีพียู) AMD RYZEN 5 9600 3.8 GHz (SOCKET AM5)", False),
+        ("ซีพียู Intel Core i5-14400F 2.5GHz 10C/16T LGA-1700", False),
+        ("CPU AMD RYZEN THREADRIPPER PRO 9975WX 4.0GHz 32C/64T sTR5", False),
+    ],
+)
+def test_cpu_unlocked_multiplier(title: str, unlocked: bool) -> None:
+    assert extract(Category.CPU, title).specs["unlocked"] is unlocked
+
+
+def test_x3d2_is_an_x3d_part() -> None:
+    ex = extract(Category.CPU, "ซีพียู AMD Ryzen 9 9950X3D2 4.3GHz 16C/32T AM5")
+
+    assert ex.model == "Ryzen 9 9950X3D2"
+    assert ex.specs["x3d"] is True
+
+
+@pytest.mark.parametrize(
     "title",
     [
         "CPU INTEL XEON E5-2680 V4 2.4GHz 14C/28T LGA2011",

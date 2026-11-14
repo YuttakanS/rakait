@@ -7,7 +7,7 @@
  * falls back to text. Pure functions, O(size of the payload field).
  */
 import { RECOMMENDATION_LABELS, featureLabel, formatTHB } from "./format";
-import type { Recommendation } from "./types";
+import type { Category, Recommendation } from "./types";
 
 /** Class leaf value: raw training rows per class and the predicted class. */
 export interface ClassValue {
@@ -252,7 +252,7 @@ const YEAR0 = 2020;
  * branch is the "no" side. The node asks the positive question ("เป็น AMD?"),
  * so its "ใช่" child is sklearn's right one: see `yesNoChildren`.
  */
-const FLAGS = new Set(["is_amd", "x3d", "unlocked", "has_igpu", "ddr5", "nvme"]);
+const FLAGS = new Set(["is_amd", "x3d", "unlocked", "has_igpu", "apu_series", "ddr5", "nvme"]);
 
 /** Whether a split is a yes/no question asked positively. */
 export const isFlag = (feature: string | null): boolean => feature !== null && FLAGS.has(feature);
@@ -383,6 +383,56 @@ const count = (v: number): string => Math.floor(v + 1e-9).toLocaleString("th-TH"
 /** Every % threshold in a tree with one decimal ("+6.0%", "+22.4%", "44.2%"), so they read alike. */
 const signedPct = (v: number): string => `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
 
+/** Demand signals any fair-value payload has carried (v9 sales sum, v10+ rank). */
+const DEMAND_FEATURES = new Set(["log_views", "log_sales_per_day", "sales_rank_pct"]);
+
+/** What one category's fair-value MLR is fitted on, read from its payload. */
+export interface MlrInputs {
+  /** Thai labels of the spec features, in payload order, deduplicated. */
+  specs: string[];
+  /** Thai labels of the demand signals in the fit; empty when it has none. */
+  demand: string[];
+  /**
+   * CPU only: whether the fit prices the K / X (unlocked) premium. False
+   * since 2026.11-v18 (`unlocked` is in `train.NOT_IN_MLR`); null for the
+   * other categories, where the question does not arise.
+   */
+  pricesUnlocked: boolean | null;
+}
+
+/**
+ * The inputs of a fair-value MLR from its coefficient names, so the copy on
+ * /ml never claims a feature the fit does not use (SPEC round 21: the CPU
+ * fit has had no demand signals since v18). Missing-spec indicators
+ * ("boost_clock_mhz_missing") are fit plumbing and left out. O(features).
+ */
+export function mlrInputs(category: Category, features: string[]): MlrInputs {
+  const specs: string[] = [];
+  const demand: string[] = [];
+  for (const f of features) {
+    if (f.endsWith("_missing")) continue;
+    const target = DEMAND_FEATURES.has(f) ? demand : specs;
+    const label = featureLabel(f);
+    if (!target.includes(label)) target.push(label);
+  }
+  return { specs, demand, pricesUnlocked: category === "cpu" ? features.includes("unlocked") : null };
+}
+
+/**
+ * A `tier` split as the highest real tier on its "ใช่" side. Tiers are 1
+ * (Pentium / Celeron), 3 / 5 / 7 / 9 (Ryzen, Core i and Core Ultra share the
+ * ladder) and 11 (Threadripper), so a split at 6 means "Ryzen 5 / Core i5 or
+ * lower" and one at 10 "Ryzen 9 / Core i9 or lower" (no tier 6 or 10
+ * exists, SPEC round 21). O(1).
+ */
+export function tierTest(t: number): string {
+  const whole = Math.min(Math.floor(t + 1e-9), 9);
+  // Nothing sits at 2: below 3 is Pentium / Celeron alone.
+  if (whole < 3) return "Pentium / Celeron";
+  const top = whole % 2 === 1 ? whole : whole - 1;
+  return `Ryzen ${top} / Core i${top} หรือต่ำกว่า`;
+}
+
 /**
  * A split as two short lines: the feature in Thai (`featureLabel`) and the
  * test with a readable unit, e.g. ["ขนาด VRAM", "≤ 10 GB"]. Integer specs
@@ -420,14 +470,11 @@ export function splitText(feature: string, threshold: number): [string, string] 
       return [label, `ปี ${Math.floor(t + YEAR0 + 1e-9)} หรือก่อนนั้น`];
     case "perf_class":
       return ["ระดับชิป (เลขท้ายรุ่น)", `≤ ${gpuClass(t)}`];
-    case "tier": {
-      // Tiers are 1 (Pentium), 3-9 (Ryzen / Core i / Ultra) and 11
-      // (Threadripper): a split at 10 still means "Ryzen 9 / i9 or lower".
-      const top = Math.min(Math.floor(t + 1e-9), 9);
-      // Tier 1 is Pentium / Celeron; nothing sits at 2.
-      if (top < 3) return ["ระดับรุ่น (Ryzen / Core)", "Pentium / Celeron"];
-      return ["ระดับรุ่น (Ryzen / Core)", `≤ ${top} (เช่น R${top}, i${top})`];
-    }
+    case "tier":
+      return ["ระดับรุ่น (Ryzen / Core)", tierTest(t)];
+    case "x3d_share":
+      // 0 = not X3D, 0.5 = cache on one die of two, 1 = on every die.
+      return [label, t < 0.5 ? "ไม่ใช่ X3D" : "ไม่ใช่ X3D หรือมีแคชแค่ชิปเล็ตเดียวจากสอง"];
     case "pcie_gen":
       return [label, `≤ PCIe ${count(t)}`];
     case "pct_vs_model_median":

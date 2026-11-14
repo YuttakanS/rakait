@@ -277,6 +277,7 @@ function OfferRow({ offer: o, best }: { offer: Offer; best: boolean }) {
             pct={o.pctVsFair}
             errorPct={o.fairErrorPct}
             uncertain={o.fairUncertain}
+            reason={o.recommendationReason}
           />
           <div className="flex flex-col items-start gap-1.5 md:items-end" title={reasonOf(o) ?? undefined}>
             <DealScore score={o.dealScore} />
@@ -369,6 +370,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                   pct={cheapest.pctVsFair}
                   errorPct={cheapest.fairErrorPct}
                   uncertain={cheapest.fairUncertain}
+                  reason={cheapest.recommendationReason}
                 />
               </div>
               <VerdictBadges verdict={verdictOf(cheapest, product.demandCluster)} className="max-w-xl" />
