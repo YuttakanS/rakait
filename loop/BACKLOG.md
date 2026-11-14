@@ -15,8 +15,15 @@
   2. /insights siblingSentence: "…เกิน 5% 3 คู่" puts two numbers side by side, write "…เกิน 5% รวม 3 คู่"; "ไม่ดีกว่า…เลยสักด้าน" reads as a double negative, use the /ml wording "ด้อยกว่าหรือเท่ากับอีกรุ่นทุกด้าน" on both pages.
   3. `fitExample` falls back to all points (possibly flagged) when none are trusted, contradicting the "never a flagged listing" comment; return null (hide the example) instead, or fix the comment.
   4. FitScatter tooltip does not say a point is "ประเมินไม่แน่นอน".
-- [ ] **Round 20 (user decision 2026-11-13): fix the CPU MLR root cause of sibling inversions** (M). On v16 data 19 CPU pairs are inverted, e.g. i9-14900F ฿22,821 > 14900K ฿17,438, i7-14700F > 14700K, 7700X3D > 7800X3D, Ryzen 5 5500 > 5600, 9600 > 9600X. Suspects: no `has_igpu` / F-model feature in the CPU MLR; demand features (`sales_rank_pct`, `log_views`) push popular models up.
-  - เกณฑ์ผ่าน: 1) CPU inversion pairs and flagged % drop clearly (target ≤ 15% of Deal-Scored CPU listings) 2) CPU R²(cv) and MAPE(cv) do not get worse (v16: .85 / .227) 3) reported per feature change, chosen by GroupKFold CV, not by inversion count alone.
+- [ ] **Round 21: CPU fair prices too high for high-thread Ryzen → fake top CPU deals** (M, user-tester round 20). Live v18: the top CPU deals are Ryzen 9 9900X3D ฿22,090 vs fair ฿32,517 (DEAL 86), Ryzen 7 8700F ฿6,690 vs ฿9,836 (85), Ryzen 9 9950X ฿20,990 vs ฿30,463 (84); 9950X3D fair ฿46,185 vs market ฿25–27k (unscored). Suspect `log2_threads` β +0.597 dominating once unlocked/demand were dropped. Also 8500G fair > 7600 (cross-generation, not a sibling).
+  - เกณฑ์ผ่าน: 1) these listings get believable fair prices or are flagged 2) CPU R²(cv)/MAPE(cv) not worse than v18 (.883 / .224) 3) inversions not worse than v18 (6) 4) GroupKFold + random-split evidence as in round 20.
+- [ ] **Round 20 follow-ups** (S)
+  1. Parser reads "9950X3D2" as unlocked=False, so the sibling check treats 9950X3D as the better part (v18 fair: X3D2 ฿39,684 < X3D ฿46,185). Treat X3D2 as X (and ≥ X3D).
+  2. Explain on /ml and the product page that the CPU fair price ignores the K/X unlock premium and that the CPU MLR has no demand features (the MLR copy on /ml says views/sales rank are used, which is false for CPU since v18).
+  3. /ml CPU tree node "ระดับรุ่น (Ryzen / Core) ≤ 6 (เช่น R6, i6)?" names tiers that do not exist; describe the threshold between real tiers (e.g. "Ryzen 5 / Core i5 หรือต่ำกว่า").
+  4. 8500G product page shows "Deal 85" together with "ราคาเหมาะสม" and "สรุปไม่ได้ว่าถูกกว่าตลาดจริง" — reads as contradictory.
+  5. `unlocked` regex misses "XE" (i9-7980XE → False); only affects sibling dominance now.
+  6. scrape.yml runs train with `!cancelled()` even when link fails, so a link failure trains on stale specs.
 - [ ] **Round 18 follow-ups (live, model 2026.11-v16)**
   1. Hydration error #418 on production list pages (5 in ~110 loads on v15). Server HTML is correct; mismatch at `div.flex` around `AutoSubmitSelect` under `<section products-title>`. Do NOT wrap page content in Suspense. Start from the header Suspense (HeaderSearch / SiteNav with useSearchParams).
   2. The demand payload cache (15 minutes) mixes new numbers with old wording after a train. Revalidate on train or deploy.
@@ -86,5 +93,6 @@
 
 ## Done
 (บรรทัดเดียวต่องาน)
+- รอบ 20 (2026-11-14, 15f8f12, model v18): CPU MLR + has_igpu, ตัด base clock / unlocked / demand (สัมประสิทธิ์ติดลบ); parser: Threadripper/Core X ไม่มี iGPU; CPU R²cv .851→.883, คู่กลับด้าน 19→6; ผู้ใช้เลือกคง has_igpu
 - รอบ 19 (2026-11-13, fa93d09, model v17): รุ่นสเปกด้อยที่ราคายุติธรรมสูงกว่ารุ่นพี่น้องเกิน 5% ติด "ประเมินไม่แน่นอน" พร้อมเหตุผลอ้างรุ่นคู่ (ผู้ใช้เลือกติดฝั่งเดียว) GPU 3 / CPU 19 / RAM 1 / SSD 1 คู่; deal of the week เลิกเป็น RTX 3050 6GB
 - รอบ 18 (2026-11-13, 5f279a1, model v16): /ml พร้อมนำเสนอ (centroid, Decision Tree, legend, ใช่ซ้าย, dendrogram, สูตรครบ, ปุ่มเลื่อนต้นไม้), กลุ่มที่เหลือชื่อ "ยอดขายไม่เด่น" ติดป้ายเมื่อขายดีกว่า < 50%, ชิปกลุ่มว่าง, จำนวนรุ่นตรงกันทุกหน้า, /insights ใช้มัธยฐาน; ปิด Vercel git auto-deploy (1ac51e0)
