@@ -15,14 +15,20 @@
   2. /insights siblingSentence: "…เกิน 5% 3 คู่" puts two numbers side by side, write "…เกิน 5% รวม 3 คู่"; "ไม่ดีกว่า…เลยสักด้าน" reads as a double negative, use the /ml wording "ด้อยกว่าหรือเท่ากับอีกรุ่นทุกด้าน" on both pages.
   3. `fitExample` falls back to all points (possibly flagged) when none are trusted, contradicting the "never a flagged listing" comment; return null (hide the example) instead, or fix the comment.
   4. FitScatter tooltip does not say a point is "ประเมินไม่แน่นอน".
-- [ ] **Round 21: CPU fair prices too high for high-thread Ryzen → fake top CPU deals** (M, user-tester round 20). Live v18: the top CPU deals are Ryzen 9 9900X3D ฿22,090 vs fair ฿32,517 (DEAL 86), Ryzen 7 8700F ฿6,690 vs ฿9,836 (85), Ryzen 9 9950X ฿20,990 vs ฿30,463 (84); 9950X3D fair ฿46,185 vs market ฿25–27k (unscored). Suspect `log2_threads` β +0.597 dominating once unlocked/demand were dropped. Also 8500G fair > 7600 (cross-generation, not a sibling).
-  - เกณฑ์ผ่าน: 1) these listings get believable fair prices or are flagged 2) CPU R²(cv)/MAPE(cv) not worse than v18 (.883 / .224) 3) inversions not worse than v18 (6) 4) GroupKFold + random-split evidence as in round 20.
-- [ ] **Round 20 follow-ups** (S)
-  1. Parser reads "9950X3D2" as unlocked=False, so the sibling check treats 9950X3D as the better part (v18 fair: X3D2 ฿39,684 < X3D ฿46,185). Treat X3D2 as X (and ≥ X3D).
-  2. Explain on /ml and the product page that the CPU fair price ignores the K/X unlock premium and that the CPU MLR has no demand features (the MLR copy on /ml says views/sales rank are used, which is false for CPU since v18).
-  3. /ml CPU tree node "ระดับรุ่น (Ryzen / Core) ≤ 6 (เช่น R6, i6)?" names tiers that do not exist; describe the threshold between real tiers (e.g. "Ryzen 5 / Core i5 หรือต่ำกว่า").
+- [ ] **Round 22: RAM / SSD fair prices too high → about a third of RAM and 42% of SSD listings flagged by the market check** (M, user decision in round 21). Live v20: RAM 79 and SSD 70 listings are flagged because their fair price is ≥ 25% above what the stores charge. The SSD MLR systematically overprices cheap drives at 2–4× (Patriot P300, Crucial MX500, Kingston NV2). Investigate with ablation the same way as CPU in rounds 20–21: outliers or segments that distort the slope, plus missing features.
+  - เกณฑ์ผ่าน: 1) the RAM/SSD market-check share drops clearly 2) R²(cv)/MAPE(cv) not worse than v20 (RAM .939/.176, SSD .888/.197) 3) inversions not worse 4) GroupKFold + random-split evidence
+- [ ] **Round 21 follow-ups (live, model 2026.11-v20)** (S)
+  1. A listing flagged by the market check shows two percentages that read as contradictory. The top line says "ราคาจริง ถูกกว่า 23%" (vs fair), while the reason says "สูงกว่าราคาที่ร้านขาย 31%" (vs the median); Apacer AS350 /product/255 shows 37% vs 54%. When the fair price is flagged, consider hiding the % vs fair on the top line or making it clear the % uses a different base.
+  2. The single-store price in the reason is the median of that store's listings (Hiksemi WAVE 256GB "฿1,575", while the listings are ฿1,560 / ฿1,590). Choose one method (median vs lowest per store), write it on /ml, and measure the effect: with the lowest price per store, SN850X 2TB (+30%), Hiksemi DDR4 16GB and Corsair DDR4 32GB would be flagged.
+  3. Hiksemi WAVE(P) NVMe and WAVE(S) SATA are linked as the same model (record linkage).
+  4. Ryzen 5 5500 > 5600 is the only CPU inversion left (since v18).
+  5. The CPU SLR without Threadripper has R² 0.31 (฿611/core); core count alone explains little. Consider another X for CPU (e.g. threads, or tier) for the presentation.
+  6. Threadripper names on mobile cards are truncated to "Ryzen Threadripper Pr..." on all 4 cards; the stray "–" after "ที่ JIB –" and at the end of the store rows on Threadripper pages.
+  7. 8700G, 8600G, 12100F, 12700KF and 3400G show "สเปกในชื่อสินค้าไม่ครบ" (core/thread count is in the spec table but not parsed). Reading the spec table made 8700F worse in round 21; ablate again.
+  8. Pushing to main still triggers a Vercel git build that errors ("Couldn't find any `pages` or `app` directory"), although `web/vercel.json` sets `git.deploymentEnabled: false`. Turn it off in project settings, or set Root Directory to web.
+  9. Minor review items: `market_median` groupby drops rows whose merchant is NaN (`dropna=False`); `test_requests_are_spaced_by_min_interval` is timing-sensitive and flaky under load.
+- [ ] **Round 20 follow-ups (not done in round 21)** (S)
   4. 8500G product page shows "Deal 85" together with "ราคาเหมาะสม" and "สรุปไม่ได้ว่าถูกกว่าตลาดจริง" — reads as contradictory.
-  5. `unlocked` regex misses "XE" (i9-7980XE → False); only affects sibling dominance now.
   6. scrape.yml runs train with `!cancelled()` even when link fails, so a link failure trains on stale specs.
 - [ ] **Round 18 follow-ups (live, model 2026.11-v16)**
   1. Hydration error #418 on production list pages (5 in ~110 loads on v15). Server HTML is correct; mismatch at `div.flex` around `AutoSubmitSelect` under `<section products-title>`. Do NOT wrap page content in Suspense. Start from the header Suspense (HeaderSearch / SiteNav with useSearchParams).
@@ -93,6 +99,11 @@
 
 ## Done
 (บรรทัดเดียวต่องาน)
+- รอบ 21 (2026-11-14, d3c278b + 467f307, model v20):
+  - Threadripper is a workstation part: no fair price, out of the CPU MLR, SLR and tree.
+  - CPU MLR adds x3d_share/apu_series and drops log2_cores/x3d; R²cv .883→.954, MAPE .224→.103, inversions 6→1.
+  - Market check (fair price ≥ 25% above the median store price → uncertain, every category); fake deals 9900X3D/9950X/8700F/4500/7700X3D are gone.
+  - X3D2/XE are read as unlocked. /ml lists the features each MLR uses.
 - รอบ 20 (2026-11-14, 15f8f12, model v18): CPU MLR + has_igpu, ตัด base clock / unlocked / demand (สัมประสิทธิ์ติดลบ); parser: Threadripper/Core X ไม่มี iGPU; CPU R²cv .851→.883, คู่กลับด้าน 19→6; ผู้ใช้เลือกคง has_igpu
 - รอบ 19 (2026-11-13, fa93d09, model v17): รุ่นสเปกด้อยที่ราคายุติธรรมสูงกว่ารุ่นพี่น้องเกิน 5% ติด "ประเมินไม่แน่นอน" พร้อมเหตุผลอ้างรุ่นคู่ (ผู้ใช้เลือกติดฝั่งเดียว) GPU 3 / CPU 19 / RAM 1 / SSD 1 คู่; deal of the week เลิกเป็น RTX 3050 6GB
 - รอบ 18 (2026-11-13, 5f279a1, model v16): /ml พร้อมนำเสนอ (centroid, Decision Tree, legend, ใช่ซ้าย, dendrogram, สูตรครบ, ปุ่มเลื่อนต้นไม้), กลุ่มที่เหลือชื่อ "ยอดขายไม่เด่น" ติดป้ายเมื่อขายดีกว่า < 50%, ชิปกลุ่มว่าง, จำนวนรุ่นตรงกันทุกหน้า, /insights ใช้มัธยฐาน; ปิด Vercel git auto-deploy (1ac51e0)
