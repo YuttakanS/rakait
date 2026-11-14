@@ -254,8 +254,17 @@ const YEAR0 = 2020;
  */
 const FLAGS = new Set(["is_amd", "x3d", "unlocked", "has_igpu", "apu_series", "ddr5", "nvme"]);
 
+/**
+ * Graded specs a split turns into one positive yes/no question, like FLAGS:
+ * `x3d_share` is 0 (no 3D V-Cache), 0.5 (one cached die of two) or 1 (every
+ * die), so any split asks "has (at least) this much cache?", whose "ใช่"
+ * side is sklearn's right one (SPEC round 21, fix 2).
+ */
+const GRADED_QUESTIONS = new Set(["x3d_share"]);
+
 /** Whether a split is a yes/no question asked positively. */
-export const isFlag = (feature: string | null): boolean => feature !== null && FLAGS.has(feature);
+export const isFlag = (feature: string | null): boolean =>
+  feature !== null && (FLAGS.has(feature) || GRADED_QUESTIONS.has(feature));
 
 /** Words on the [first, second] edges under a split, in `yesNoChildren` order. */
 export const EDGE_WORDS = ["ใช่", "ไม่ใช่"] as const;
@@ -383,6 +392,46 @@ const count = (v: number): string => Math.floor(v + 1e-9).toLocaleString("th-TH"
 /** Every % threshold in a tree with one decimal ("+6.0%", "+22.4%", "44.2%"), so they read alike. */
 const signedPct = (v: number): string => `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
 
+/**
+ * Listings of workstation CPUs (every Threadripper) a fit left out, from its
+ * payload's `workstation_excluded`: the fair-value MLR since 2026.11-v19, the
+ * simple regression and the tier tree since v20. 0 for older payloads and
+ * other categories. O(1).
+ */
+export function workstationExcluded(payload: Record<string, unknown> | undefined): number {
+  const n = Number(payload?.workstation_excluded);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Canonical products a simple regression left out (`workstation_product_ids`,
+ * 2026.11-v20), so its scatter draws only the points the line was fitted
+ * on. Empty for older payloads. O(ids).
+ */
+export function workstationProductIds(payload: Record<string, unknown> | undefined): Set<number> {
+  const ids = payload?.workstation_product_ids;
+  return new Set(Array.isArray(ids) ? ids.filter((v): v is number => typeof v === "number") : []);
+}
+
+/** The market check of one `fair_value_mlr` payload (model 2026.11-v20+). */
+export interface MarketCheck {
+  /** `train.MARKET_GAP`, e.g. 0.25: flagged from this shown gap up. */
+  gap: number;
+  /** Listings flagged by it. */
+  flagged: number;
+  /** Of those, listings of a model only one store sells. */
+  singleStore: number;
+}
+
+/** The market check of a payload, or null before 2026.11-v20. O(1). */
+export function marketCheck(payload: Record<string, unknown> | undefined): MarketCheck | null {
+  const gap = payload?.market_gap;
+  const flagged = payload?.market_flagged;
+  const single = payload?.market_flagged_single_store;
+  if (!isNum(gap) || !isNum(flagged)) return null;
+  return { gap, flagged, singleStore: isNum(single) ? single : 0 };
+}
+
 /** Demand signals any fair-value payload has carried (v9 sales sum, v10+ rank). */
 const DEMAND_FEATURES = new Set(["log_views", "log_sales_per_day", "sales_rank_pct"]);
 
@@ -442,6 +491,8 @@ export function tierTest(t: number): string {
  * line, whose "ใช่" child is sklearn's right one (`yesNoChildren`). O(1).
  */
 export function splitText(feature: string, threshold: number): [string, string] {
+  // 0 = not X3D, 0.5 = cache on one die of two, 1 = on every die.
+  if (feature === "x3d_share") return [threshold < 0.5 ? "มี 3D V-Cache (X3D)" : "มี 3D V-Cache ทุกชิปเล็ต", ""];
   if (isFlag(feature)) return [featureLabel(feature), ""];
   const label = TIMING_LABELS[feature] ?? featureLabel(feature);
   const t = threshold;
@@ -472,9 +523,6 @@ export function splitText(feature: string, threshold: number): [string, string] 
       return ["ระดับชิป (เลขท้ายรุ่น)", `≤ ${gpuClass(t)}`];
     case "tier":
       return ["ระดับรุ่น (Ryzen / Core)", tierTest(t)];
-    case "x3d_share":
-      // 0 = not X3D, 0.5 = cache on one die of two, 1 = on every die.
-      return [label, t < 0.5 ? "ไม่ใช่ X3D" : "ไม่ใช่ X3D หรือมีแคชแค่ชิปเล็ตเดียวจากสอง"];
     case "pcie_gen":
       return [label, `≤ PCIe ${count(t)}`];
     case "pct_vs_model_median":
@@ -489,6 +537,40 @@ export function splitText(feature: string, threshold: number): [string, string] 
     default:
       return [label, `≤ ${trim(t)}`];
   }
+}
+
+/** Thai marks drawn above or below the previous letter: no advance of their own. */
+const THAI_COMBINING = /[\u0e31\u0e34-\u0e3a\u0e47-\u0e4e]/u;
+
+/**
+ * Estimated width in px of `text` at `size` px, for sizing SVG boxes on the
+ * server (no DOM to measure). Every letter, digit, space or sign counts
+ * 0.62 em (Space Mono's advance is 0.6 em; Work Sans and Noto Sans Thai
+ * letters stay under it), Thai marks above / below a letter count 0, so
+ * the estimate errs wide, never narrow. O(length).
+ */
+export function textWidth(text: string, size = 12): number {
+  let units = 0;
+  for (const ch of text) if (!THAI_COMBINING.test(ch)) units += 1;
+  return units * size * 0.62;
+}
+
+/** Narrowest question box of a tree, and the padding either side of its text. */
+export const NODE_MIN_WIDTH = 172;
+const NODE_TEXT_PAD = 12;
+
+/**
+ * Width of a tree's question box: wide enough for both lines of
+ * `splitText` (feature line bold, test line in mono, each with its "?") and
+ * the "n = …" line, never under NODE_MIN_WIDTH. So "ระดับรุ่น (Ryzen / Core)"
+ * / "Ryzen 5 / Core i5 หรือต่ำกว่า?" stays inside its box at any viewport
+ * (the SVG is drawn at its real size and scrolls sideways). O(text).
+ */
+export function questionBoxWidth(feature: string, threshold: number, n: number): number {
+  const [label, test] = splitText(feature, threshold);
+  const lines = [test ? label : `${label}?`, test ? `${test}?` : "", `n = ${n.toLocaleString("th-TH")}`];
+  const widest = Math.max(...lines.map((line) => textWidth(line)));
+  return Math.max(NODE_MIN_WIDTH, Math.ceil(widest + 2 * NODE_TEXT_PAD));
 }
 
 /** One line, "ขนาด VRAM ≤ 10 GB", for sentences and screen-reader text. */

@@ -585,7 +585,10 @@ checks += 3;
     assert.ok(!/\b(?:R|i)[02468]\b|\bRyzen [02468]\b|\bCore i[02468]\b/.test(test), `no non-existent tier: ${test}`);
   }
   checks += 1;
-  eq(ml.splitText("x3d_share", 0.25)[1], "ไม่ใช่ X3D", "x3d_share split below a half");
+  // x3d_share (0 / 0.5 / 1) splits read as one yes/no question, "ใช่" = more cache.
+  eq(ml.splitText("x3d_share", 0.25), ["มี 3D V-Cache (X3D)", ""], "x3d_share split below a half");
+  eq(ml.splitText("x3d_share", 0.75), ["มี 3D V-Cache ทุกชิปเล็ต", ""], "x3d_share split above a half");
+  eq(ml.yesNoChildren({ ...node(0, "x3d_share", 1, 2), threshold: 0.25 }), [2, 1], "x3d_share: yes = sklearn right");
   eq(ml.splitText("apu_series", 0.5), ["เป็น Ryzen ซีรีส์ APU (4000 / 8000)", ""], "apu_series asked as yes/no");
   eq(ml.isFlag("apu_series"), true, "apu_series is a yes/no split");
   // v18 CPU payload: no demand signals, no K / X; GPU keeps views and sales.
@@ -619,5 +622,58 @@ eq(f.noFairMeterText(f.WORKSTATION_REASON), "ไม่ประเมินร�
 eq(f.noFairMeterText(null), "ยังไม่มีราคายุติธรรม", "meter: default");
 eq(f.noFairMeterText("ยังประเมินราคายุติธรรมไม่ได้ เพราะชื่อสินค้าระบุสเปกหลักไม่ครบ"), "ยังไม่มีราคายุติธรรม", "meter: missing specs");
 checks += 1;
+
+// ---- Tree boxes fit their text (SPEC round 21, fix 2): every question of
+// every category, at the widest thresholds the trees use.
+{
+  const questions = [
+    ["tier", 6], ["tier", 2], ["x3d_share", 0.25], ["x3d_share", 0.75], ["release_year", 1.5],
+    ["log2_threads", 4.9], ["perf_class", 6.6], ["base_clock_ghz", 3.55], ["has_igpu", 0.5],
+    ["apu_series", 0.5], ["capacity_gb", 1500], ["speed_mhz", 5600], ["read_mbps", 6500],
+    ["pct_vs_model_median", 0.224], ["price_percentile_own", 0.44], ["days_listed", 120],
+  ];
+  for (const [feature, t] of questions) {
+    const width = ml.questionBoxWidth(feature, t, 1000);
+    const [label, test] = ml.splitText(feature, t);
+    for (const line of [test ? label : `${label}?`, test ? `${test}?` : ""]) {
+      assert.ok(ml.textWidth(line) + 2 * 12 <= width, `${feature} ${t}: "${line}" fits ${width}px`);
+    }
+  }
+  checks += 1;
+  const root = ml.questionBoxWidth("tier", 6, 169);
+  assert.ok(root > ml.NODE_MIN_WIDTH, `the CPU root grows past ${ml.NODE_MIN_WIDTH}px (${root})`);
+  assert.ok(root >= ml.textWidth("Ryzen 5 / Core i5 หรือต่ำกว่า?") + 24, "CPU root fits its test line");
+  checks += 1;
+  // Thai marks above / below a letter add no width.
+  eq(ml.textWidth("ที่"), ml.textWidth("ท"), "combining marks are zero-width");
+}
+
+// ---- Market check (SPEC round 21, fix 2; model 2026.11-v20).
+{
+  // The pipeline's shown_pct rounds as wholePct: the 7700X3D's +24.87% is "25%".
+  eq(f.wholePct(15346 / 12290 - 1), 25, "7700X3D gap shows as 25%");
+  eq(f.wholePct(0.2449), 24, "24.49% shows as 24%");
+  const stored = `${f.MARKET_REASON_PREFIX} 31% (ราคายุติธรรม ฿3,383 ราคากลางของทุกร้านที่ขายรุ่นนี้ ฿2,590) ${f.UNCERTAIN_FIT}`;
+  eq(f.uncertainReason(-0.234, stored), stored, "market reason printed as stored");
+  eq(f.uncertainNote(-0.234, stored), stored.slice("ประเมินไม่แน่นอน: ".length), "card note drops the lead-in");
+  eq(f.siblingReason(stored), null, "a market reason is not a sibling reason");
+  assert.ok(!stored.startsWith(f.SIBLING_REASON_PREFIX), "prefixes do not overlap");
+  checks += 1;
+  eq(ml.marketCheck({ sibling_flagged: 3 }), null, "v19 payload: no market line");
+  eq(
+    ml.marketCheck({ market_gap: 0.25, market_flagged: 6, market_flagged_single_store: 1 }),
+    { gap: 0.25, flagged: 6, singleStore: 1 },
+    "v20 market check read",
+  );
+  // Workstation note: one sentence for every page and model.
+  eq(
+    f.workstationNote(4),
+    "ไม่รวมซีพียูเวิร์กสเตชัน (Threadripper) 4 รายการ เพราะราคาไม่ได้ขึ้นกับสเปกแบบเดียวกับซีพียูเดสก์ท็อป",
+    "workstation note",
+  );
+  eq(ml.workstationExcluded({}), 0, "v19 SLR / tree payload: nothing left out");
+  eq(ml.workstationExcluded({ workstation_excluded: 4 }), 4, "v20 count");
+  eq([...ml.workstationProductIds({ workstation_product_ids: [33, 35, "x"] })], [33, 35], "ids read");
+}
 
 console.log(`check-demand: ${checks} checks passed`);

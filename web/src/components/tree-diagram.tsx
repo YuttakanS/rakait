@@ -1,11 +1,10 @@
 import { RECOMMENDATION_LABELS, formatTHB } from "@/lib/format";
-import { EDGE_WORDS, splitText, yesNoChildren, type ClassValue, type TreeNode } from "@/lib/ml";
+import { EDGE_WORDS, questionBoxWidth, splitText, yesNoChildren, type ClassValue, type TreeNode } from "@/lib/ml";
 import type { Recommendation } from "@/lib/types";
 import { TreeScroll } from "./tree-scroll";
 
 /* Fixed geometry in CSS px: the SVG is drawn at its real size (12 px text
    stays 12 px) and scrolls sideways inside its own box when wider than it. */
-const NODE_W = 172; // inner node: two lines of Thai question text
 const LEAF_W = 112; // leaf: a price or a class name, n and a share
 const NODE_H = 66;
 const GAP = 14; // minimum space between two boxes on one row
@@ -22,7 +21,9 @@ type Placed = { node: TreeNode; x: number; y: number; depth: number };
 type Subtree = { xs: Map<number, number>; left: number[]; right: number[] };
 
 const isLeaf = (n: TreeNode): boolean => n.left === null || n.right === null;
-const boxWidth = (n: TreeNode): number => (isLeaf(n) ? LEAF_W : NODE_W);
+/** A question box fits its own text (`questionBoxWidth`, at least 172 px); a leaf is LEAF_W. */
+const boxWidth = (n: TreeNode): number =>
+  isLeaf(n) || n.feature === null || n.threshold === null ? LEAF_W : questionBoxWidth(n.feature, n.threshold, n.n);
 
 /**
  * Fill of a price leaf's strip at `t` in [0, 1] (cheapest -> dearest): the
@@ -157,7 +158,7 @@ export function TreeDiagram({
               const [feature, test] = splitText(node.feature, node.threshold);
               return (
                 <g key={node.id}>
-                  <rect x={left} y={y} width={NODE_W} height={NODE_H} fill="var(--surface-muted)" stroke="var(--foreground)" strokeWidth={2} />
+                  <rect x={left} y={y} width={boxWidth(node)} height={NODE_H} fill="var(--surface-muted)" stroke="var(--foreground)" strokeWidth={2} />
                   {/* A yes/no question has one line: centre it in the space of two. */}
                   <text x={x} y={y + (test ? LINE : LINE * 1.5)} textAnchor="middle" fontSize="12" fontWeight={600} fill="var(--foreground)">
                     {feature}

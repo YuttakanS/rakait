@@ -60,6 +60,17 @@ const UNCERTAIN_LEAD = "ประเมินไม่แน่นอน: ";
 export const SIBLING_REASON_PREFIX = `${UNCERTAIN_LEAD}ราคายุติธรรมของรุ่นนี้`;
 
 /**
+ * Start of the pipeline's reason for a fair price well above what the stores
+ * charge for the same product (`train.MARKET_REASON_PREFIX`, model
+ * 2026.11-v20, SPEC round 21), e.g. "ประเมินไม่แน่นอน:
+ * ราคายุติธรรมสูงกว่าราคาที่ร้านขายรุ่นนี้ 31% (ราคายุติธรรม ฿3,383
+ * ราคากลางของทุกร้านที่ขายรุ่นนี้ ฿2,590) …"; a model one store lists reads
+ * "ราคาที่ร้านเดียวที่ขายรุ่นนี้ตั้งไว้ ฿…". The pipeline rounds that percent
+ * with `shown_pct`, the twin of `wholePct`.
+ */
+export const MARKET_REASON_PREFIX = `${UNCERTAIN_LEAD}ราคายุติธรรมสูงกว่าราคาที่ร้านขายรุ่นนี้`;
+
+/**
  * Reason the pipeline stores for a workstation CPU (every Threadripper,
  * `train.WORKSTATION_REASON`, model 2026.11-v19, SPEC round 21): listed with
  * its prices but never given a fair price, Deal Score or recommendation.
@@ -67,6 +78,15 @@ export const SIBLING_REASON_PREFIX = `${UNCERTAIN_LEAD}ราคายุติ�
  */
 export const WORKSTATION_REASON =
   "ไม่ประเมินราคายุติธรรม: รุ่นนี้เป็นซีพียูเวิร์กสเตชัน (Threadripper) ซึ่งโมเดลราคายุติธรรมไม่ครอบคลุม จึงไม่มี Deal Score และไม่ใช้จัดอันดับดีล";
+
+/**
+ * The one sentence /ml and /insights print under every CPU fit that left
+ * workstation parts out (SPEC round 21, fix 2): the same words whichever
+ * model it is. `n` is the payload's `workstation_excluded`. O(1).
+ */
+export function workstationNote(n: number): string {
+  return `ไม่รวมซีพียูเวิร์กสเตชัน (Threadripper) ${n.toLocaleString("th-TH")} รายการ เพราะราคาไม่ได้ขึ้นกับสเปกแบบเดียวกับซีพียูเดสก์ท็อป`;
+}
 
 /** The card's short line for a workstation CPU, in place of "สเปกในชื่อสินค้าไม่ครบ". */
 export const WORKSTATION_CARD_NOTE = "ซีพียูเวิร์กสเตชัน โมเดลไม่ประเมินราคายุติธรรม";
@@ -99,6 +119,15 @@ export function siblingReason(stored: string | null | undefined): string | null 
 }
 
 /**
+ * The stored reason when it names a cause the gap cannot show: a sibling
+ * inversion (2026.11-v17+) or the market check (2026.11-v20+); else null.
+ * Printed as stored. O(length).
+ */
+export function storedUncertainReason(stored: string | null | undefined): string | null {
+  return siblingReason(stored) ?? (stored?.startsWith(MARKET_REASON_PREFIX) ? stored : null);
+}
+
+/**
  * Why an uncertain fair price is not ranked, without the "ประเมินไม่แน่นอน"
  * lead-in (the card's tag already says it): the stored sibling reason when
  * there is one (it names the sibling and both fair prices), otherwise the
@@ -109,8 +138,8 @@ export function siblingReason(stored: string | null | undefined): string | null 
  * @param stored The listing's stored `recommendation_reason`.
  */
 export function uncertainNote(pct: number | null | undefined, stored?: string | null): string {
-  const sibling = siblingReason(stored);
-  if (sibling !== null) return sibling.slice(UNCERTAIN_LEAD.length);
+  const named = storedUncertainReason(stored);
+  if (named !== null) return named.slice(UNCERTAIN_LEAD.length);
   const gap = uncertainGap(pct);
   return gap === null ? UNCERTAIN_NOTE : `${gap} ${UNCERTAIN_FIT}`;
 }
@@ -123,7 +152,7 @@ export function uncertainNote(pct: number | null | undefined, stored?: string | 
  * (fixed "เกิน 40%" wording) read the same.
  */
 export function uncertainReason(pct: number | null | undefined, stored?: string | null): string {
-  return siblingReason(stored) ?? `${UNCERTAIN_LEAD}${uncertainNote(pct)}`;
+  return storedUncertainReason(stored) ?? `${UNCERTAIN_LEAD}${uncertainNote(pct)}`;
 }
 
 export function formatDateTime(iso: string | null): string {

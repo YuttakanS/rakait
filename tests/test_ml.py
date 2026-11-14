@@ -325,10 +325,13 @@ def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
     # Some folds hold out every high-class Radeon at once; those rows lie
     # outside what the fold saw (leverage > 1) and are rightly left unscored.
     assert scored.mean() >= 0.75
-    assert ins.loc[scored, "deal_score"].between(0, 100).all()
-    assert ins.loc[~scored, "deal_score"].isna().all()
+    # Uncertain fair prices (gap, sibling or market check) carry no score.
+    rated = scored & ~ins["fair_uncertain"].astype(bool)
+    assert rated.mean() >= 0.75
+    assert ins.loc[rated, "deal_score"].between(0, 100).all()
+    assert ins.loc[~rated, "deal_score"].isna().all()
     advised = ins["recommendation"].notna()  # no score and no history: no advice
-    assert advised[scored].all()
+    assert advised[rated].all() and not advised[~rated].any()
     assert set(ins.loc[advised, "recommendation"]) <= {m.BUY_NOW, m.WAIT, m.FAIR}
     # No history yet, so every recommendation comes from the Deal Score rules,
     # whose reasons are plain shopper sentences without a rule-name prefix.
@@ -345,6 +348,175 @@ def test_run_models_end_to_end_on_synthetic_catalogue(seed: int = 7) -> None:
     assert ins["demand_cluster"].isna().all()
     assert any(note.startswith("demand clustering: only 12 rows") for note in report.notes)
     assert any("timing tree" in note for note in report.notes)
+
+
+@pytest.mark.parametrize(
+    ("fraction", "shown"),
+    [
+        # The live 7700X3D: fair 15,346 THB against a 12,290 median, shown as 25%.
+        (15_346 / 12_290 - 1, 25),
+        (0.2449, 24),
+        (0.245, 25),
+        (0.306, 31),
+        (-0.235, -23),
+        (0.0, 0),
+    ],
+)
+def test_shown_pcts_is_shown_pct_over_an_array(fraction: float, shown: int) -> None:
+    from pricewatch.ml.train import shown_pct, shown_pcts
+
+    assert shown_pct(fraction) == shown
+    assert shown_pcts(np.array([fraction]))[0] == shown
+
+
+def _market_frame() -> pd.DataFrame:
+    """Five products: the live 4500 and 7700X3D, one just inside, one sold
+    out everywhere, and one a single store lists three times."""
+    return pd.DataFrame(
+        {
+            "listing_id": range(11),
+            "canonical_id": [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5],
+            "merchant": ["jib", "banana", "jib", "ihavecpu", "jib", "banana", "jib", "banana"]
+            + ["jib", "jib", "itcity"],
+            "price": [2590, 2590, 12290, 12290, 10000, 10000, 8000, 9000, 4000, 4000, 6000],
+            "in_stock": [True, True, True, False, True, True, False, False, True, True, True],
+        }
+    )
+
+
+def test_market_median_takes_one_price_per_store() -> None:
+    from pricewatch.ml.train import market_median
+
+    market = market_median(_market_frame())
+
+    # Product 5: JIB's two listings at 4,000 count once beside IT City's
+    # 6,000, so the median is 5,000, not 4,000.
+    assert (
+        market["median"].tolist()
+        == [2590] * 2 + [12290] * 2 + [10000] * 2 + [8500] * 2 + [5000] * 3
+    )
+    # 7700X3D: two stores list it, one has it in stock; sold out everywhere,
+    # every store's latest price counts.
+    assert market["used"].tolist() == [2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2]
+    assert market["listed"].tolist() == [2] * 11
+
+
+def test_market_check_flags_fair_prices_well_above_the_stores() -> None:
+    from pricewatch.ml.train import MARKET_REASON_PREFIX, market_check
+
+    frame = _market_frame()
+    # 4500: +31%; 7700X3D: +24.87%, shown as 25%; 12,440 is +24.4%, shown as
+    # 24%; the sold-out product falls back to all stores' prices (8,500);
+    # 6,000 is 20% above product 5's 5,000.
+    fair = pd.Series(
+        [3383, 3383, 15346, 15346, 12440, 12440, 11000, 11000, 6000, 6000, 6000], dtype=float
+    )
+
+    check = market_check(frame, fair)
+
+    assert check.flagged.tolist() == [True] * 4 + [False] * 2 + [True] * 2 + [False] * 3
+    tail = "โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล"
+    assert check.reasons[0] == (
+        f"{MARKET_REASON_PREFIX} 31% (ราคายุติธรรม ฿3,383 ราคากลางของทุกร้านที่ขายรุ่นนี้ ฿2,590) " + tail
+    )
+    # Only JIB has the 7700X3D in stock: its price, said as such.
+    assert check.reasons[2] == (
+        f"{MARKET_REASON_PREFIX} 25% (ราคายุติธรรม ฿15,346 ราคาของร้านเดียวที่มีของตอนนี้ ฿12,290) " + tail
+    )
+    assert check.reasons[4] is None
+    assert check.payload() == {
+        "market_gap": 0.25,
+        "market_flagged": 6,
+        "market_flagged_single_store": 0,
+    }
+
+
+def test_market_check_skips_unscored_listings_and_names_a_single_store() -> None:
+    from pricewatch.ml.train import MARKET_REASON_PREFIX, market_check
+
+    frame = _market_frame().assign(merchant="jib")
+    fair = pd.Series([np.nan, 3383] + [np.nan] * 9)
+
+    check = market_check(frame, fair)
+
+    assert check.flagged.tolist() == [False, True] + [False] * 9
+    assert check.reasons[1].startswith(
+        f"{MARKET_REASON_PREFIX} 31% (ราคายุติธรรม ฿3,383 ราคาที่ร้านเดียวที่ขายรุ่นนี้ตั้งไว้ ฿2,590)"
+    )
+    assert check.payload()["market_flagged_single_store"] == 1
+
+
+def _priced_below_spec(factor: float, model: str = "Core i5-13400") -> pd.DataFrame:
+    """``_cpu_catalogue`` with every store selling ``model`` at ``factor`` x."""
+    current = _cpu_catalogue(3)
+    current.loc[current["model"] == model, "price"] *= factor
+    return current
+
+
+def test_run_models_flags_a_model_every_store_sells_below_fair() -> None:
+    # SPEC round 21 (2026.11-v20): every store sells the model ~28% below what
+    # its specs predict. Inside the 40% gap and not a sibling inversion, so
+    # only the market check can flag it: the stores, not the model, set the
+    # price, so it is no deal.
+    from pricewatch.ml.train import MARKET_REASON_PREFIX, SIBLING_REASON_PREFIX, UNCERTAIN_GAP
+
+    current = _priced_below_spec(0.72)
+    target = current["model"] == "Core i5-13400"
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    ins = report.insights
+    assert (ins.loc[target, "pct_vs_fair"].abs() < UNCERTAIN_GAP).all()
+    assert ins.loc[target, "fair_uncertain"].astype(bool).all()
+    assert ins.loc[target, "deal_score"].isna().all()
+    assert ins.loc[target, "recommendation"].isna().all()
+    reasons = ins.loc[target, "recommendation_reason"]
+    assert reasons.str.startswith(MARKET_REASON_PREFIX).all()
+    assert not reasons.str.startswith(SIBLING_REASON_PREFIX).any()
+    assert "ราคากลางของทุกร้านที่ขายรุ่นนี้" in reasons.iloc[0]
+    assert report.market[("cpu", "fair_value_mlr")]["market_flagged"] >= int(target.sum())
+
+
+def test_a_fair_price_shown_24_percent_above_the_stores_keeps_its_deal() -> None:
+    # One whole percent under the rule: still a Deal Score and a call.
+    from pricewatch.ml.train import shown_pct
+
+    current = _priced_below_spec(0.72)
+    fair = run_models(current, pd.DataFrame(), figures=None).insights["fair_price"]
+    target = current["model"] == "Core i5-14400"
+    # Its own fold never sees its prices, so its fair price stays put.
+    current.loc[target, "price"] = float(fair[target].iloc[0]) / 1.24
+
+    ins = run_models(current, pd.DataFrame(), figures=None).insights
+
+    gap = ins.loc[target, "fair_price"] / current.loc[target, "price"] - 1
+    assert {shown_pct(g) for g in gap} == {24}
+    assert not ins.loc[target, "fair_uncertain"].astype(bool).any()
+    assert ins.loc[target, "deal_score"].notna().all()
+    assert ins.loc[target, "recommendation"].notna().all()
+
+
+def test_sibling_reason_wins_over_the_market_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pricewatch.ml import train
+
+    current = _gpu_catalogue(7)
+    current["model"] = current["chip"] + np.where(current["vram_gb"] == 16, " 16GB", " 8GB")
+    current["memory_type"] = "GDDR7"
+    # Every dominated model is "inverted", so the two checks overlap.
+    monkeypatch.setattr(train, "SIBLING_TOLERANCE", -1.0)
+
+    report = train.run_models(current, pd.DataFrame(), figures=None)
+
+    ins = report.insights
+    market = train.market_check(current, ins["fair_price"]).flagged
+    reasons = ins["recommendation_reason"].fillna("")
+    sibling = reasons.str.startswith(train.SIBLING_REASON_PREFIX)
+    both = market & ins["fair_uncertain"].astype(bool) & sibling
+    assert both.any()
+    assert not reasons[both].str.startswith(train.MARKET_REASON_PREFIX).any()
+    payload = report.market[("gpu", "fair_value_mlr")]
+    assert payload["market_flagged"] == int(market.sum())
+    assert payload["market_gap"] == train.MARKET_GAP
 
 
 def test_timing_tree_is_rejected_when_it_cannot_beat_chance() -> None:
@@ -1408,6 +1580,46 @@ def test_the_web_recognises_the_workstation_reason_verbatim() -> None:
     assert f'"{WORKSTATION_REASON}"' in web.read_text(encoding="utf-8")
 
 
+def test_the_web_recognises_the_market_reason_prefix() -> None:
+    # format.ts builds it as `${UNCERTAIN_LEAD}<tail>`; the card prints such
+    # a reason as stored only when the prefix matches (2026.11-v20).
+    from pathlib import Path
+
+    from pricewatch.ml.train import MARKET_REASON_PREFIX
+
+    lead = "ประเมินไม่แน่นอน: "
+    web = (Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "format.ts").read_text(
+        encoding="utf-8"
+    )
+    assert MARKET_REASON_PREFIX.startswith(lead)
+    assert f'const UNCERTAIN_LEAD = "{lead}"' in web
+    assert f"MARKET_REASON_PREFIX = `${{UNCERTAIN_LEAD}}{MARKET_REASON_PREFIX[len(lead) :]}`" in web
+
+
+def test_threadripper_is_left_out_of_the_cost_per_core_and_the_tier_tree() -> None:
+    # SPEC round 21, fix 2 (2026.11-v20): every CPU price model, not only the MLR.
+    current = _ryzen_catalogue(5)
+    workstation = current["model"].str.contains("Threadripper")
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    slr = report.market[("cpu", "simple_regression")]
+    tree = report.market[("cpu", "tier_tree")]
+    assert slr["n"] == int((~workstation).sum())
+    assert slr["workstation_excluded"] == tree["workstation_excluded"] == 15
+    assert slr["workstation_product_ids"] == sorted(
+        int(k) for k in current.loc[workstation, "canonical_id"].unique()
+    )
+    nodes = tree["tree"]["nodes"]
+    assert nodes[0]["n"] == int((~workstation).sum())
+    # No leaf prices a 64-96-core part: the dearest desktop part is the ceiling.
+    leaves = [n["value"] for n in nodes if n["left"] is None]
+    assert max(leaves) <= current.loc[~workstation, "price"].max()
+    # Other categories report nothing left out.
+    gpu = run_models(_gpu_catalogue(7), pd.DataFrame(), figures=None).market
+    assert gpu[("gpu", "simple_regression")]["workstation_excluded"] == 0
+
+
 def test_a_category_too_small_to_fit_still_explains_its_workstation_parts() -> None:
     # The CPU fit is skipped under 15 listings; Threadripper must still read
     # as a workstation part, not as "specs missing".
@@ -1441,7 +1653,7 @@ def test_cpu_with_threads_but_no_core_count_is_still_priced() -> None:
 
 
 def test_fair_price_far_from_market_is_flagged_and_never_ranked() -> None:
-    from pricewatch.ml.train import UNCERTAIN_GAP, uncertain_reason
+    from pricewatch.ml.train import MARKET_REASON_PREFIX, UNCERTAIN_GAP, uncertain_reason
 
     current = _gpu_catalogue(7)
     # Every store sells one product at ~35% of its spec-implied price: a gap
@@ -1453,14 +1665,21 @@ def test_fair_price_far_from_market_is_flagged_and_never_ranked() -> None:
 
     flagged = ins["fair_uncertain"].astype(bool)
     assert flagged[odd].all()
-    assert (ins.loc[flagged, "pct_vs_fair"].abs() > UNCERTAIN_GAP).all()
+    reasons = ins["recommendation_reason"].fillna("")
+    market = reasons.str.startswith(MARKET_REASON_PREFIX)
+    gap = ins["pct_vs_fair"].abs() > UNCERTAIN_GAP
+    # Every flag has one of the two causes (no sibling check fires here).
+    assert (gap | market)[flagged].all() and not market[~flagged].any()
     assert ins.loc[flagged, "fair_price"].notna().all()  # kept for reference
     assert ins.loc[flagged, "deal_score"].isna().all()  # so never ranked
     assert ins.loc[flagged, "recommendation"].isna().all()
-    expected = [uncertain_reason(p) for p in ins.loc[flagged, "pct_vs_fair"]]
-    assert ins.loc[flagged, "recommendation_reason"].tolist() == expected
-    # The product sold at ~35% of its value reads cheaper, with its own gap.
-    assert ins.loc[odd, "recommendation_reason"].str.contains("ราคาจริงถูกกว่าราคายุติธรรม").all()
+    gap_only = flagged & ~market
+    expected = [uncertain_reason(p) for p in ins.loc[gap_only, "pct_vs_fair"]]
+    assert ins.loc[gap_only, "recommendation_reason"].tolist() == expected
+    # Every store sells the odd product at ~35% of its spec-implied price:
+    # beyond the 40% gap too, but the market reason names what the stores
+    # charge, so it is the one shown (2026.11-v20).
+    assert gap[odd].all() and market[odd].all()
     # Everything else keeps a score and an honest error band.
     rest = ins["fair_price"].notna() & ~flagged
     assert rest.any() and ins.loc[rest, "deal_score"].notna().all()

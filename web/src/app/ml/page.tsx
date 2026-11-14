@@ -16,7 +16,15 @@ import {
 } from "@/components/ml-charts";
 import { SpecScatter } from "@/components/spec-scatter";
 import { TreeDiagram } from "@/components/tree-diagram";
-import { CATEGORY_LABELS, CLUSTER_LABELS, RECOMMENDATION_LABELS, featureLabel, formatDateTime, formatTHB } from "@/lib/format";
+import {
+  CATEGORY_LABELS,
+  CLUSTER_LABELS,
+  RECOMMENDATION_LABELS,
+  featureLabel,
+  formatDateTime,
+  formatTHB,
+  workstationNote,
+} from "@/lib/format";
 import {
   demandPoints,
   dendrogram,
@@ -25,7 +33,10 @@ import {
   fitUncertain,
   leaves,
   minorityLeaf,
+  marketCheck,
   mlrInputs,
+  workstationExcluded,
+  workstationProductIds,
   pathTo,
   priceLeafText,
   residualBins,
@@ -326,7 +337,9 @@ export default async function MlPage() {
   // ---- A. Simple linear regression
   const slr = categories.flatMap((c) => {
     const p = find(insights, c, "simple_regression");
-    return p ? [{ c, p, points: specPoints.filter((q) => q.category === c) }] : [];
+    // Only the points the line was fitted on (v20 leaves workstation CPUs out).
+    const left = workstationProductIds(p);
+    return p ? [{ c, p, points: specPoints.filter((q) => q.category === c && !left.has(q.id)) }] : [];
   });
   const slrExample = (() => {
     const first = slr.find((s) => s.points.length > 0);
@@ -357,6 +370,8 @@ export default async function MlPage() {
   })();
   // Sibling-inversion margin (train.SIBLING_TOLERANCE, 2026.11-v17+); null hides the rule.
   const siblingTolerance = mlr.map((m) => siblingInversions(m.p)?.tolerance ?? null).find((v) => v !== null) ?? null;
+  // Market check (train.MARKET_GAP, 2026.11-v20+); null hides the rule.
+  const marketGap = mlr.map((m) => marketCheck(m.p)?.gap ?? null).find((v) => v !== null) ?? null;
   const cvFolds = mlr.map((m) => opt(m.p.cv_folds)).find((v) => v !== null) ?? null;
   const intervalLevel = mlr.map((m) => opt(m.p.interval_level)).find((v) => v !== null) ?? null;
   const intervalPct = intervalLevel === null ? null : Math.round(intervalLevel * 100);
@@ -576,6 +591,7 @@ export default async function MlPage() {
                       xLabel={AXIS[c].name}
                       xUnit={AXIS[c].unit}
                     />
+                    {workstationExcluded(p) > 0 && <p className="text-xs text-muted">{workstationNote(workstationExcluded(p))}</p>}
                   </div>
                 ),
               }))}
@@ -713,14 +729,8 @@ export default async function MlPage() {
                             · ไม่คิดส่วนเพิ่มของรุ่นปลดล็อก (K / X) รุ่น K / X จึงได้ราคายุติธรรมเท่ารุ่นที่ล็อกซึ่งสเปกอื่นเท่ากัน
                           </>
                         )}
-                        {/* 2026.11-v19: Threadripper is listed but left out of the fit. */}
-                        {(opt(p.workstation_excluded) ?? 0) > 0 && (
-                          <>
-                            {" "}
-                            · ไม่รวมซีพียูเวิร์กสเตชัน (Threadripper){" "}
-                            <span className="tabular">{count(p.workstation_excluded)}</span> รายการ ซึ่งไม่มีราคายุติธรรม
-                          </>
-                        )}
+                        {/* 2026.11-v19+: Threadripper is listed but left out of the fit. */}
+                        {workstationExcluded(p) > 0 && <> · {workstationNote(workstationExcluded(p))}</>}
                       </p>
                     )}
                     <div className="space-y-2">
@@ -807,8 +817,9 @@ export default async function MlPage() {
               {siblingTolerance !== null && (
                 <>
                   {" "}
-                  · จุดกากบาทคือรายการที่ประเมินไม่แน่นอน ซึ่งรวมรุ่นที่ราคายุติธรรมกลับด้านกับรุ่นพี่น้อง (หัวข้อผลลัพธ์ด้านล่าง)
-                  แม้จะอยู่ในเส้นประ
+                  · จุดกากบาทคือรายการที่ประเมินไม่แน่นอน ซึ่งรวมรุ่นที่ราคายุติธรรมกลับด้านกับรุ่นพี่น้อง
+                  {marketGap !== null && <> และรุ่นที่ราคายุติธรรมสูงกว่าราคาที่ร้านขายตั้งแต่ {Math.round(marketGap * 100)}%</>}{" "}
+                  (หัวข้อผลลัพธ์ด้านล่าง) แม้จะอยู่ในเส้นประ
                 </>
               )}
             </p>
@@ -846,6 +857,7 @@ export default async function MlPage() {
                 const bpFail = d ? num(d.breusch_pagan_p) < 0.05 : false;
                 const vifHigh = d ? num(d.max_vif) > 10 : false;
                 const siblings = siblingInversions(p);
+                const market = marketCheck(p);
                 return (
                   <li key={c} className="border-l-[3px] border-border pl-3">
                     <div className="font-semibold">{CATEGORY_LABELS[c]}</div>
@@ -887,6 +899,19 @@ export default async function MlPage() {
                         )}
                       </div>
                     )}
+                    {market && (
+                      <div>
+                        ราคายุติธรรมสูงกว่าราคาที่ร้านขายตั้งแต่{" "}
+                        <span className="tabular">{Math.round(market.gap * 100)}%</span>{" "}
+                        <span className="tabular">{count(market.flagged)}</span> รายการ
+                        {market.flagged > 0 && (
+                          <>
+                            {" "}
+                            (เป็นรุ่นที่ขายร้านเดียว <span className="tabular">{count(market.singleStore)}</span> รายการ)
+                          </>
+                        )}
+                      </div>
+                    )}
                     {d && (
                       <div className="text-muted">
                         ตรวจสมมติฐาน: residual {jbFail ? "ไม่ได้กระจายแบบระฆังคว่ำ (การแจกแจงปกติ)" : "กระจายใกล้เคียงแบบปกติ"} (Jarque–Bera
@@ -922,6 +947,18 @@ export default async function MlPage() {
                 {Math.round(siblingTolerance * 100)}% โมเดลเรียงสองรุ่นนี้ผิด รุ่นที่ด้อยกว่าจะได้ป้ายประเมินไม่แน่นอนและไม่ได้ Deal Score
                 เพราะราคายุติธรรมที่สูงเกินจริงจะทำให้ดูเหมือนเป็นดีล ส่วนรุ่นที่ดีกว่ายังได้ Deal Score ตามปกติ
                 จำนวนคู่และตัวอย่างของแต่ละหมวดอยู่ในรายการด้านบน
+              </p>
+            )}
+            {marketGap !== null && (
+              <p>
+                <span className="font-semibold">ตรวจกับราคาตลาด:</span> เทียบราคายุติธรรมกับราคากลางของรุ่นเดียวกันจากทุกร้าน
+                โดยนับร้านละหนึ่งราคา (ร้านที่มีของก่อน ถ้าไม่มีร้านไหนมีของ ใช้ราคาล่าสุดของทุกร้าน)
+                ถ้าราคายุติธรรมสูงกว่าตั้งแต่ {Math.round(marketGap * 100)}%
+                (ปัดเป็นจำนวนเต็มแบบตัวเลขบนเว็บ) รายการนั้นได้ป้ายประเมินไม่แน่นอนและไม่ได้ Deal Score
+                เพราะถ้าร้านขายรุ่นนี้ในราคานั้นกันอยู่แล้ว ส่วนต่างนั้นมาจากโมเดลไม่ใช่ดีล เหตุผลบนหน้าสินค้าบอกว่าเทียบกับราคากลางของทุกร้าน
+                หรือราคาของร้านเดียวที่ขาย ข้อเสียคือรุ่นที่ขายร้านเดียวจะเทียบกับราคาของตัวเอง
+                จึงขึ้นเป็นดีลได้ไม่เกินราว {Math.round((1 - 1 / (1 + marketGap)) * 100)}% ใต้ราคายุติธรรม
+                ถ้ารายการติดทั้งข้อนี้และข้อรุ่นพี่น้อง จะแสดงเหตุผลของรุ่นพี่น้อง จำนวนของแต่ละหมวดอยู่ในรายการด้านบน
               </p>
             )}
             <details className="group">
@@ -980,6 +1017,7 @@ export default async function MlPage() {
                     <p className="tabular text-xs text-muted">
                       R²(cv) {fixed(p.r2_cv)} · {String(p.leaves)} ใบ (ระดับราคา)
                     </p>
+                    {workstationExcluded(p) > 0 && <p className="text-xs text-muted">{workstationNote(workstationExcluded(p))}</p>}
                     {nodes ? (
                       <TreeDiagram
                         nodes={nodes}

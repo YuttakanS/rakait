@@ -277,8 +277,11 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
                   {" "}ในกลุ่ม <span className="whitespace-nowrap">“{CLUSTER_LABELS[cluster].label}”</span>
                 </>
               )}
-              {total > products.length && ` (แสดง ${products.length} อันดับแรก)`} · Deal เกิน 50
-              แปลว่าถูกกว่าราคายุติธรรม
+              {total > products.length && ` (แสดง ${products.length} อันดับแรก)`}
+              {/* Only when a shown card carries a Deal (ProductCard: in stock and
+                  scored), e.g. not for "threadripper". */}
+              {products.some((p) => p.inStockOffers > 0 && p.bestDeal !== null) &&
+                " · Deal เกิน 50 แปลว่าถูกกว่าราคายุติธรรม"}
             </p>
             {cluster && <p className="mt-1 max-w-2xl text-sm text-muted">{CLUSTER_LABELS[cluster].hint}</p>}
             {/* The group's typical model beside the typical model overall, so

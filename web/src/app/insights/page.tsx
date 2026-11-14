@@ -4,7 +4,7 @@ import type { Effect } from "@/components/effect-bars";
 import { SpecScatter } from "@/components/spec-scatter";
 import { StatNote } from "@/components/stat-note";
 import { demandReference, shareTile } from "@/lib/demand";
-import { CATEGORY_LABELS, CLUSTER_LABELS, featureLabel, formatDateTime, formatTHB } from "@/lib/format";
+import { CATEGORY_LABELS, CLUSTER_LABELS, featureLabel, formatDateTime, formatTHB, workstationNote } from "@/lib/format";
 import {
   BOOLEAN_FEATURES,
   FACTOR_HINTS,
@@ -15,7 +15,7 @@ import {
   salesRate,
   tierLabel,
 } from "@/lib/market";
-import { siblingInversions, siblingSentence } from "@/lib/ml";
+import { siblingInversions, siblingSentence, workstationExcluded, workstationProductIds } from "@/lib/ml";
 import { countModelsByCluster, getMarketInsights, getSpecPoints } from "@/lib/queries";
 import type { Category, DemandCluster, MarketInsight, Recommendation } from "@/lib/types";
 
@@ -262,6 +262,7 @@ export default async function InsightsPage() {
                     detail={`Simple Linear Regression: Ŷ = β₀ + β₁X · β₁ = ${fixed(p.slope_thb_per_unit, 1)} บาท/${String(p.unit)} · R² = ${fixed(p.r2)} · n = ${String(p.n)}`}
                   />
                 </p>
+                {workstationExcluded(p) > 0 && <p className="text-xs text-muted">{workstationNote(workstationExcluded(p))}</p>}
                 <table className="w-full text-sm">
                   <thead className="text-left text-xs text-muted">
                     <tr>
@@ -300,7 +301,8 @@ export default async function InsightsPage() {
                   </summary>
                   <div className="mt-2 space-y-2">
                     <SpecScatter
-                      points={points.filter((q) => q.category === c)}
+                      // Only the points the line was fitted on (v20 leaves workstation CPUs out).
+                      points={points.filter((q) => q.category === c && !workstationProductIds(p).has(q.id))}
                       slope={num(p.slope_thb_per_unit)}
                       intercept={num(p.intercept_thb)}
                       xLabel={UNIT[c].axis}
@@ -338,6 +340,7 @@ export default async function InsightsPage() {
                     detail={`Multiple Linear Regression บน log(ราคา) · R²(cross-validated) = ${fixed(p.r2_cv)} · MAPE = ${fixed(num(p.mape_cv) * 100, 1)}% · n = ${String(p.n)}${siblingDetail(p)}`}
                   />
                 </div>
+                {workstationExcluded(p) > 0 && <p className="text-xs text-muted">{workstationNote(workstationExcluded(p))}</p>}
                 <ol className="space-y-3">
                   {factors.map((f, i) => {
                     const yesNo = BOOLEAN_FEATURES.has(f.feature);

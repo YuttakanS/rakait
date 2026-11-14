@@ -394,6 +394,7 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
 
     from pricewatch.db.linking import link_listings
     from pricewatch.ml.train import (
+        MARKET_REASON_PREFIX,
         MODEL_VERSION,
         SIBLING_REASON_PREFIX,
         SIBLING_TOLERANCE,
@@ -448,10 +449,9 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
     odd_title = "VGA MSI GEFORCE RTX 5060 Ti - 12GB GDDR7"
     odd_rows = [r for r in rows if r["title"] == odd_title]
     assert odd_rows and all(r["fair_uncertain"] for r in odd_rows)
-    # The outlier itself is explained by its own gap ("ราคาจริงถูกกว่า…").
-    assert all(
-        r["recommendation_reason"] == uncertain_reason(float(r["pct_vs_fair"])) for r in odd_rows
-    )
+    # Every store sells the outlier at that price, so it is explained by the
+    # stores' price (the market check, 2026.11-v20), not its own gap.
+    assert all(r["recommendation_reason"].startswith(MARKET_REASON_PREFIX) for r in odd_rows)
     flagged = [r for r in rows if r["fair_uncertain"]]
     cited: set[tuple[str, str]] = set()  # (lesser model, better sibling it names)
     for r in flagged:
@@ -459,6 +459,8 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
         assert r["deal_score"] is None
         assert r["recommendation"] is None
         reason = r["recommendation_reason"]
+        if reason.startswith(MARKET_REASON_PREFIX):
+            continue
         if not reason.startswith(SIBLING_REASON_PREFIX):
             assert reason == uncertain_reason(float(r["pct_vs_fair"]))
             continue

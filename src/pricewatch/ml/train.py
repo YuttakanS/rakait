@@ -27,7 +27,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v19"
+MODEL_VERSION = "2026.11-v20"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -147,9 +147,11 @@ def workstation_cpu(frame: pd.DataFrame) -> pd.Series:
     were priced from it; with a platform flag they were themselves mispriced
     (the 24-core 9965WX at 189k THB against its 115k, Deal 100). Like
     workstation GPUs (``normalize._WORKSTATION_RE``) they are left out of the
-    fair-value model, but they stay linked so the site still lists their
-    prices: ``run_models`` gives them no fair price, Deal Score or
-    recommendation, and ``WORKSTATION_REASON``. Vectorised, O(n * len(model)).
+    CPU price models (the fair-value MLR since 2026.11-v19; the simple
+    regression and the tier tree since v20; K-Means demand still sees them),
+    but they stay linked so the site still lists their prices: ``run_models``
+    gives them no fair price, Deal Score or recommendation, and
+    ``WORKSTATION_REASON``. Vectorised, O(n * len(model)).
 
     Args:
         frame: CPU listings with ``model`` (missing: not a workstation part).
@@ -669,9 +671,25 @@ def shown_pct(fraction: float) -> int:
     Returns:
         The rounded whole percent, e.g. 37.
     """
-    value = fraction * 100
-    whole = math.floor(value)
-    return whole + 1 if value - whole >= 0.5 else whole
+    return int(shown_pcts(np.array([fraction], dtype=float))[0])
+
+
+def shown_pcts(fractions: np.ndarray | pd.Series) -> np.ndarray:
+    """``shown_pct`` over an array: the one rounding every gap rule uses.
+
+    Python's half of the web's ``wholePct`` (web/src/lib/format.ts), so a
+    rule decided here (the market check, ``gap_clears_band``) agrees with
+    the percent the shopper reads. NaN stays NaN. Vectorised, O(n).
+
+    Args:
+        fractions: Ratios such as 0.2487 for 24.87%.
+
+    Returns:
+        Whole percents as floats (24.87% -> 25.0), NaN where the input is.
+    """
+    value = np.asarray(fractions, dtype=float) * 100
+    whole = np.floor(value)
+    return np.where(value - whole >= 0.5, whole + 1, whole)
 
 
 def uncertain_reason(pct_vs_fair: float) -> str:
@@ -1016,6 +1034,160 @@ def sibling_check(
     return SiblingCheck(
         flagged=flagged, reasons=key.map(model_reason).where(flagged, None), pairs=pairs
     )
+
+
+#: Market check (SPEC round 21, 2026.11-v20): a fair price this far above
+#: the price the stores actually charge for the same product is the model's
+#: error, not a deal. The live v19 catalogue ranked Ryzen 5 4500 at Deal 93
+#: ("ซื้อเลย") at the 2,590 THB every store charges, its fair price 31% above
+#: that, and the 7700X3D at 24.87%. Compared as the whole percent the shopper
+#: reads (``shown_pcts``, flagged from 25%), so the 7700X3D's "25%" counts.
+#: The user dropped the 15% ceiling for this rule (it flags 15-40% of RAM /
+#: SSD listings, whose MLR is the next round's job).
+MARKET_GAP = 0.25
+#: Start of every market reason, whatever the number of stores; the web
+#: prints such a reason as stored (``MARKET_REASON_PREFIX`` in format.ts).
+MARKET_REASON_PREFIX = "ประเมินไม่แน่นอน: ราคายุติธรรมสูงกว่าราคาที่ร้านขายรุ่นนี้"
+
+
+def market_median(frame: pd.DataFrame) -> pd.DataFrame:
+    """Market price of each listing's product: the median over its stores.
+
+    One price per store first, so a store listing a model several times does
+    not outweigh the others: the median of the store's in-stock listings, or
+    of all its listings when none is in stock. Then the median over the
+    stores that have it in stock, or over every store when none does. The
+    product is ``product_key`` (an unlinked listing is its own); the store is
+    ``merchant`` (one store when absent). Grouped medians over (product,
+    store) pairs, O(n log n).
+
+    Args:
+        frame: Listings with ``price``, ``listing_id`` and optionally
+            ``canonical_id``, ``merchant`` and ``in_stock``.
+
+    Returns:
+        Per listing, aligned with ``frame``: ``median`` (the market price),
+        ``used`` (stores it was taken over) and ``listed`` (stores listing
+        the product at all, in stock or not).
+    """
+    key = product_key(frame)
+    store = frame["merchant"] if "merchant" in frame else pd.Series("", index=frame.index)
+    price = frame["price"].astype(float)
+    in_stock = (
+        frame["in_stock"].fillna(False).astype(bool)
+        if "in_stock" in frame
+        else pd.Series(True, index=frame.index)
+    )
+    per_store = pd.DataFrame(
+        {
+            "stocked": price.where(in_stock).groupby([key, store]).median(),
+            "latest": price.groupby([key, store]).median(),
+        }
+    )
+    by_model = per_store.groupby(level=0)
+    stocked_stores = by_model["stocked"].count()
+    use_stocked = stocked_stores > 0
+    listed = by_model["latest"].count()
+    model = pd.DataFrame(
+        {
+            "median": by_model["stocked"].median().where(use_stocked, by_model["latest"].median()),
+            "used": stocked_stores.where(use_stocked, listed),
+            "listed": listed,
+        }
+    )
+    return model.reindex(key.to_numpy()).set_axis(frame.index).astype({"used": int, "listed": int})
+
+
+def market_reason(fair: float, median: float, used: int, listed: int) -> str:
+    """Reason stored for a listing whose fair price is above the market's.
+
+    Names where the price comes from: "ราคากลางของทุกร้านที่ขายรุ่นนี้ ฿2,590"
+    over two or more stores, "ราคาที่ร้านเดียวที่ขายรุ่นนี้ตั้งไว้ ฿2,590" for a
+    model one store lists, "ราคาของร้านเดียวที่มีของตอนนี้ ฿12,290" when
+    other stores list it sold out. E.g. "ประเมินไม่แน่นอน: ราคายุติธรรมสูงกว่าราคาที่ร้าน
+    ขายรุ่นนี้ 31% (ราคายุติธรรม ฿3,383 ราคากลางของทุกร้านที่ขายรุ่นนี้
+    ฿2,590) โมเดลยังประเมินรุ่นนี้ได้ไม่ดี จึงไม่ใช้จัดอันดับดีล". Percent by
+    ``shown_pct``, prices as the web prints them. O(1).
+
+    Args:
+        fair: The listing's fair price (THB).
+        median: ``market_median`` of its product (THB).
+        used: How many stores ``median`` was taken over.
+        listed: How many stores list the product at all.
+
+    Returns:
+        The full reason.
+    """
+    if used > 1:
+        market = f"ราคากลางของทุกร้านที่ขายรุ่นนี้ {_thb(median)}"
+    elif listed > 1:
+        market = f"ราคาของร้านเดียวที่มีของตอนนี้ {_thb(median)}"
+    else:
+        market = f"ราคาที่ร้านเดียวที่ขายรุ่นนี้ตั้งไว้ {_thb(median)}"
+    return (
+        f"{MARKET_REASON_PREFIX} {shown_pct(fair / median - 1)}% "
+        f"(ราคายุติธรรม {_thb(fair)} {market}) {UNCERTAIN_FIT}"
+    )
+
+
+@dataclass
+class MarketCheck:
+    """Outcome of the market check for one category.
+
+    Attributes:
+        flagged: Per listing, whether its fair price is at least
+            ``MARKET_GAP`` (as shown) above its product's market median.
+        reasons: Per listing, its ``market_reason``, None when not flagged.
+        market: Per listing, ``market_median`` (``median``, ``used``,
+            ``listed``).
+    """
+
+    flagged: pd.Series
+    reasons: pd.Series
+    market: pd.DataFrame
+
+    def payload(self) -> dict[str, Any]:
+        """The ``fair_value_mlr`` fields of this check (2026.11-v20)."""
+        return {
+            "market_gap": MARKET_GAP,
+            "market_flagged": int(self.flagged.sum()),
+            # Models only one store lists: compared with their own price.
+            "market_flagged_single_store": int((self.flagged & (self.market["listed"] == 1)).sum()),
+        }
+
+
+def market_check(frame: pd.DataFrame, fair_price: pd.Series) -> MarketCheck:
+    """Flag fair prices well above what the stores charge for the product.
+
+    Flagged when ``shown_pct(fair / median - 1) >= shown_pct(MARKET_GAP)``,
+    with the fair price rounded to the baht as stored and ``median`` from
+    :func:`market_median`. Unscored listings (NaN fair) are never flagged. A
+    product sold at one store is compared with its own price, so it cannot
+    rank as more than ~20% below fair (the user's accepted trade-off).
+    Vectorised, O(n log n) for the medians, plus one string per flag.
+
+    Args:
+        frame: Listings of one category.
+        fair_price: The MLR's fair price per listing (NaN = unscored).
+
+    Returns:
+        The flags, reasons and market prices (:class:`MarketCheck`).
+    """
+    market = market_median(frame)
+    fair = fair_price.reindex(frame.index).round(0)
+    shown = pd.Series(shown_pcts(fair / market["median"] - 1), index=frame.index)
+    flagged = shown.ge(shown_pct(MARKET_GAP)) & fair.notna()  # NaN compares False
+    reasons = pd.Series(
+        [
+            market_reason(float(f), float(m), int(u), int(n)) if hit else None
+            for f, m, u, n, hit in zip(
+                fair, market["median"], market["used"], market["listed"], flagged, strict=True
+            )
+        ],
+        index=frame.index,
+        dtype=object,
+    )
+    return MarketCheck(flagged=flagged, reasons=reasons, market=market)
 
 
 def gap_clears_band(pct_vs_fair: float, fair_error_pct: float) -> bool:
@@ -1397,6 +1569,8 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
     report = TrainReport(insights=insights)
     # Per listing, the sibling-inversion reason of its model (None when none).
     sibling_reasons = pd.Series(None, index=current.index, dtype=object)
+    # Per listing, the market-check reason (None when none; 2026.11-v20).
+    market_reasons = pd.Series(None, index=current.index, dtype=object)
     # Per listing, whether it is a workstation part the MLR does not price.
     # Flagged up front, so the reason never depends on a fit running (a
     # category skipped for too few rows still says why it has no fair price).
@@ -1409,11 +1583,18 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             continue
         price = frame["price"]
         specs = spec_features(frame, category)
+        # Workstation CPUs stay listed but no price model sees them: not the
+        # fair value (2026.11-v19), nor the cost per core or the tier tree
+        # (2026.11-v20, SPEC round 21). ``WORKSTATION_REASON`` below.
+        workstation = workstation_rows.loc[frame.index]
+        excluded = int(workstation.sum())
+        priced = frame.loc[~workstation]
+        priced_specs, priced_price = specs.loc[~workstation], price.loc[~workstation]
 
         # A. Simple linear regression.
         column, unit = SLR_FEATURES[category]
         try:
-            slr = m.simple_regression(numeric(frame, column), price, column)
+            slr = m.simple_regression(numeric(priced, column), priced_price, column)
             resid = slr.residuals.dropna()
             budget = resid[resid < -resid.std()].nsmallest(5).index
             report.market[(category.value, "simple_regression")] = {
@@ -1423,19 +1604,22 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "intercept_thb": slr.intercept,
                 "r2": slr.r2,
                 "n": slr.n,
-                "budget_listing_ids": frame.loc[budget, "listing_id"].astype(int).tolist(),
+                "budget_listing_ids": priced.loc[budget, "listing_id"].astype(int).tolist(),
+                "workstation_excluded": excluded,
+                # The canonical products left out, so the web's scatter of
+                # this fit drops the same points (2026.11-v20).
+                "workstation_product_ids": sorted(
+                    int(k) for k in frame.loc[workstation, "canonical_id"].dropna().unique()
+                )
+                if "canonical_id" in frame
+                else [],
             }
             if figures:
-                _plot_slr(figures, category, numeric(frame, column), price, slr, unit)
+                _plot_slr(figures, category, numeric(priced, column), priced_price, slr, unit)
         except ValueError as exc:
             report.notes.append(f"{category.value} simple regression: {exc}")
 
         # B. Multiple linear regression -> fair value and Deal Score.
-        # Workstation CPUs stay listed but are neither fitted nor priced
-        # (SPEC round 21, 2026.11-v19): ``WORKSTATION_REASON`` below.
-        workstation = workstation_rows.loc[frame.index]
-        priced = frame.loc[~workstation]
-        priced_specs, priced_price = specs.loc[~workstation], price.loc[~workstation]
         try:
             key = product_key(priced)
             mlr = m.fit_fair_value(
@@ -1452,7 +1636,10 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
             # against a sibling model's (SPEC round 19, 2026.11-v17).
             siblings = sibling_check(priced, priced_specs, category, mlr.fair_price)
             sibling_reasons.loc[priced.index] = siblings.reasons
-            uncertain = (pct.abs() > UNCERTAIN_GAP) | siblings.flagged
+            # ... or one well above what the stores charge (2026.11-v20).
+            market = market_check(priced, mlr.fair_price)
+            market_reasons.loc[priced.index] = market.reasons
+            uncertain = (pct.abs() > UNCERTAIN_GAP) | siblings.flagged | market.flagged
             scores = m.deal_score(mlr.z_residual).where(~uncertain)
             insights.loc[priced.index, "fair_price"] = mlr.fair_price.round(0)
             insights.loc[priced.index, "residual"] = (priced_price - mlr.fair_price).round(0)
@@ -1471,13 +1658,14 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 "required": REQUIRED_FOR_FAIR_VALUE[category],
                 "unscored": int(mlr.fair_price.isna().sum()),
                 # Listed but left out of the fit and unpriced (2026.11-v19+).
-                "workstation_excluded": int(workstation.sum()),
+                "workstation_excluded": excluded,
                 "extrapolated": mlr.extrapolated,
                 # Every uncertain listing, gap or sibling (2026.11-v17+); the
                 # sibling_* fields count the second cause on its own.
                 "uncertain": int(uncertain.sum()),
                 "uncertain_gap": UNCERTAIN_GAP,
                 **siblings.payload(),
+                **market.payload(),
                 "error_pct_median": float(mlr.error_pct().median()),
                 # Coverage of the "± Y%" interval (2026.11-v13).
                 "interval_level": m.INTERVAL_LEVEL,
@@ -1500,7 +1688,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
 
         # C. Regression tree over hardware tiers.
         try:
-            tier = m.fit_tier_tree(specs, price)
+            tier = m.fit_tier_tree(priced_specs, priced_price)
             report.market[(category.value, "tier_tree")] = {
                 "rules": tier.rules,
                 "r2_cv": tier.r2_cv,
@@ -1509,6 +1697,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
                 # Node-link structure for /ml (2026.11-v13); leaf values in THB.
                 "tree": {"nodes": tier.nodes, "value": "price_thb"},
                 "max_depth": m.MAX_TREE_DEPTH,
+                "workstation_excluded": excluded,
             }
             if figures:
                 _plot_tree(figures, f"{category.value}_tier_tree", tier.model, tier.features)
@@ -1651,14 +1840,23 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         insights["recommendation"] = [r[0] for r in recs]
         insights["recommendation_reason"] = [reason for _, reason in recs]
     # Whatever produced the recommendation, an uncertain fair price cannot
-    # back a buy / wait call. A sibling inversion names the other model, so
-    # it is the more specific reason when a listing has both causes.
+    # back a buy / wait call. One reason per listing, most specific first: a
+    # sibling inversion (names the other model; the user's choice when it
+    # meets the market check), then the market check (names the stores'
+    # price), then the listing's own gap.
     flagged = insights["fair_uncertain"].astype(bool)
     insights.loc[flagged, "recommendation"] = None
     insights.loc[flagged, "recommendation_reason"] = [
-        sibling if isinstance(sibling, str) else uncertain_reason(float(p))
-        for p, sibling in zip(
-            insights.loc[flagged, "pct_vs_fair"], sibling_reasons[flagged], strict=True
+        sibling
+        if isinstance(sibling, str)
+        else market
+        if isinstance(market, str)
+        else uncertain_reason(float(p))
+        for p, sibling, market in zip(
+            insights.loc[flagged, "pct_vs_fair"],
+            sibling_reasons[flagged],
+            market_reasons[flagged],
+            strict=True,
         )
     ]
     # Workstation parts carry no fair price; whatever the rules or the timing
