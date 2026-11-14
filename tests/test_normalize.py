@@ -60,6 +60,48 @@ def test_cpu_titles(title: str, model: str, cores: int | None, clock: float) -> 
 
 
 @pytest.mark.parametrize(
+    ("title", "has_igpu"),
+    [
+        ("ซีพียู Intel Core i5-14400 2.5GHz 10C/16T LGA-1700", True),
+        ("ซีพียู Intel Core i5-14400F 2.5GHz 10C/16T LGA-1700", False),
+        ("CPU INTEL CORE I7-14700KF 3.4 GHz (SOCKET LGA 1700)", False),
+        ("CPU INTEL CORE I9-14900K 3.2 GHz (SOCKET LGA 1700)", True),
+        ("CPU (ซีพียู) AMD RYZEN 5 5600 3.5 GHz (SOCKET AM4)", False),
+        ("CPU (ซีพียู) AMD RYZEN 5 5600G 3.9 GHz (SOCKET AM4)", True),
+        ("CPU (ซีพียู) AMD RYZEN 5 5500GT 3.6 GHz (SOCKET AM4)", True),
+        ("CPU (ซีพียู) AMD RYZEN 5 7600 3.8 GHz (SOCKET AM5)", True),
+        ("ซีพียู AMD Ryzen 5 8400F 4.2GHz 6C/12T AM5", False),
+        # No Threadripper has graphics, Ryzen 7000 / 9000 generation or not.
+        ("CPU AMD RYZEN THREADRIPPER PRO 9975WX 4.0GHz 32C/64T sTR5", False),
+        ("ซีพียู AMD Ryzen Threadripper PRO 7995WX 2.5GHz 96C/192T sTR5", False),
+        ("AMD Ryzen Threadripper 7960X 4.2GHz 24C/48T sTR5", False),
+        # Intel's Core X-series (LGA2066) has none either.
+        ("CPU INTEL CORE I9-10900X 3.7GHz 10C/20T LGA2066", False),
+        ("Intel Core i9-10980XE 3.0GHz 18C/36T LGA2066", False),
+        ("CPU (ซีพียู) AMD RYZEN 9 9900X 4.4 GHz (SOCKET AM5)", True),
+    ],
+)
+def test_cpu_integrated_graphics(title: str, has_igpu: bool) -> None:
+    # The fair-value MLR prices it (2026.11-v18): an F part is the same chip
+    # with its graphics disabled, and sells below its sibling.
+    assert extract(Category.CPU, title).specs["has_igpu"] is has_igpu
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "CPU INTEL XEON E5-2680 V4 2.4GHz 14C/28T LGA2011",
+        "Intel Xeon W-2495X 4.8GHz 36C/72T LGA4677",
+        "AMD EPYC 9654 2.4GHz 96C/192T SP5",
+    ],
+)
+def test_server_cpus_get_no_model_and_no_graphics_flag(title: str) -> None:
+    ex = extract(Category.CPU, title)
+    assert ex.model is None
+    assert "has_igpu" not in ex.specs
+
+
+@pytest.mark.parametrize(
     ("title", "model"),
     [
         (

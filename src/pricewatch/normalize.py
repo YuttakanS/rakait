@@ -234,7 +234,16 @@ def extract_cpu(title: str, spec_text: str | None = None) -> Extracted:
     if model is not None:
         specs["x3d"] = "X3D" in model
         specs["unlocked"] = bool(re.search(r"\d(K|KF|KS|X|X3D)\b", model))
-        specs["has_igpu"] = not bool(re.search(r"\d+F\b|KF\b", model)) and (
+        # No graphics: F / KF parts, Threadripper (HEDT / workstation, every
+        # generation) and Intel's Core X-series ("10900X", "7980XE"). Ryzen
+        # 7000+ desktop parts have graphics; older Ryzen only the G / GT APUs.
+        # Xeon and EPYC titles are not parsed (no model), so get no flag.
+        no_graphics = (
+            bool(re.search(r"\d+F\b|KF\b", model))
+            or "Threadripper" in model
+            or (maker == "Intel" and bool(re.search(r"\d(?:X|XE)\b", model)))
+        )
+        specs["has_igpu"] = not no_graphics and (
             maker == "Intel" or bool(re.search(r"\d+G\b|GT\b", model)) or specs["generation"] >= 7
         )
     return Extracted(maker, maker, model, specs)

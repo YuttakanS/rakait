@@ -252,7 +252,7 @@ const YEAR0 = 2020;
  * branch is the "no" side. The node asks the positive question ("เป็น AMD?"),
  * so its "ใช่" child is sklearn's right one: see `yesNoChildren`.
  */
-const FLAGS = new Set(["is_amd", "x3d", "unlocked", "ddr5", "nvme"]);
+const FLAGS = new Set(["is_amd", "x3d", "unlocked", "has_igpu", "ddr5", "nvme"]);
 
 /** Whether a split is a yes/no question asked positively. */
 export const isFlag = (feature: string | null): boolean => feature !== null && FLAGS.has(feature);

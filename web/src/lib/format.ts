@@ -206,6 +206,9 @@ export const FEATURE_LABELS: Record<string, string> = {
   base_clock_ghz: "ความเร็วสัญญาณนาฬิกา",
   x3d: "มี 3D V-Cache (X3D)",
   unlocked: "ปลดล็อกโอเวอร์คล็อก",
+  // 2026.11-v18+ (CPU): integrated graphics. False for Intel F / KF and Core
+  // X-series parts, every Threadripper and AM4 Ryzen without a G (5600 vs 5600G).
+  has_igpu: "มีกราฟิกในตัว",
   is_amd: "เป็น AMD",
   capacity_gb: "ความจุ",
   speed_mhz: "ความเร็วแรม",

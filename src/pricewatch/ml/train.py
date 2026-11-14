@@ -27,7 +27,7 @@ from pricewatch.models import Category
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "2026.11-v17"
+MODEL_VERSION = "2026.11-v18"
 FIGURES_DIR = Path(__file__).resolve().parents[3] / "reports" / "figures"
 
 # Simple-regression variable per category: (feature column, unit label).
@@ -159,6 +159,11 @@ def spec_features(frame: pd.DataFrame, category: Category) -> pd.DataFrame:
                 "base_clock_ghz": numeric(frame, "base_clock_ghz"),
                 "x3d": numeric(frame, "x3d"),
                 "unlocked": numeric(frame, "unlocked"),
+                # Integrated graphics (normalize.py): separates Intel F / KF
+                # parts (Core i5-14400F vs 14400) and, on AM4, Ryzen 5000
+                # parts without a G (5600 vs 5600G) from siblings that need
+                # no graphics card; Threadripper has none.
+                "has_igpu": numeric(frame, "has_igpu"),
                 "is_amd": (frame["manufacturer"] == "AMD").astype(float)
                 if "manufacturer" in frame
                 else 0.0,
@@ -205,15 +210,46 @@ REQUIRED_FOR_FAIR_VALUE: dict[Category, list[str]] = {
 }
 
 
-#: Specs the tier tree may split on but the fair-value MLR leaves out. Shader
-#: counts and clocks are not comparable across vendors (an RX 9070 XT's 4,096
-#: stream processors vs an RTX 5070 Ti's 8,960 CUDA cores; Radeon boost clocks
-#: run ~500 MHz higher), so one slope for both mispriced Radeons by up to 2x.
-#: Product-grouped CV on live GPUs (2026-11-12): R2 0.761 -> 0.930, MAPE
-#: 22.7% -> 14.2%, in-stock listings "over 40% below fair" 19 -> 1, with the
-#: vendor carried by ``is_amd`` instead.
+#: Features the fair-value MLR leaves out, per category: specs the tier tree
+#: may still split on, and demand signals (``demand_features``).
+#:
+#: GPU: shader counts and clocks are not comparable across vendors (an RX
+#: 9070 XT's 4,096 stream processors vs an RTX 5070 Ti's 8,960 CUDA cores;
+#: Radeon boost clocks run ~500 MHz higher), so one slope for both mispriced
+#: Radeons by up to 2x. Product-grouped CV on live GPUs (2026-11-12): R2
+#: 0.761 -> 0.930, MAPE 22.7% -> 14.2%, in-stock listings "over 40% below
+#: fair" 19 -> 1, with the vendor carried by ``is_amd`` instead.
+#:
+#: CPU (SPEC round 20, 2026.11-v18): the v17 fit priced lesser siblings
+#: above better ones (i9-14900F above 14900K, Ryzen 5 5500 above 5600; 19
+#: inverted pairs). Left out:
+#:
+#: * ``base_clock_ghz``: titles list it inconsistently (i7-14700K at 2.5 GHz,
+#:   14700 at 3.45; 5500GT 4.0 vs 5600GT 3.6), and its slope was negative;
+#: * ``unlocked`` (K / X): K parts sell below their locked siblings at these
+#:   stores (i9-14900K 16,990 THB vs 14900 19,700; Core Ultra 7 265K vs
+#:   265), so the slope was negative in every feature set tried and priced
+#:   locked parts above K ones; a K part now shares its sibling's fair price;
+#: * ``log_views`` (-0.07 per SD: the most-viewed CPUs are budget parts,
+#:   i5-12400F, Ryzen 5 5600) and ``sales_rank_pct`` (~0): demand, not
+#:   hardware; dropping them alone raised CV R2 0.851 -> 0.884.
+#:
+#: ``has_igpu`` is added (+0.023 per SD). Over 50 random product 5-fold
+#: splits on live CPUs (2026-11-14), median v17 -> v18: R2 0.834 -> 0.870,
+#: MAPE 24.4% -> 23.9%, inverted pairs 22 -> 7, otherwise scored listings
+#: flagged as the lesser sibling 30.8% -> 10.9% (v18 mean: R2 0.863, MAPE
+#: 24.5%, 7.8 pairs, 11.8%; v17's mean is not comparable, two of its splits
+#: failed outright, R2 down to -1.1). The fixed 5-fold GroupKFold that
+#: ``fit_fair_value`` reports is kinder to both: R2 0.851 -> 0.884, MAPE
+#: 22.7% -> 22.4%, pairs 19 -> 6, flags 21.3% -> 7.2%; every coefficient
+#: positive. Keeping ``unlocked`` gave the same CV but about twice the pairs.
+#: Leaving ``has_igpu`` out too gave R2 +0.005 / MAPE -0.6 points (paired
+#: splits) but a median of 10 pairs instead of 7 (over 15% flagged in 46% of
+#: splits vs 26%); keeping it despite the slightly worse CV was the user's
+#: decision (2026-11-14, SPEC round 20).
 NOT_IN_MLR: dict[Category, tuple[str, ...]] = {
     Category.GPU: ("shader_cores", "boost_clock_mhz"),
+    Category.CPU: ("base_clock_ghz", "unlocked", "log_views", "sales_rank_pct"),
 }
 
 
@@ -227,6 +263,38 @@ def mlr_features(specs: pd.DataFrame) -> pd.DataFrame:
     # generations; with launch years it lowered product-grouped CV R2 (0.805
     # without, 0.792 with) and let the 2014-2017 GT cards extrapolate.
     return out
+
+
+def fair_value_features(
+    frame: pd.DataFrame, specs: pd.DataFrame, category: Category, key: pd.Series
+) -> pd.DataFrame:
+    """The fair-value MLR's input columns for one category.
+
+    Model-level specs (``model_level``, capacities in log2 by
+    ``mlr_features``) beside the demand signals (``demand_features``), less
+    the category's ``NOT_IN_MLR`` columns. O(n log n) for the per-store sales
+    ranks, O(n) for the rest.
+
+    Args:
+        frame: Listings of ``category``.
+        specs: ``spec_features(frame, category)``.
+        category: The category of ``frame``.
+        key: ``product_key(frame)``.
+
+    Returns:
+        One row per listing (aligned with ``frame``), spec columns first.
+
+    Raises:
+        KeyError: If ``NOT_IN_MLR[category]`` names a column that is not a
+            feature (a typo would otherwise keep the feature in the fit).
+    """
+    features = pd.concat([mlr_features(model_level(specs, key)), demand_features(frame)], axis=1)
+    excluded = list(NOT_IN_MLR.get(category, ()))
+    # A misspelt name would silently keep the feature it meant to drop.
+    unknown = [c for c in excluded if c not in features]
+    if unknown:
+        raise KeyError(f"NOT_IN_MLR[{category.value}] names unknown features: {unknown}")
+    return features.drop(columns=excluded)
 
 
 def product_key(frame: pd.DataFrame) -> pd.Series:
@@ -1225,15 +1293,7 @@ def run_models(current: pd.DataFrame, history: pd.DataFrame, figures: Path | Non
         try:
             key = product_key(frame)
             mlr = m.fit_fair_value(
-                pd.concat(
-                    [
-                        mlr_features(
-                            model_level(specs.drop(columns=list(NOT_IN_MLR.get(category, ()))), key)
-                        ),
-                        demand_features(frame),
-                    ],
-                    axis=1,
-                ),
+                fair_value_features(frame, specs, category, key),
                 price,
                 required=REQUIRED_FOR_FAIR_VALUE[category],
                 groups=key,

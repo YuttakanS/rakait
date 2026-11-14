@@ -203,6 +203,7 @@ Never hard-code the number or list of stores ("3 ร้าน"); derive it from
 |---|---|---|
 | Fair market value (MLR) | ราคายุติธรรม | ประเมินจากสเปกด้วย Multiple Linear Regression |
 | Deal Score | Deal {score} | 0–100 (50 = ราคายุติธรรม) |
+| CPU spec `has_igpu` (fair-value MLR and tier tree, model 2026.11-v18) | มีกราฟิกในตัว | มีกราฟิกในตัว เทียบกับรุ่นที่ต้องใช้การ์ดจอแยก (เช่น Intel รุ่น F, Ryzen 5000 ที่ไม่มีตัว G) (`FACTOR_HINTS`; no Threadripper has one); yes/no feature: "ราคาสูงกว่า" on /insights, asked positively in tree splits (`FLAGS`) |
 | `buy_now` | ซื้อเลย | |
 | `wait` | รอก่อน | |
 | `fair_price` | ราคาเหมาะสม | |

@@ -574,3 +574,37 @@ MLR ให้ราคายุติธรรมที่สลับลำด�
 - ข้อ 3: เหตุผลมีแค่แบบฝั่งด้อย ("ราคายุติธรรมของรุ่นนี้ (฿X) สูงกว่ารุ่นที่สเปกดีกว่า … (฿Y) …")
 - ข้อ 5: เพดาน 15% ยกเว้นหมวด CPU (คาด ~21%) เพราะผู้ใช้เปิดรอบ 20 แก้ต้นเหตุใน CPU MLR (ไม่มี feature รุ่น F / has_igpu และ demand features ดันราคารุ่นขายดี) หมวดอื่นยังใช้เพดาน 15%
 - payload นับ `sibling_inversions` (คู่) และ `sibling_flagged` (รายการฝั่งด้อยที่ติด) ตามกติกาใหม่
+
+---
+
+## รอบ 20: แก้ต้นเหตุที่ CPU MLR เรียงรุ่นพี่น้องผิด (ผู้ใช้เลือก, 2026-11-13)
+
+### ปัญหา
+บน v17 CPU มีรุ่นพี่น้องที่ราคายุติธรรมกลับด้าน 19 คู่ ทำให้ CPU 21.3% ของรายการที่มี Deal Score ติด "ประเมินไม่แน่นอน" (รอบ 19 ยกเว้นเพดาน 15% ไว้รอรอบนี้) ตัวอย่าง: i9-14900F ฿22,821 > 14900K ฿17,438, i7-14700F > 14700K, 7700X3D > 7800X3D, Ryzen 5 5500 > 5600, 9600 > 9600X ข้อสงสัย:
+- CPU MLR ไม่มี feature รุ่น F / มีกราฟิกในตัว (`has_igpu`) ทั้งที่ sibling check ใช้มิตินี้แล้ว
+- `base_clock_ghz` กลับลำดับในรุ่นพี่น้อง (เช่น K มี base clock ต่ำกว่า non-K บางรุ่น, 5500GT 4.0 vs 5600GT 3.6) และไม่มี boost clock
+- demand features (`sales_rank_pct`, `log_views` ฯลฯ ใน `demand_features`) อาจดันราคารุ่นที่ขายดี
+- `unlocked` อาจ collinear กับ tier/เลขรุ่น จนได้สัมประสิทธิ์ผิดทาง
+
+### ขอบเขต
+- `src/pricewatch/ml/train.py` (เฉพาะ feature ของหมวด CPU ใน `spec_features` / `NOT_IN_MLR` / `demand_features` ของ CPU / `REQUIRED_FOR_FAIR_VALUE[CPU]`), parser ใน `src/pricewatch/` เฉพาะถ้าต้องอ่าน spec ที่มีอยู่ในชื่อหรือตารางสเปกแล้ว (เช่น boost clock, iGPU) เทสต์ที่เกี่ยวข้อง
+- เว็บ: เฉพาะ label/คำอธิบาย feature ใหม่ (เช่น `featureLabel` บน /insights และ /ml) ถ้ามี feature เปลี่ยน
+- **ไม่อยู่ในขอบเขต:** GPU/RAM/SSD, การบังคับเครื่องหมายสัมประสิทธิ์ (constrained regression), การแยกโมเดลตามสถาปัตยกรรม, เกณฑ์ sibling check (`SIBLING_TOLERANCE`, มิติ) และ `UNCERTAIN_GAP`, ไฟล์ของผู้ใช้
+- ยังเป็น Multiple Linear Regression บน log(ราคา) เหมือนเดิม (โจทย์วิชา)
+
+### เกณฑ์ผ่าน
+1. **ablation ด้วย GroupKFold (กลุ่มตามรุ่นสินค้า) บนข้อมูลจริง (อ่านอย่างเดียว):** builder รายงานตารางของแต่ละชุด feature ที่ลอง อย่างน้อย:
+   - v17 เดิม (baseline)
+   - + `has_igpu`
+   - ตัด `base_clock_ghz` (หรือแทนด้วย boost clock ถ้า parser อ่านได้ครบพอ)
+   - ตัด demand features เฉพาะ CPU
+   - ชุดที่ builder เสนอ (รวมหลายข้อ)
+   แต่ละแถวแสดง R²(cv), MAPE(cv), จำนวนคู่กลับด้าน, % รายการ CPU ที่มี Deal Score ที่ติดเพราะ sibling, และสัมประสิทธิ์ของ feature ที่เกี่ยว (เครื่องหมายต้องอธิบายได้)
+2. **เลือกชุดด้วย CV ไม่ใช่จำนวนคู่อย่างเดียว:** ชุดที่เลือกต้องมี R²(cv) ≥ 0.85 − 0.01 และ MAPE(cv) ≤ 0.227 + 0.01 (v17: .85 / .227) และจำนวนคู่กลับด้านลดลงชัดเจน เป้า: รายการ CPU ที่ติดเพราะ sibling ≤ 15% ของที่มี Deal Score ถ้าไม่มีชุดไหนผ่านทั้งสองเงื่อนไข ให้หยุดและรายงานตารางพร้อมข้อเสนอ ห้ามเลือกเองแบบแลก CV กับจำนวนคู่
+3. **ตัวอย่างคู่ใน "ปัญหา":** รายงานว่าคู่ไหนหาย คู่ไหนยังกลับด้าน พร้อมราคายุติธรรมใหม่
+4. **feature ใหม่ทุกตัว** มีชื่อแสดงผลภาษาไทยบน /insights ("อะไรทำให้ราคาแพงขึ้น") และ /ml (ตารางสัมประสิทธิ์) และ design.md glossary ถ้ามีคำใหม่ เว็บต้องแสดง payload v17 ได้ (deploy ก่อน train)
+5. bump `MODEL_VERSION` เป็น `2026.11-v18` อัปเดตคอมเมนต์ที่บันทึกผล CV (แบบเดียวกับ `NOT_IN_MLR` ของ GPU)
+6. **เทสต์:** ครอบคลุม feature ใหม่ (parser/derive) และเทสต์เดิมทั้งหมดผ่าน **รวม integration test ด้วย Postgres ชั่วคราว** (`uv run --with pgserver` ตาม CI; ห้ามชี้ไปที่ prod)
+7. **การตรวจ:** `uv run pytest -q` (และแบบมี `TEST_DATABASE_URL` ชั่วคราว), `ruff check`, `ruff format --check`, `mypy src`, `cd web && npx tsc --noEmit && npx eslint src && npm run check:demand && npm run build` ผ่านทั้งหมด
+
+**ผลรอบ 20 แก้ครั้งที่ 1 (ผู้ใช้ตัดสินใจ, 2026-11-14):** หลังแก้ `has_igpu` ของ Threadripper ชุดที่ไม่มี `has_igpu` มี CV ดีกว่าเล็กน้อย (paired ΔR² +.005, ΔMAPE −.006) แต่คู่กลับด้านมากกว่า (10 เทียบ 7, เกิน 15% ใน 46% เทียบ 26% ของการแบ่ง) ผู้ใช้เลือก **คง `has_igpu` ไว้** ชุดสุดท้าย: + `has_igpu`, ตัด `base_clock_ghz`, `unlocked`, `log_views`, `sales_rank_pct` ออกจาก CPU MLR

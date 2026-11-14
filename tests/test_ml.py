@@ -1084,6 +1084,142 @@ def test_gpu_mlr_leaves_out_vendor_incomparable_specs() -> None:
     assert "is_amd" not in NOT_IN_MLR[Category.GPU]
 
 
+def test_cpu_mlr_has_igpu_and_leaves_out_clock_unlocked_and_demand() -> None:
+    from pricewatch.ml.train import fair_value_features, product_key, spec_features
+    from pricewatch.models import Category
+
+    cpus = pd.DataFrame(
+        {
+            "listing_id": [1, 2, 3],
+            "canonical_id": [10.0, 11.0, 10.0],
+            "merchant": ["jib", "jib", "ihavecpu"],
+            "model": ["Core i5-14400F", "Core i5-14400", "Core i5-14400F"],
+            "manufacturer": "Intel",
+            "generation": 14,
+            "cores": 10,
+            "threads": 16,
+            "base_clock_ghz": [2.5, 2.5, 1.8],
+            "x3d": False,
+            "unlocked": False,
+            "has_igpu": [False, True, False],
+            "view_count": [100.0, 50.0, np.nan],
+            "sales_per_day": [1.0, 0.5, 2.0],
+        }
+    )
+    specs = spec_features(cpus, Category.CPU)
+    cpu = fair_value_features(cpus, specs, Category.CPU, product_key(cpus))
+
+    assert specs["has_igpu"].tolist() == [0.0, 1.0, 0.0]
+    # The tier tree still sees the clock and the K / X flag; the MLR does not.
+    assert {"base_clock_ghz", "unlocked"} <= set(specs)
+    assert "has_igpu" in cpu
+    assert not {"base_clock_ghz", "unlocked", "log_views", "sales_rank_pct"} & set(cpu)
+    assert cpu["log2_cores"].tolist() == pytest.approx([np.log2(10)] * 3)
+
+    gpus = pd.DataFrame(
+        {
+            "listing_id": [1, 2],
+            "chip": ["GeForce RTX 5070", "Radeon RX 9070"],
+            "vram_gb": [12, 16],
+            "shader_cores": [6144, 3584],
+            "view_count": [10.0, 20.0],
+            "sales_per_day": [0.1, 0.2],
+        }
+    )
+    gpu = fair_value_features(
+        gpus, spec_features(gpus, Category.GPU), Category.GPU, product_key(gpus)
+    )
+    # Other categories keep their demand signals.
+    assert {"log_views", "sales_rank_pct", "log2_vram_gb"} <= set(gpu)
+    assert "shader_cores" not in gpu
+
+
+def test_a_misspelt_not_in_mlr_name_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pricewatch.ml import train
+    from pricewatch.models import Category
+
+    cpus = pd.DataFrame(
+        {"listing_id": [1], "model": ["Core i5-14400"], "manufacturer": "Intel", "cores": [10]}
+    )
+    monkeypatch.setitem(train.NOT_IN_MLR, Category.CPU, ("base_clock_gz",))
+
+    with pytest.raises(KeyError, match="base_clock_gz"):
+        train.fair_value_features(
+            cpus, train.spec_features(cpus, Category.CPU), Category.CPU, train.product_key(cpus)
+        )
+
+
+def _cpu_catalogue(seed: int) -> pd.DataFrame:
+    """Synthetic in-stock Core i listings priced the way the live market is.
+
+    Every (generation, tier) comes as plain, F, K and KF. The F parts (no
+    integrated graphics) sell 12% below their siblings, the K parts 3% below
+    the locked ones (as the 14900K did below the 14900), the base clock is
+    noise (titles list it inconsistently) and the cheapest parts get the
+    most views. Three listings per product at three stores.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for gen in (12, 13, 14):
+        for tier, sku in ((3, 100), (5, 400), (7, 700), (9, 900)):
+            cores = {3: 4, 5: 6, 7: 8, 9: 16}[tier] + (gen - 12) * {3: 0, 5: 2, 7: 4, 9: 4}[tier]
+            for suffix in ("", "F", "K", "KF"):
+                igpu = "F" not in suffix
+                unlocked = "K" in suffix
+                price = (
+                    2500
+                    * 1.35 ** ((tier - 3) / 2)
+                    * 1.08 ** (gen - 12)
+                    * (cores / 4) ** 0.3
+                    * (1.0 if igpu else 0.88)
+                    * (0.97 if unlocked else 1.0)
+                )
+                for store in ("jib", "ihavecpu", "banana"):
+                    rows.append(
+                        {
+                            "canonical_id": len(rows) // 3,
+                            "merchant": store,
+                            "model": f"Core i{tier}-{gen}{sku}{suffix}",
+                            "generation": gen,
+                            "cores": cores,
+                            "threads": cores * 2,
+                            "base_clock_ghz": rng.uniform(1.5, 4.0),
+                            "x3d": False,
+                            "unlocked": unlocked,
+                            "has_igpu": igpu,
+                            "price": price * rng.uniform(0.97, 1.03),
+                            "view_count": 1e6 / price * rng.uniform(0.5, 2.0),
+                            "sales_per_day": rng.lognormal(-1, 1),
+                        }
+                    )
+    frame = pd.DataFrame(rows)
+    return frame.assign(
+        listing_id=np.arange(len(frame)),
+        category="cpu",
+        manufacturer="Intel",
+        views_per_day=np.nan,
+        in_stock=True,
+        stock_quantity=np.nan,
+        age_days=30,
+    )
+
+
+def test_cpu_fair_price_puts_an_f_part_below_its_igpu_sibling() -> None:
+    current = _cpu_catalogue(3)
+
+    report = run_models(current, pd.DataFrame(), figures=None)
+
+    payload = report.market[("cpu", "fair_value_mlr")]
+    beta = {c["feature"]: c["beta"] for c in payload["coefficients"]}
+    assert beta["has_igpu"] > 0
+    assert not {"base_clock_ghz", "unlocked", "log_views", "sales_rank_pct"} & set(beta)
+    fair = report.insights["fair_price"].groupby(current["model"]).median()
+    plain = [name for name in fair.index if not name.endswith("F")]
+    assert len(plain) == 24
+    assert all(fair[f"{name}F"] < fair[name] for name in plain)
+    assert payload["sibling_inversions"] == 0
+
+
 def test_fair_price_far_from_market_is_flagged_and_never_ranked() -> None:
     from pricewatch.ml.train import UNCERTAIN_GAP, uncertain_reason
 

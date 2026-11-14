@@ -85,7 +85,7 @@ export interface Factor {
 }
 
 /** Yes/no features read "ถ้ามี … แพงกว่า" rather than "ยิ่งสูง ยิ่งแพง". */
-export const BOOLEAN_FEATURES = new Set(["x3d", "unlocked", "is_amd", "ddr5", "nvme"]);
+export const BOOLEAN_FEATURES = new Set(["x3d", "unlocked", "has_igpu", "is_amd", "ddr5", "nvme"]);
 
 /**
  * Spec features a shopper can act on, largest effect first. Model plumbing
@@ -147,6 +147,7 @@ export const FACTOR_HINTS: Record<string, string> = {
   base_clock_ghz: "ความเร็วพื้นฐาน (GHz)",
   x3d: "ซีรีส์ X3D ของ AMD เน้นเล่นเกม",
   unlocked: "รุ่น K / KF / X ที่ปรับแต่งได้",
+  has_igpu: "มีกราฟิกในตัว เทียบกับรุ่นที่ต้องใช้การ์ดจอแยก (เช่น Intel รุ่น F, Ryzen 5000 ที่ไม่มีตัว G)",
   is_amd: "เทียบกับ Intel ที่สเปกเท่ากัน",
   "gpu.is_amd": "Radeon เทียบกับ GeForce ที่สเปกเท่ากัน",
   speed_mhz: "เช่น 5200 → 6000 MHz",
