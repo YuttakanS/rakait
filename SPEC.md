@@ -701,3 +701,28 @@ user-tester ยืนยันว่าเกณฑ์ข้อ 3, 4, 5, 8 ผ�
 - ใช้กฎกับ **ทุกหมวด** และ **ตัดเพดาน 15%** ของข้อ 10 ออก แต่ยังต้องรายงานจำนวนป้ายต่อหมวด แล้วเปิดรอบถัดไปแก้ MLR ของแรม/SSD ซึ่งเป็นต้นเหตุ
 - เทียบด้วย **เปอร์เซ็นต์ที่ผู้ซื้อเห็น**: ปัดเป็นจำนวนเต็มแบบเดียวกับตัวเลขบนเว็บ แล้วติดป้ายเมื่อ ≥ 25% (7700X3D ที่ +24.87% แสดงเป็น 25% จึงติดป้าย)
 - ถ้ารายการติดทั้ง sibling และกฎนี้ ใช้เหตุผล sibling
+
+---
+
+## รอบ 22a: พักการเก็บข้อมูล BaNANA (ผู้ใช้เลือกข้อ 1, 2026-11-19)
+
+### ที่มา
+ตั้งแต่ 2026-11-17 ~16:00 UTC งาน `scrape` ตามตาราง fail ทุกรอบ (6 รอบติด) เพราะ bnn.in.th เปิด Cloudflare Managed Challenge ทั้งเว็บ (`HTTP 403`, `cf-mitigated: challenge`, หน้า "Just a moment...") ร้านอื่น 3 ร้านยังเก็บได้ปกติ และ link/train ยังรันต่อ แต่ job เป็นสีแดงเพราะ CLI exit 1 ผู้ใช้ตัดสินใจพัก BaNANA แบบเดียวกับที่เคยตัด Advice **ห้ามเขียนโค้ดเพื่อหลบหรือแก้ Cloudflare challenge** (headless browser, ปลอม fingerprint, ใช้ proxy ฯลฯ)
+
+### ขอบเขต
+- Pipeline/CLI: กลไกพักร้าน (`src/pricewatch/scrapers/`, `cli.py`, `pipeline.py`) + test
+- Train: รายการที่ข้อมูลเก่า (ไม่ได้ scrape ภายในช่วงเดียวกับที่เว็บใช้ คือ 2 วัน) ต้องไม่เข้าการ fit/คะแนน ถ้ายังไม่เป็นแบบนั้นอยู่แล้ว
+- เว็บ: เฉพาะข้อความที่อ้างว่ามีราคาจาก 4 ร้าน / BaNANA เป็นปัจจุบัน
+- README (Status + ส่วน scheduled runs)
+- **ไม่อยู่ในขอบเขต:** ลบโค้ด scraper ของ BaNANA หรือ test ของมัน, ลบข้อมูล BaNANA ใน DB, migration, งาน RAM/SSD MLR (รอบ 22), ไฟล์ของผู้ใช้ (`CLAUDE.md`, `.claude/skills/*`, `questui-DESIGN.md`, `skills-lock.json`, `.agents/`)
+
+### เกณฑ์ผ่าน (acceptance criteria)
+1. มีวิธีระบุว่าร้านถูกพักไว้ในโค้ด (เช่น attribute บน scraper class หรือชุด `PAUSED_STORES` พร้อมเหตุผลและวันที่) ที่เดียว ไม่กระจายหลายจุด BaNANA ถูกพักด้วยเหตุผล "Cloudflare bot challenge since 2026-11-17"
+2. `pricewatch scrape` แบบไม่ระบุร้าน ข้ามร้านที่พัก พิมพ์/บันทึก log หนึ่งบรรทัดว่าข้ามเพราะอะไร และ **ไม่** นับเป็น error หรือ warning (ร้านที่เหลือผ่าน → exit 0)
+3. `pricewatch scrape --store banana` ยังสั่งรันได้ (ไว้ตรวจว่าร้านเลิกบล็อกหรือยัง) และถ้าได้ 403 ก็ fail ตามปกติ
+4. การตรวจคุณภาพ (warning จำนวนรายการลดลงเทียบ median) ไม่ทำให้ร้านที่พักเกิด warning
+5. `pricewatch train`: รายการที่ `last_scraped_at` เก่ากว่า 2 วัน ไม่ถูกใช้ fit MLR/SLR/tree/K-Means/demand, ไม่ใช้ในการตรวจ market (median ต่อร้าน), และไม่ได้ Deal Score/คำแนะนำใหม่ ถ้า train ทำแบบนี้อยู่แล้ว ให้ยืนยันด้วย test แทนการแก้ ถ้าต้องแก้ให้ bump `MODEL_VERSION` เป็น `2026.11-v21` และรายงานตัวเลข R² ก่อน/หลังบนข้อมูลจริง (อ่าน DB อย่างเดียว ห้ามเขียน prod)
+6. เว็บ: ไม่มีข้อความที่บอกว่าราคามาจาก 4 ร้านหรือแสดง BaNANA เป็นร้านที่อัปเดตอยู่ ถ้ามีหน้าที่แสดงรายชื่อร้าน ให้ BaNANA แสดงว่า "พักชั่วคราว (ร้านบล็อกการเก็บข้อมูลอัตโนมัติ ตั้งแต่ 17 พ.ย. 2026)" หรือไม่แสดงเลย ตาม design contract `.claude/skills/design.md`
+7. README: Status บอกว่า BaNANA พักไว้ เหตุผล และวิธีตรวจว่าเปิดได้หรือยัง (`pricewatch scrape --store banana`)
+8. Test ใหม่: scrape ค่าเริ่มต้นข้ามร้านที่พักและ exit 0; `--store` ที่ระบุร้านพักยังรัน; (ข้อ 5) รายการเก่าไม่เข้าการ fit
+9. `uv run pytest -q`, `uv run ruff check src tests`, `uv run ruff format --check src tests`, `uv run mypy src`, และ (ถ้าแก้เว็บ) `cd web && npx tsc --noEmit && npx eslint src` ผ่านทั้งหมด

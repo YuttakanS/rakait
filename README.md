@@ -11,6 +11,7 @@ full specification.
 | Database schema + migration runner | done (`migrations/`, `pricewatch.db`) |
 | Scraping framework (rate limit, backoff, failure isolation) | done |
 | Store scrapers | JIB, IHAVECPU, BaNANA, IT City (GPU, CPU, RAM, SSD) |
+| BaNANA scraping | **paused** since 2026-11-17: bnn.in.th serves a Cloudflare bot challenge (HTTP 403) to every automated request. A default `scrape` skips it; check whether it is open again with `uv run pricewatch -v scrape --store banana --dry-run` |
 | JIB history backfill from the Wayback Machine | done (`pricewatch backfill`) |
 | Scheduled scraping (GitHub Actions on a self-hosted runner, every 3 h) + `scrape_runs` log | live on Supabase since 2026-11-11 |
 | Data-quality warnings (empty runs, missing prices, count drops) | done (`pricewatch.quality`) |
@@ -57,7 +58,21 @@ that breaks selectors without raising an error still fails the scheduled job.
 `.github/workflows/scrape.yml` runs `migrate → scrape → link → train` every
 3 hours. IHAVECPU and BaNANA answer HTTP 403 to GitHub-hosted runners
 (datacenter IPs), so the job targets a self-hosted Windows runner labelled
-`pricewatch`. Install it once from an elevated PowerShell (needs `gh auth login`
+`pricewatch`.
+
+`scrape` without `--store` skips the stores in `PAUSED_STORES`
+(`src/pricewatch/scrapers/__init__.py`) and prints one line saying why; a
+skipped store is neither an error nor a quality warning, so the job stays
+green while the other stores succeed. BaNANA is paused there (Cloudflare bot
+challenge since 2026-11-17). Its listings stop being refreshed, so after two
+days they drop out of the prices and scores on the web and out of `train`,
+which both use only listings scraped within the last 2 days (the store's name
+stays in the footer and the /ml data table, with the pause note). To test whether it is reachable again,
+run `uv run pricewatch -v scrape --store banana --dry-run` (an explicit
+`--store` still runs a paused store and fails on HTTP 403); once it passes,
+remove its `PAUSED_STORES` entry and the `paused` note in `web/src/lib/format.ts`.
+
+Install the runner once from an elevated PowerShell (needs `gh auth login`
 with admin rights on the repository):
 
 ```powershell
