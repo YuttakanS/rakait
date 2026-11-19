@@ -13,7 +13,7 @@ from datetime import date, datetime
 from pricewatch.models import Category, ScrapedListing
 from pricewatch.pipeline import StoreResult, run_scrape
 from pricewatch.quality import annotate_runs
-from pricewatch.scrapers import SCRAPERS
+from pricewatch.scrapers import PAUSED_STORES, SCRAPERS, active_stores
 
 
 def _database_url() -> str:
@@ -199,7 +199,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     scrape = commands.add_parser("scrape", help="scrape merchant listings")
     scrape.add_argument(
-        "--store", action="append", choices=sorted(SCRAPERS), help="store to scrape (default: all)"
+        "--store",
+        action="append",
+        choices=sorted(SCRAPERS),
+        help="store to scrape, paused ones included (default: every store not paused)",
     )
     scrape.add_argument(
         "--category",
@@ -259,7 +262,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return asyncio.run(_backfill(categories, args.since, args.dry_run))
 
-    stores = args.store or sorted(SCRAPERS)
+    if args.store:
+        stores = args.store
+    else:
+        # A paused store is skipped on purpose, so it is neither an error nor
+        # a quality warning: it leaves no run record and the exit code depends
+        # only on the stores that ran.
+        stores = active_stores()
+        for store, reason in sorted(PAUSED_STORES.items()):
+            print(f"{store}: paused, skipped ({reason}); run with --store {store} to retry")
     categories = [Category(value) for value in args.category] if args.category else list(Category)
     return asyncio.run(_scrape(stores, categories, args.max_pages, args.dry_run))
 

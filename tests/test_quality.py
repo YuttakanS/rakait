@@ -73,3 +73,14 @@ def test_annotate_runs_groups_listings_by_store_and_category() -> None:
         "3/3 in-stock listings have no price",
         "no listings returned",
     ]
+
+
+def test_paused_store_history_raises_no_warning() -> None:
+    # A paused store (SPEC round 22a) is not scraped, so it has no run to
+    # compare with its recent median even though that median is on record.
+    items = [_listing(str(i), Decimal(1)) for i in range(5)]
+    baselines = {("jib", Category.GPU): 5.0, ("banana", Category.GPU): 80.0}
+
+    annotated = annotate_runs([_run(5)], items, baselines)
+
+    assert [(run.store, run.warning) for run in annotated] == [("jib", None)]

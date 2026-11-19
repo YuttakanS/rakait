@@ -486,6 +486,74 @@ async def test_train_persists_uncertain_fair_price_without_advice(conn, tmp_path
     assert not any("กฎจาก" in r["recommendation_reason"] for r in rows)
 
 
+async def test_train_ignores_listings_not_scraped_for_two_days(conn, tmp_path) -> None:
+    import numpy as np
+
+    from pricewatch.db.linking import link_listings
+    from pricewatch.ml.dataset import load_current_listings
+    from pricewatch.ml.train import train
+
+    await apply_migrations(conn)
+    rng = np.random.default_rng(1)
+    products = [
+        (chip, vram, round(base * (1.15 if vram == 16 else 1.0)))
+        for chip, base in (("5060", 11000), ("5060 Ti", 14000), ("5070", 20000))
+        for vram in (8, 12, 16)
+    ]
+    now = datetime.now(timezone.utc)
+
+    def gpu(i: int, merchant: str, factor: float, at: datetime) -> ScrapedListing:
+        chip, vram, base = products[i % len(products)]
+        return ScrapedListing(
+            merchant=merchant,
+            merchant_sku=str(i),
+            category=Category.GPU,
+            title=f"VGA MSI GEFORCE RTX {chip} - {vram}GB GDDR7",
+            url=f"https://example.test/{merchant}/{i}",
+            price=Decimal(str(round(base * factor * rng.uniform(0.9, 1.1)))),
+            view_count=int(rng.integers(100, 100_000)),
+            sold_count=int(rng.integers(0, 500)),
+            in_stock=True,
+            scraped_at=at,
+        )
+
+    # Two live stores, plus a paused one (SPEC round 22a) whose last scrape,
+    # three days old, priced every model at ten times the market. Were those
+    # rows fitted, they would drag fair prices up and the store medians of the
+    # market check with them.
+    fresh = [gpu(i, ["jib", "ihavecpu"][i % 2], 1.0, now) for i in range(60)]
+    stale = [gpu(i, "banana", 10.0, now - timedelta(days=3)) for i in range(18)]
+    await save_listings(conn, fresh + stale)
+    await link_listings(conn)
+    stale_ids = {
+        r["id"]
+        for r in await conn.fetch(
+            "SELECT l.id FROM merchant_listings l JOIN merchants m ON m.id = l.merchant_id "
+            "WHERE m.slug = 'banana'"
+        )
+    }
+    assert len(stale_ids) == len(stale)
+
+    current = await load_current_listings(conn)
+    assert len(current) == len(fresh)
+    assert not stale_ids & set(current["listing_id"])
+
+    report = await train(conn, figures=tmp_path)
+
+    rows = await conn.fetch(
+        "SELECT i.listing_id, l.current_price, i.fair_price, i.deal_score, i.recommendation "
+        "FROM listing_insights i JOIN merchant_listings l ON l.id = i.listing_id"
+    )
+    # No Deal Score, recommendation or any other insight for a stale listing.
+    assert len(rows) == len(fresh)
+    assert not stale_ids & {r["listing_id"] for r in rows}
+    assert report.market[("gpu", "simple_regression")]["n"] == len(fresh)
+    assert report.market[("gpu", "fair_value_mlr")]["n"] == len(fresh)
+    # Fair prices follow the live stores' prices, not the stale tenfold ones.
+    ratios = [float(r["fair_price"]) / float(r["current_price"]) for r in rows]
+    assert max(ratios) < 1.5
+
+
 async def test_image_url_survives_observations_without_one(conn) -> None:
     await apply_migrations(conn)
 

@@ -16,7 +16,22 @@ SCRAPERS: dict[str, type[StoreScraper]] = {
     ItcityScraper.merchant: ItcityScraper,
 }
 
+#: Stores left out of a default ``pricewatch scrape``, with why and since when.
+#: The scraper stays registered, so ``--store <slug>`` still runs it to check
+#: whether the store has become reachable again. This is the only place a store
+#: is paused; remove its entry to resume it.
+PAUSED_STORES: dict[str, str] = {
+    BananaScraper.merchant: "Cloudflare bot challenge since 2026-11-17",
+}
+
+
+def active_stores() -> list[str]:
+    """Return the registered stores that are not paused, sorted by slug."""
+    return sorted(store for store in SCRAPERS if store not in PAUSED_STORES)
+
+
 __all__ = [
+    "PAUSED_STORES",
     "SCRAPERS",
     "BananaScraper",
     "FetchError",
@@ -25,4 +40,5 @@ __all__ = [
     "JibScraper",
     "PoliteFetcher",
     "StoreScraper",
+    "active_stores",
 ]
