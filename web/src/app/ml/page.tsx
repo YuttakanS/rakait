@@ -19,6 +19,7 @@ import { TreeDiagram } from "@/components/tree-diagram";
 import {
   CATEGORY_LABELS,
   CLUSTER_LABELS,
+  MERCHANTS,
   RECOMMENDATION_LABELS,
   featureLabel,
   formatDateTime,
@@ -537,15 +538,21 @@ export default async function MlPage() {
               </tr>
             </thead>
             <tbody className="tabular">
-              {coverage.map((c) => (
-                <tr key={c.merchant} className="border-t-2 border-border">
-                  <td className="py-1.5">{c.merchantName}</td>
-                  <td className="py-1.5 text-right">{c.listings.toLocaleString("th-TH")}</td>
-                  <td className="py-1.5 text-right">{c.listings ? `${Math.round((c.linked / c.listings) * 100)}%` : "–"}</td>
-                  <td className="py-1.5 text-right">{c.historyRows.toLocaleString("th-TH")}</td>
-                  <td className="py-1.5 text-right">{c.firstObservation?.slice(0, 10) ?? "–"}</td>
-                </tr>
-              ))}
+              {coverage.map((c) => {
+                const paused = MERCHANTS.find((m) => m.slug === c.merchant)?.paused;
+                return (
+                  <tr key={c.merchant} className="border-t-2 border-border">
+                    <td className="py-1.5">
+                      {c.merchantName}
+                      {paused && <span className="block text-xs text-muted">{paused}</span>}
+                    </td>
+                    <td className="py-1.5 text-right">{c.listings.toLocaleString("th-TH")}</td>
+                    <td className="py-1.5 text-right">{c.listings ? `${Math.round((c.linked / c.listings) * 100)}%` : "–"}</td>
+                    <td className="py-1.5 text-right">{c.historyRows.toLocaleString("th-TH")}</td>
+                    <td className="py-1.5 text-right">{c.firstObservation?.slice(0, 10) ?? "–"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           </ScrollTable>

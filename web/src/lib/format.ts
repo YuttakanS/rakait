@@ -234,17 +234,32 @@ export function formatSpecValue(value: unknown): string {
   return String(value);
 }
 
+/** A store the platform scrapes, or used to and has paused. */
+export interface Merchant {
+  slug: string;
+  name: string;
+  /**
+   * Why prices are no longer collected, shown beside the store's name.
+   * Mirrors `PAUSED_STORES` in src/pricewatch/scrapers/__init__.py.
+   */
+  paused?: string;
+}
+
 /**
- * Stores the platform scrapes, in display order. Copy derives from this list,
- * and the order is the price chart's dash/marker order (`STORE_STYLES` in
- * price-chart.tsx, .claude/skills/design.md §3).
+ * Every store with prices on the site, in display order: the price chart's
+ * dash/marker order (`STORE_STYLES` in price-chart.tsx, .claude/skills/design.md
+ * §3). A paused store stays, since its past prices still chart.
  */
-export const MERCHANTS: readonly { slug: string; name: string }[] = [
+export const MERCHANTS: readonly Merchant[] = [
   { slug: "jib", name: "JIB" },
   { slug: "ihavecpu", name: "IHAVECPU" },
   { slug: "itcity", name: "IT City" },
-  { slug: "banana", name: "BaNANA" },
+  // SPEC round 22a: bnn.in.th has served a Cloudflare bot challenge since 2026-11-17.
+  { slug: "banana", name: "BaNANA", paused: "พักชั่วคราว (ร้านบล็อกการเก็บข้อมูลอัตโนมัติ ตั้งแต่ 17 พ.ย. 2026)" },
 ];
+
+/** Stores whose prices are collected now. Store counts and lists in copy derive from this. */
+export const ACTIVE_MERCHANTS: readonly Merchant[] = MERCHANTS.filter((m) => !m.paused);
 
 /** Readable names for model features shown on the insights page. */
 export const FEATURE_LABELS: Record<string, string> = {
@@ -290,9 +305,9 @@ export const FEATURE_LABELS: Record<string, string> = {
   sales_rank_pct: "อันดับยอดขายในร้าน",
 };
 
-/** "JIB, IHAVECPU, BaNANA และ IT City" */
+/** The stores collected now: "JIB, IHAVECPU และ IT City" */
 export function merchantList(): string {
-  const names = MERCHANTS.map((m) => m.name);
+  const names = ACTIVE_MERCHANTS.map((m) => m.name);
   return names.length > 1 ? `${names.slice(0, -1).join(", ")} และ ${names.at(-1)}` : (names[0] ?? "");
 }
 

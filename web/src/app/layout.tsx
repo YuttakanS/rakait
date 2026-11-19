@@ -150,6 +150,7 @@ export default async function RootLayout({
                 {MERCHANTS.map((m) => (
                   <li key={m.slug} className="py-2">
                     {m.name}
+                    {m.paused && <span className="block text-xs text-muted">{m.paused}</span>}
                   </li>
                 ))}
               </ul>

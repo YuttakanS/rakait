@@ -18,7 +18,7 @@ import {
   unlabelledText,
   type DemandReference,
 } from "@/lib/demand";
-import { CATEGORY_LABELS, CLUSTER_LABELS, MERCHANTS, formatBand, formatTHB, merchantList, wholePct } from "@/lib/format";
+import { ACTIVE_MERCHANTS, CATEGORY_LABELS, CLUSTER_LABELS, formatBand, formatTHB, merchantList, wholePct } from "@/lib/format";
 import { SEEN_WINDOW_DAYS, getDemandPayload, listProducts } from "@/lib/queries";
 import type { Category, DemandCluster, ProductSummary, SortKey } from "@/lib/types";
 
@@ -77,7 +77,7 @@ function heroDeal(products: ProductSummary[]): ProductSummary | null {
 const PROMOS = [
   {
     href: "/?sort=stores",
-    title: `เทียบ ${MERCHANTS.length} ร้านในหน้าเดียว`,
+    title: `เทียบ ${ACTIVE_MERCHANTS.length} ร้านในหน้าเดียว`,
     body: "รุ่นเดียวกันจากทุกร้าน เรียงจากถูกไปแพง",
   },
   {
@@ -254,7 +254,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   return (
     <div className="space-y-8">
       <h1 className="sr-only">
-        RakaIT เทียบราคาอุปกรณ์คอม {MERCHANTS.length} ร้าน: {merchantList()}
+        RakaIT เทียบราคาอุปกรณ์คอม {ACTIVE_MERCHANTS.length} ร้าน: {merchantList()}
       </h1>
 
       {landing && (
